@@ -9,8 +9,13 @@ import { sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import Schema from '@openaddresses/batch-schema';
 import Err from '@openaddresses/batch-error';
-import Auth from '../lib/auth.js';
-import Config from '../lib/config.js';
+// CloudTAK 13.45+ (hub/api split): routes live in api/stateless/routes/, shared libs
+// moved to api/common/, and route files receive ConfigStateless (which still extends
+// the base Config owning pg/models/server — our raw drizzle SQL is unaffected).
+// This file therefore requires CloudTAK >= 13.45; the infra-TAK installer copies it
+// into api/stateless/routes/ and refuses to install onto a pre-split tree.
+import Auth from '../../common/auth.js';
+import type ConfigStateless from '../config.js';
 
 // Server-side store for the standalone Dispatcher: Events (1:1 with a DataSync feed) and the
 // Incidents within them. Lives in CloudTAK's own Postgres so every dispatcher on this CloudTAK
@@ -51,7 +56,7 @@ interface IncidentRow {
 }
 
 // drizzle's execute() returns the driver RowList; cast to the row shape we SELECTed.
-async function query<T>(config: Config, statement: ReturnType<typeof sql>): Promise<T[]> {
+async function query<T>(config: ConfigStateless, statement: ReturnType<typeof sql>): Promise<T[]> {
     const result = await config.pg.execute(statement);
     return result as unknown as T[];
 }
@@ -76,7 +81,7 @@ function mapIncident(row: IncidentRow): IncidentRow {
     return { ...row, assigned: asArray(row.assigned), notes: asArray(row.notes) };
 }
 
-export default async function router(schema: Schema, config: Config) {
+export default async function router(schema: Schema, config: ConfigStateless) {
     // Idempotent schema bootstrap. Best-effort so a transient DB hiccup can't block CloudTAK
     // startup; CREATE TABLE IF NOT EXISTS is safe to re-run on every load.
     try {

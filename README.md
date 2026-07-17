@@ -19,7 +19,8 @@ The plugin auto-detects its environment on load:
 
 - `plugin/` — the CloudTAK web plugin (Vue 3 / TypeScript), discovered and bundled by CloudTAK's
   Vite build into `web/plugins/`.
-- `server/` — CloudTAK API route files copied into CloudTAK's `api/routes/`:
+- `server/` — CloudTAK API route files copied into CloudTAK's `api/stateless/routes/`
+  (CloudTAK >= 13.45 — the hub/api split moved route loading there; pre-split trees are not supported):
   - `plugin-dispatcher.ts` — the standalone Events/Incidents store (CloudTAK Postgres) + CRUD
     endpoints under `/api/dispatcher/…`.
   - `plugin-takcad.ts` — a server-side proxy to the TAK-CAD TAK Server plugin (and a keyless
@@ -28,7 +29,8 @@ The plugin auto-detects its environment on load:
 ## Install
 
 This plugin has two halves that must land in two different places in your CloudTAK source tree —
-`plugin/` (the web UI, into `api/web/plugins/`) and `server/` (the API routes, into `api/routes/`).
+`plugin/` (the web UI, into `api/web/plugins/`) and `server/` (the API routes, into
+`api/stateless/routes/` — requires CloudTAK >= 13.45).
 CloudTAK's built-in `WEB_PLUGINS` env var **cannot** install it: it only handles the web half, it
 clones the whole repo (nesting the plugin one level too deep for Vite), and it drops the server
 `*.ts` files where the web build type-checks them and fails. So use one of the two paths below.
@@ -43,7 +45,7 @@ copies the two halves into place, and rebuilds the CloudTAK API image for you.
 
 For CloudTAK deployments **not** managed by infra-TAK. `install.sh` does exactly what the infra-TAK
 installer does — copies `plugin/` → `api/web/plugins/tak-dispatcher/`, copies `server/*.ts` →
-`api/routes/`, then rebuilds and restarts the CloudTAK API image.
+`api/stateless/routes/` (refusing on pre-13.45 trees), then rebuilds and restarts the CloudTAK API image.
 
 ```bash
 # clone this repo somewhere on the CloudTAK host

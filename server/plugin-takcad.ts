@@ -7,8 +7,10 @@
 import { Type } from '@sinclair/typebox';
 import Schema from '@openaddresses/batch-schema';
 import Err from '@openaddresses/batch-error';
-import Auth from '../lib/auth.js';
-import Config from '../lib/config.js';
+// CloudTAK 13.45+ (hub/api split) — see plugin-dispatcher.ts header; same contract:
+// api/stateless/routes/ placement, libs from api/common/, ConfigStateless signature.
+import Auth from '../../common/auth.js';
+import type ConfigStateless from '../config.js';
 import { TAKAPI, APIAuthCertificate } from '@tak-ps/node-tak';
 
 // Server-side proxy for the TAK-CAD TAK Server plugin.
@@ -52,7 +54,7 @@ function nominatimToSuggestion(f: NominatimFeature) {
     };
 }
 
-export default async function router(schema: Schema, config: Config) {
+export default async function router(schema: Schema, config: ConfigStateless) {
     // Forward geocode — CloudTAK's CSP (connect-src 'self') blocks the browser from
     // calling openrouteservice.org directly, so proxy it through the API host.
     await schema.get('/takcad/geocode', {

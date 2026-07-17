@@ -73,7 +73,17 @@ if [ "$DO_BUILD" -eq 1 ] && [ ! -f "$CT_DIR/docker-compose.yml" ]; then
 fi
 
 WEB_DEST="$CT_DIR/api/web/plugins/$INSTALL_DIR_NAME"
-ROUTES_DEST="$CT_DIR/api/routes"
+# CloudTAK 13.45+ (hub/api split) loads server routes from api/stateless/routes/ and
+# no longer compiles api/routes/. The routes in this repo target the 13.45+ contract
+# (ConfigStateless, api/common libs), so a pre-split tree cannot build them — refuse
+# rather than install files that either break the build (new tree semantics on old
+# CloudTAK) or die silently.
+LEGACY_ROUTES="$CT_DIR/api/routes"
+if [ -d "$CT_DIR/api/stateless/routes" ]; then
+    ROUTES_DEST="$CT_DIR/api/stateless/routes"
+else
+    ROUTES_DEST=""
+fi
 
 echo "CloudTAK:  $CT_DIR"
 echo "Plugin:    $REPO_DIR"
@@ -100,15 +110,23 @@ if [ "$ACTION" = "remove" ]; then
     for src in "$REPO_DIR"/server/*.ts; do
         [ -e "$src" ] || continue
         fname="$(basename "$src")"
-        if [ -f "$ROUTES_DEST/$fname" ]; then
-            rm -f "$ROUTES_DEST/$fname"
-            echo "Removed server route: api/routes/$fname"
-        fi
+        for dest in "$ROUTES_DEST" "$LEGACY_ROUTES"; do
+            [ -n "$dest" ] || continue
+            if [ -f "$dest/$fname" ]; then
+                rm -f "$dest/$fname"
+                echo "Removed server route: ${dest#$CT_DIR/}/$fname"
+            fi
+        done
     done
 else
     # --- install / update ----------------------------------------------------------
     if [ ! -d "$REPO_DIR/plugin" ]; then
         echo "ERROR: $REPO_DIR/plugin not found — run this from the plugin repo." >&2
+        exit 1
+    fi
+    if [ -z "$ROUTES_DEST" ]; then
+        echo "ERROR: this CloudTAK predates the 13.45 hub/api split (no api/stateless/routes/)." >&2
+        echo "       The dispatcher server routes require CloudTAK >= 13.45 — update CloudTAK first." >&2
         exit 1
     fi
     mkdir -p "$CT_DIR/api/web/plugins" "$ROUTES_DEST"
@@ -118,12 +136,15 @@ else
     cp -R "$REPO_DIR/plugin" "$WEB_DEST"
     echo "Installed web plugin: api/web/plugins/$INSTALL_DIR_NAME"
 
-    # Server routes: every *.ts in server/ → api/routes/ (auto-loaded by schema.load).
+    # Server routes: every *.ts in server/ → api/stateless/routes/ (auto-loaded by
+    # schema.load). Also sweep stale copies out of the pre-split api/routes/ so an
+    # upgraded tree doesn't carry dead duplicates.
     shopt -s nullglob
     for src in "$REPO_DIR"/server/*.ts; do
         fname="$(basename "$src")"
         cp "$src" "$ROUTES_DEST/$fname"
-        echo "Installed server route: api/routes/$fname"
+        echo "Installed server route: ${ROUTES_DEST#$CT_DIR/}/$fname"
+        [ -f "$LEGACY_ROUTES/$fname" ] && rm -f "$LEGACY_ROUTES/$fname" && echo "Removed stale pre-split copy: api/routes/$fname"
     done
     shopt -u nullglob
 fi
