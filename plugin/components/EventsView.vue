@@ -99,6 +99,14 @@
             </div>
         </template>
 
+        <!-- ── After-action report ───────────────────────────────────────────── -->
+        <template v-else-if='view === "report" && reportEvent'>
+            <ReportView
+                :event='reportEvent'
+                @close='view = "list"'
+            />
+        </template>
+
         <!-- ── Events list ───────────────────────────────────────────────────── -->
         <template v-else>
             <div class='d-flex align-items-center px-3 py-2 border-bottom flex-shrink-0 gap-2'>
@@ -152,6 +160,14 @@
                     </div>
                     <div class='text-end ms-2 flex-shrink-0 d-flex gap-1'>
                         <button
+                            class='btn btn-sm btn-link text-muted py-0 px-1 text-decoration-none'
+                            title='Generate after-action report'
+                            :disabled='busyId === ev.id'
+                            @click.stop='openReport(ev)'
+                        >
+                            Report
+                        </button>
+                        <button
                             v-if='ev.status === "active"'
                             class='btn btn-sm btn-link text-muted py-0 px-1 text-decoration-none'
                             title='Archive event (removes markers, keeps records)'
@@ -186,6 +202,7 @@ import {
 import type { DispatcherEvent } from '../lib/events-client.ts';
 import { removeIncidentMarker } from '../lib/map-marker.ts';
 import { dispatcherStore as store, loadLastEventId } from '../lib/dispatcher-store.ts';
+import ReportView from './ReportView.vue';
 
 const emit = defineEmits<{
     (e: 'opened', ev: DispatcherEvent): void;
@@ -193,7 +210,13 @@ const emit = defineEmits<{
 
 const mapStore = useMapStore();
 
-const view         = ref<'list' | 'create'>('list');
+const view         = ref<'list' | 'create' | 'report'>('list');
+const reportEvent  = ref<DispatcherEvent | null>(null);
+
+function openReport(ev: DispatcherEvent) {
+    reportEvent.value = ev;
+    view.value = 'report';
+}
 const loading      = ref(false);
 const loadError    = ref('');
 const saving       = ref(false);
