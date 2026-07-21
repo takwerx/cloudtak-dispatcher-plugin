@@ -254,13 +254,19 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             const number = `${bumped[0].prefix}-${String(bumped[0].seq).padStart(3, '0')}`;
 
             const id = randomUUID();
+            // Details entered at creation also seed the notes log as its first entry —
+            // dispatchers work off the running note stream, where details-only was invisible.
+            const seedNotes = req.body.details
+                ? [{ text: req.body.details, time: new Date().toISOString() }]
+                : [];
             const incidents = await query<IncidentRow>(config, sql`
                 INSERT INTO dispatcher_incidents
-                    (id, event_id, number, type, address, lat, lon, dispatcher, details)
+                    (id, event_id, number, type, address, lat, lon, dispatcher, details, notes)
                 VALUES
                     (${id}, ${req.params.eventid}, ${number}, ${req.body.type ?? null},
                      ${req.body.address ?? null}, ${req.body.lat}, ${req.body.lon},
-                     ${req.body.dispatcher ?? null}, ${req.body.details ?? null})
+                     ${req.body.dispatcher ?? null}, ${req.body.details ?? null},
+                     ${JSON.stringify(seedNotes)}::jsonb)
                 RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
                           status, assigned, notes, created_at, closed_at
             `);

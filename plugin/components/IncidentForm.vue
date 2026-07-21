@@ -552,7 +552,14 @@ async function submitTakCad(address: string) {
             radioContactDetails: null,
             otherContactDetails: null,
         }] : [],
-        notes:                existing?.notes                ?? [],
+        // Creation details seed the notes log so they show in the running note stream.
+        notes:                existing?.notes ?? (form.details ? [{
+            uid:         crypto.randomUUID(),
+            info:        form.details,
+            creator:     dispatcher || 'Dispatcher',
+            incidentUid: uid,
+            timestamp:   now,
+        }] : []),
         requestedCallsigns:   existing?.requestedCallsigns   ?? [],
         vehicleUidsRequested: existing?.vehicleUidsRequested ?? [],
         personnelResponding:  existing?.personnelResponding   ?? [],

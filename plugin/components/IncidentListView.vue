@@ -530,6 +530,12 @@
                             <div class='small text-muted'>
                                 {{ inc.type }} · {{ shortTime(inc.created_at) }}
                             </div>
+                            <div
+                                v-if='slLatestNoteText(inc)'
+                                class='small fst-italic text-truncate'
+                            >
+                                {{ slLatestNoteText(inc) }}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -587,6 +593,17 @@
                                 <div class='col-8'>
                                     {{ slDetail.dispatcher || '—' }}
                                 </div>
+                                <template v-if='slDetail.details'>
+                                    <div class='col-4 text-muted'>
+                                        Details
+                                    </div>
+                                    <div
+                                        class='col-8'
+                                        style='white-space:pre-wrap'
+                                    >
+                                        {{ slDetail.details }}
+                                    </div>
+                                </template>
                             </div>
                         </div>
                     </div>
@@ -1190,6 +1207,13 @@ const slClosedIncidents = computed(() =>
 const slDisplayedIncidents = computed(() =>
     slTab.value === 'active' ? slActiveIncidents.value : slClosedIncidents.value
 );
+
+// Card snippet: newest note (notes append chronologically), falling back to details
+// for incidents created before details started seeding the notes log.
+function slLatestNoteText(inc: DispatcherIncident): string {
+    const n = inc.notes?.[inc.notes.length - 1];
+    return n?.text ?? inc.details ?? '';
+}
 
 watch(slActiveIncidents, n => {
     if (props.serverMode === 'standalone') emit('active-count', n.length);
