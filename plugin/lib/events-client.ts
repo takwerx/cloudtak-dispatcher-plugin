@@ -106,3 +106,23 @@ export async function patchIncident(id: string, patch: IncidentPatch): Promise<D
     }) as { incident: DispatcherIncident };
     return r.incident;
 }
+
+// ── Shared settings (per-CloudTAK key/value; agency identity on reports) ──────
+
+export interface AgencySettings {
+    name: string;
+    id: string;
+    logo: string | null;   // downscaled data:image/* URI, or null
+}
+
+export async function getDispatcherSettings(): Promise<Record<string, unknown>> {
+    const r = await std('/api/dispatcher/settings', { method: 'GET' }) as { settings?: Record<string, unknown> };
+    return r?.settings ?? {};
+}
+
+export async function putDispatcherSetting(key: string, value: unknown): Promise<void> {
+    await std(`/api/dispatcher/settings/${encodeURIComponent(key)}`, {
+        method: 'PUT',
+        body: { value },
+    });
+}

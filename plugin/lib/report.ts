@@ -1,4 +1,4 @@
-import type { DispatcherEvent, DispatcherIncident } from './events-client.ts';
+import type { DispatcherEvent, DispatcherIncident, AgencySettings } from './events-client.ts';
 
 // After-action report for a standalone Event: stats + generated narrative + exports.
 // Everything is computed client-side from the incident list the server already returns
@@ -155,7 +155,10 @@ export function buildReportHtml(
     narrative: string[],
     range: ReportRange,
     generatedBy: string,
+    agency?: AgencySettings | null,
 ): string {
+    // Only render a logo we produced ourselves (canvas-downscaled data URI).
+    const logo = agency?.logo && agency.logo.startsWith('data:image/') ? agency.logo : null;
     const typeRows = stats.byType
         .map(t => `<tr><td>${esc(t.type)}</td><td class='num'>${t.count}</td><td class='num'>${t.pct}%</td></tr>`)
         .join('');
@@ -212,16 +215,26 @@ export function buildReportHtml(
     .note .when { color: #666; font-size: .75rem; margin-right: .3rem; }
     .muted { color: #888; }
     .printbar { text-align: right; margin-bottom: 1rem; }
+    .rpt-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+    .agency { font-size: 1.05rem; font-weight: 600; margin-bottom: .15rem; }
+    .logo { max-height: 80px; max-width: 180px; }
     @media print { .printbar { display: none; } body { margin: 0; } }
 </style>
 </head>
 <body>
 <div class='printbar'><button onclick='window.print()'>Print / Save as PDF</button></div>
+<div class='rpt-head'>
+<div>
+${agency?.name ? `<div class='agency'>${esc(agency.name)}</div>` : ''}
 <h1>${esc(event.name)} — Dispatch Report</h1>
 <div class='sub'>
+    ${agency?.id ? `Agency ID: ${esc(agency.id)}<br>` : ''}
     Period: ${esc(fmt(range.start))} to ${esc(fmt(range.end))}<br>
     DataSync feed: ${esc(event.feed_name)} · Incident series: ${esc(event.prefix)}-NNN<br>
     Generated ${esc(fmt(new Date()))} by ${esc(generatedBy || 'Dispatcher')}
+</div>
+</div>
+${logo ? `<img class='logo' src='${logo}' alt='Agency logo'>` : ''}
 </div>
 
 <h2>Summary</h2>
@@ -288,12 +301,14 @@ export function buildJsonArchive(
     narrative: string[],
     range: ReportRange,
     generatedBy: string,
+    agency?: AgencySettings | null,
 ): string {
     return JSON.stringify({
         format: 'tak-dispatcher-report',
         version: 1,
         generated_at: new Date().toISOString(),
         generated_by: generatedBy,
+        agency: agency ? { name: agency.name, id: agency.id } : null,
         event,
         period: { start: range.start.toISOString(), end: range.end.toISOString() },
         stats,

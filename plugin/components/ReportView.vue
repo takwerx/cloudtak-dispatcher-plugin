@@ -119,6 +119,76 @@
                     </p>
                 </div>
 
+                <!-- Agency header (shared across dispatchers on this CloudTAK) -->
+                <div>
+                    <button
+                        class='btn btn-sm btn-link p-0 text-decoration-none small text-muted fw-semibold text-uppercase'
+                        @click='showAgency = !showAgency'
+                    >
+                        Agency header {{ showAgency ? '▾' : '▸' }}
+                    </button>
+                    <div
+                        v-if='showAgency'
+                        class='card border mt-1'
+                    >
+                        <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
+                            <label class='mb-0 text-muted'>Agency name
+                                <input
+                                    v-model='agency.name'
+                                    type='text'
+                                    class='form-control form-control-sm border'
+                                    placeholder='e.g. New Hanover Co PS Comms'
+                                >
+                            </label>
+                            <label class='mb-0 text-muted'>Agency ID
+                                <input
+                                    v-model='agency.id'
+                                    type='text'
+                                    class='form-control form-control-sm border'
+                                    placeholder='e.g. FDID / ORI'
+                                >
+                            </label>
+                            <div class='d-flex align-items-center gap-2'>
+                                <img
+                                    v-if='agency.logo'
+                                    :src='agency.logo'
+                                    alt='Agency logo'
+                                    style='max-height:40px;max-width:90px'
+                                >
+                                <input
+                                    type='file'
+                                    accept='image/*'
+                                    class='form-control form-control-sm border flex-grow-1'
+                                    @change='onLogoFile'
+                                >
+                                <button
+                                    v-if='agency.logo'
+                                    class='btn btn-sm btn-link text-danger p-0 text-decoration-none'
+                                    @click='agency.logo = null'
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                            <div
+                                v-if='agencyError'
+                                class='alert alert-danger py-1 px-2 small mb-0'
+                            >
+                                {{ agencyError }}
+                            </div>
+                            <button
+                                class='btn btn-sm btn-outline-secondary align-self-start'
+                                :disabled='savingAgency'
+                                @click='saveAgency'
+                            >
+                                <span
+                                    v-if='savingAgency'
+                                    class='spinner-border spinner-border-sm me-1'
+                                />{{ agencySaved ? 'Saved ✓' : 'Save agency header' }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Exports -->
                 <div
                     v-if='exportError'
@@ -154,9 +224,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
-import { listIncidents } from '../lib/events-client.ts';
-import type { DispatcherEvent, DispatcherIncident } from '../lib/events-client.ts';
+import { ref, reactive, computed, onMounted } from 'vue';
+import { listIncidents, getDispatcherSettings, putDispatcherSetting } from '../lib/events-client.ts';
+import type { DispatcherEvent, DispatcherIncident, AgencySettings } from '../lib/events-client.ts';
 import {
     filterByRange, buildStats, buildNarrative, buildReportHtml,
     buildCsv, buildJsonArchive, downloadFile, openPrintWindow, reportFilename,
@@ -171,6 +241,54 @@ const loading     = ref(false);
 const loadError   = ref('');
 const exportError = ref('');
 const incidents   = ref<DispatcherIncident[]>([]);
+
+// Agency identity on the report header — stored server-side so every dispatcher
+// on this CloudTAK produces identically-branded reports.
+const agency       = reactive<AgencySettings>({ name: '', id: '', logo: null });
+const showAgency   = ref(false);
+const savingAgency = ref(false);
+const agencySaved  = ref(false);
+const agencyError  = ref('');
+
+async function saveAgency() {
+    savingAgency.value = true;
+    agencyError.value = '';
+    try {
+        await putDispatcherSetting('agency', { name: agency.name.trim(), id: agency.id.trim(), logo: agency.logo });
+        agencySaved.value = true;
+        setTimeout(() => { agencySaved.value = false; }, 2000);
+    } catch (e) {
+        agencyError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        savingAgency.value = false;
+    }
+}
+
+// Downscale the chosen image to a bounded data URI (≤120px tall) so the logo fits the
+// settings row cap and prints crisply without shipping a multi-MB original.
+function onLogoFile(ev: Event) {
+    agencyError.value = '';
+    const file = (ev.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+        URL.revokeObjectURL(url);
+        const scale = Math.min(1, 120 / img.height, 360 / img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width  = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { agencyError.value = 'Could not process image'; return; }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        agency.logo = canvas.toDataURL('image/png');
+    };
+    img.onerror = () => {
+        URL.revokeObjectURL(url);
+        agencyError.value = 'Could not read image file';
+    };
+    img.src = url;
+}
 
 // datetime-local wants 'YYYY-MM-DDTHH:mm' in LOCAL time (toISOString would shift it).
 function toLocalInput(d: Date): string {
@@ -199,7 +317,7 @@ function printReport() {
     exportError.value = '';
     const html = buildReportHtml(
         props.event, inRange.value, stats.value, narrative.value,
-        range.value, dispatcherStore.dispatcherName,
+        range.value, dispatcherStore.dispatcherName, agency,
     );
     if (!openPrintWindow(html)) {
         exportError.value = 'Popup blocked — allow popups for CloudTAK to open the printable report.';
@@ -213,7 +331,7 @@ function downloadCsv() {
 function downloadJson() {
     downloadFile(reportFilename(props.event, 'json'), 'application/json', buildJsonArchive(
         props.event, inRange.value, stats.value, narrative.value,
-        range.value, dispatcherStore.dispatcherName,
+        range.value, dispatcherStore.dispatcherName, agency,
     ));
 }
 
@@ -227,5 +345,14 @@ onMounted(async () => {
     } finally {
         loading.value = false;
     }
+    // Best-effort: an older server without the settings route just leaves the header blank.
+    try {
+        const saved = (await getDispatcherSettings()).agency as Partial<AgencySettings> | undefined;
+        if (saved) {
+            agency.name = saved.name ?? '';
+            agency.id   = saved.id ?? '';
+            agency.logo = saved.logo ?? null;
+        }
+    } catch { /* settings unavailable — leave defaults */ }
 });
 </script>

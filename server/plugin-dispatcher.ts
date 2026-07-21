@@ -116,9 +116,64 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 closed_at   TIMESTAMPTZ
             )
         `);
+        await config.pg.execute(sql`
+            CREATE TABLE IF NOT EXISTS dispatcher_settings (
+                key   TEXT PRIMARY KEY,
+                value JSONB NOT NULL
+            )
+        `);
     } catch (err) {
         console.error('[dispatcher] table bootstrap failed', err);
     }
+
+    // ── Settings (shared per-CloudTAK, e.g. agency identity on reports) ─────────
+
+    await schema.get('/dispatcher/settings', {
+        name: 'Get Dispatcher Settings',
+        group: 'Dispatcher',
+        description: 'All shared dispatcher settings as a key/value map',
+        res: Type.Any(),
+    }, async (req, res) => {
+        try {
+            await Auth.is_auth(config, req);
+            const rows = await query<{ key: string; value: unknown }>(config, sql`
+                SELECT key, value FROM dispatcher_settings
+            `);
+            const settings: Record<string, unknown> = {};
+            for (const r of rows) {
+                // Same jsonb normalize as asArray: a raw read can hand back a string.
+                settings[r.key] = typeof r.value === 'string' ? JSON.parse(r.value) : r.value;
+            }
+            res.json({ settings });
+        } catch (err) {
+            Err.respond(err, res);
+        }
+    });
+
+    await schema.put('/dispatcher/settings/:key', {
+        name: 'Put Dispatcher Setting',
+        group: 'Dispatcher',
+        description: 'Upsert one shared dispatcher setting',
+        params: Type.Object({ key: Type.String() }),
+        body: Type.Object({ value: Type.Any() }),
+        res: Type.Any(),
+    }, async (req, res) => {
+        try {
+            await Auth.is_auth(config, req);
+            const encoded = JSON.stringify(req.body.value ?? null);
+            // Settings carry small blobs (agency logo as a downscaled data URI) — cap the
+            // row so a raw upload can't bloat the gis DB.
+            if (encoded.length > 400_000) throw new Err(400, null, 'Setting too large (400KB max)');
+            await config.pg.execute(sql`
+                INSERT INTO dispatcher_settings (key, value)
+                VALUES (${req.params.key}, ${encoded}::jsonb)
+                ON CONFLICT (key) DO UPDATE SET value = ${encoded}::jsonb
+            `);
+            res.json({ ok: true });
+        } catch (err) {
+            Err.respond(err, res);
+        }
+    });
 
     // ── Events ──────────────────────────────────────────────────────────────────
 
