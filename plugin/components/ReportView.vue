@@ -208,13 +208,20 @@
                             class='btn btn-sm btn-outline-secondary flex-fill'
                             @click='downloadCsv'
                         >
-                            Download CSV
+                            CSV
                         </button>
                         <button
                             class='btn btn-sm btn-outline-secondary flex-fill'
                             @click='downloadJson'
                         >
-                            Download JSON
+                            JSON
+                        </button>
+                        <button
+                            class='btn btn-sm btn-outline-secondary flex-fill'
+                            title='The printable report as a file — open it in any browser and print to PDF'
+                            @click='downloadHtml'
+                        >
+                            HTML
                         </button>
                     </div>
                 </div>
@@ -320,8 +327,15 @@ function printReport() {
         range.value, dispatcherStore.dispatcherName, agency,
     );
     if (!openPrintWindow(html)) {
-        exportError.value = 'Popup blocked — allow popups for CloudTAK to open the printable report.';
+        exportError.value = 'Popup blocked — allow popups for CloudTAK, or use the HTML download and print that file.';
     }
+}
+
+function downloadHtml() {
+    downloadFile(reportFilename(props.event, 'html'), 'text/html', buildReportHtml(
+        props.event, inRange.value, stats.value, narrative.value,
+        range.value, dispatcherStore.dispatcherName, agency,
+    ));
 }
 
 function downloadCsv() {

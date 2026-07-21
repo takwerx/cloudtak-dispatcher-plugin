@@ -263,6 +263,7 @@ ${narrative.map(p => `<p class='narrative'>${esc(p)}</p>`).join('')}
 
 <h2>Incident log (${incidents.length})</h2>
 ${log || `<p class='muted'>No incidents in the selected period.</p>`}
+<script>window.addEventListener('load', function () { setTimeout(function () { window.print(); }, 300); });</script>
 </body>
 </html>`;
 }
@@ -327,10 +328,16 @@ export function downloadFile(filename: string, mime: string, content: string): v
 }
 
 export function openPrintWindow(html: string): boolean {
-    const w = window.open('', '_blank');
-    if (!w) return false;
-    w.document.write(html);
-    w.document.close();
+    // Blob URL, not document.write into about:blank: a blob document carries no inherited
+    // CSP from the app's response headers, so the report's inline styles and its
+    // window.print() button work regardless of how the deployment is fronted.
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+    const w = window.open(url, '_blank');
+    if (!w) {
+        URL.revokeObjectURL(url);
+        return false;
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
     return true;
 }
 
