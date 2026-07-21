@@ -7,6 +7,10 @@ interface DispatcherState {
     serverMode:     ServerMode;
     forcedMode:     'standalone' | null;
     dispatcherName: string;
+    // True while the Dispatcher is detached into a floating pane over the map; the
+    // anchored menu view collapses to a dock-back placeholder so the board isn't
+    // mounted (and polling) twice.
+    floating:       boolean;
     // Standalone Event→Incident model (server-backed; shared across dispatchers on this CloudTAK).
     events:         DispatcherEvent[];
     activeEvent:    DispatcherEvent | null;
@@ -17,6 +21,7 @@ export const dispatcherStore = reactive<DispatcherState>({
     serverMode:     'detecting',
     forcedMode:     null,
     dispatcherName: '',
+    floating:       false,
     events:         [],
     activeEvent:    null,
     incidents:      [],

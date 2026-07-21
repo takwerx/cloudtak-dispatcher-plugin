@@ -4,6 +4,7 @@ import type { PluginAPI, PluginInstance } from '../../plugin.ts';
 import type { MenuItemConfig } from '../../plugin.ts';
 import { IconHeadset } from '@tabler/icons-vue';
 import CadMain from './components/CadMain.vue';
+import { dockDispatcher } from './lib/float-pane.ts';
 
 const MENU_KEY   = 'plugin-tak-dispatcher';
 const ROUTE_NAME = 'home-menu-tak-dispatcher';
@@ -43,6 +44,9 @@ export default class DispatcherPlugin implements PluginInstance {
         // The route is registered once in install() and left in place — same
         // pattern as the working ping plugin.
         try { this.api.menu.remove(MENU_KEY); } catch { /* ignore */ }
+        // Also retract the floating pane if detached (no-op on the load-time disable()
+        // calls — the pane store starts empty on every page load).
+        try { dockDispatcher(); } catch { /* ignore */ }
     }
 }
 

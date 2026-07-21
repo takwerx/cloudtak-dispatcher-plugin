@@ -1,8 +1,22 @@
 <template>
     <div class='d-flex flex-column h-100 overflow-hidden'>
 
+        <!-- Detached: this (anchored) instance collapses so the board isn't mounted twice -->
         <div
-            v-if='setupError'
+            v-if='floatedElsewhere'
+            class='p-3 text-center text-muted small d-flex flex-column align-items-center gap-2'
+        >
+            <span>Dispatcher is floating over the map.</span>
+            <button
+                class='btn btn-sm btn-outline-warning'
+                @click='dockDispatcher()'
+            >
+                Dock back to panel
+            </button>
+        </div>
+
+        <div
+            v-else-if='setupError'
             class='alert alert-danger m-2 small'
             style='white-space:pre-wrap;font-family:monospace;font-size:10px;overflow:auto'
         >
@@ -40,6 +54,17 @@
                     v-else
                     class='badge bg-secondary text-white small opacity-50'
                 >TAK-CAD…</span>
+                <button
+                    v-if='!floating'
+                    class='btn btn-sm btn-link p-0 text-muted'
+                    title='Pop out — float the Dispatcher over the map'
+                    @click='popOutDispatcher()'
+                >
+                    <IconPictureInPictureOn
+                        :size='16'
+                        stroke='1.5'
+                    />
+                </button>
             </div>
 
             <!-- ── TAK-CAD mode: DataSync feed picker (markers/log routing) ─────── -->
@@ -112,6 +137,13 @@
                 >Archived</span>
                 <button
                     class='btn btn-link btn-sm p-0 text-muted text-decoration-none'
+                    title='Generate after-action report'
+                    @click='showReport = true'
+                >
+                    Report
+                </button>
+                <button
+                    class='btn btn-link btn-sm p-0 text-muted text-decoration-none'
                     title='Back to events'
                     @click='closeEvent'
                 >
@@ -125,6 +157,17 @@
                 class='flex-grow-1 overflow-hidden'
             >
                 <EventsView @opened='onEventOpened' />
+            </div>
+
+            <!-- ── Standalone: after-action report for the open Event ──────────── -->
+            <div
+                v-else-if='showReport && store.activeEvent'
+                class='flex-grow-1 overflow-hidden'
+            >
+                <ReportView
+                    :event='store.activeEvent'
+                    @close='showReport = false'
+                />
             </div>
 
             <!-- ── Otherwise: tabs + incident/vehicle/personnel views ──────────── -->
@@ -172,17 +215,25 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onErrorCaptured, watch } from 'vue';
 import ProfileConfig from '../../../src/base/profile.ts';
-import { IconHeadset } from '@tabler/icons-vue';
+import { IconHeadset, IconPictureInPictureOn } from '@tabler/icons-vue';
 import IncidentListView from './IncidentListView.vue';
 import VehicleListView  from './VehicleListView.vue';
 import PersonnelListView from './PersonnelListView.vue';
 import EventsView from './EventsView.vue';
+import ReportView from './ReportView.vue';
 import { getIncidentTypes, getVehicleTypes, getVehicles, getPersonnel, getRoles, getIncidentMetadata, getMissions } from '../lib/takcad-client.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
 import type { IncidentTypeRef, VehicleType, VehicleRef, PersonRef, Role } from '../lib/takcad-types.ts';
 import { listIncidents } from '../lib/events-client.ts';
 import type { DispatcherEvent } from '../lib/events-client.ts';
 import { dispatcherStore as store, saveLastEventId } from '../lib/dispatcher-store.ts';
+import { popOutDispatcher, dockDispatcher } from '../lib/float-pane.ts';
+
+// floating: this instance lives inside the floating pane (DispatcherFloat) rather than
+// the anchored menu route.
+const props = defineProps<{ floating?: boolean }>();
+
+const floatedElsewhere = computed(() => store.floating && !props.floating);
 
 const TABS = [
     { key: 'incidents',  label: 'Incidents',  takCadOnly: false },
@@ -206,6 +257,7 @@ onErrorCaptured((err) => {
 });
 
 const activeTab        = ref<TabKey>('incidents');
+const showReport       = ref(false);
 const activeCount      = ref(0);
 const connectionStatus = ref('');
 const incidentTypes    = ref<IncidentTypeRef[]>([]);
@@ -248,6 +300,7 @@ function closeEvent() {
     store.incidents = [];
     saveLastEventId(null);
     activeCount.value = 0;
+    showReport.value = false;
 }
 
 async function detect() {
