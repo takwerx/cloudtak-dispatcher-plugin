@@ -91,9 +91,15 @@
                             :key='f.guid'
                             class='btn btn-sm w-100 text-start px-3 py-2 border-0 border-bottom rounded-0'
                             style='font-size:12px'
+                            :disabled='!subscribedGuids.has(f.guid)'
+                            :title='subscribedGuids.has(f.guid) ? f.name : "Subscribe to this feed in CloudTAK → Data Sync first"'
                             @click='selectFeed(f)'
                         >
                             {{ f.name }}
+                            <span
+                                v-if='!subscribedGuids.has(f.guid)'
+                                class='text-muted'
+                            > — not subscribed</span>
                         </button>
                     </div>
                     <div
@@ -148,6 +154,23 @@
                     @click='closeEvent'
                 >
                     ✕
+                </button>
+            </div>
+
+            <!-- Open Event but not subscribed to its feed → markers will silently not render -->
+            <div
+                v-if='store.serverMode === "standalone" && store.activeEvent && feedSubscribed === false'
+                class='px-3 py-1 border-bottom flex-shrink-0 small text-warning d-flex align-items-center gap-2'
+            >
+                <span class='flex-grow-1'>
+                    Not subscribed to "{{ store.activeEvent.feed_name }}" — incident markers won't
+                    appear on your map. Subscribe in CloudTAK → Data Sync.
+                </span>
+                <button
+                    class='btn btn-sm btn-link p-0 text-decoration-none'
+                    @click='checkFeedSubscription'
+                >
+                    Recheck
                 </button>
             </div>
 
@@ -221,7 +244,7 @@ import VehicleListView  from './VehicleListView.vue';
 import PersonnelListView from './PersonnelListView.vue';
 import EventsView from './EventsView.vue';
 import ReportView from './ReportView.vue';
-import { getIncidentTypes, getVehicleTypes, getVehicles, getPersonnel, getRoles, getIncidentMetadata, getMissions } from '../lib/takcad-client.ts';
+import { getIncidentTypes, getVehicleTypes, getVehicles, getPersonnel, getRoles, getIncidentMetadata, getMissions, getSubscribedFeedGuids } from '../lib/takcad-client.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
 import type { IncidentTypeRef, VehicleType, VehicleRef, PersonRef, Role } from '../lib/takcad-types.ts';
 import { listIncidents } from '../lib/events-client.ts';
@@ -273,11 +296,31 @@ const feedsFetched     = ref(false);
 // path now routes via the open Event's feed_guid instead).
 const takcadFeed = ref<MissionRef | null>(null);
 
+const subscribedGuids = ref<Set<string>>(new Set());
+// null = unknown/not checked yet; false drives the warning banner.
+const feedSubscribed = ref<boolean | null>(null);
+
+async function checkFeedSubscription() {
+    const ev = store.activeEvent;
+    if (!ev) { feedSubscribed.value = null; return; }
+    try {
+        feedSubscribed.value = (await getSubscribedFeedGuids()).has(ev.feed_guid);
+    } catch {
+        feedSubscribed.value = null;
+    }
+}
+
+watch(() => store.activeEvent, checkFeedSubscription, { immediate: true });
+
 async function fetchFeeds() {
     loadingFeeds.value = true;
     feedsFetched.value = false;
-    try { feeds.value = await getMissions(); }
-    catch { feeds.value = []; }
+    try {
+        subscribedGuids.value = await getSubscribedFeedGuids();
+        const all = await getMissions();
+        feeds.value = [...all].sort((a, b) =>
+            Number(subscribedGuids.value.has(b.guid)) - Number(subscribedGuids.value.has(a.guid)));
+    } catch { feeds.value = []; }
     finally { loadingFeeds.value = false; feedsFetched.value = true; }
 }
 

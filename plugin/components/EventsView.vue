@@ -56,13 +56,26 @@
                             :key='f.guid'
                             class='btn btn-sm w-100 text-start px-3 py-2 border-0 border-bottom rounded-0'
                             style='font-size:12px'
+                            :disabled='!subscribedGuids.has(f.guid)'
+                            :title='subscribedGuids.has(f.guid) ? f.name : "Subscribe to this feed in CloudTAK → Data Sync first"'
                             @click='selectedFeed = f'
                         >
                             {{ f.name }}
+                            <span
+                                v-if='!subscribedGuids.has(f.guid)'
+                                class='text-muted'
+                            > — not subscribed</span>
                         </button>
                     </div>
                     <div
-                        v-else-if='!selectedFeed && feedsFetched && !loadingFeeds'
+                        v-if='!selectedFeed && feeds.length && feeds.some(f => !subscribedGuids.has(f.guid))'
+                        class='text-muted small py-1'
+                    >
+                        Incident markers ride the feed — unsubscribed feeds are disabled.
+                        Subscribe in CloudTAK → Data Sync, then reopen this list.
+                    </div>
+                    <div
+                        v-else-if='!selectedFeed && feedsFetched && !loadingFeeds && !feeds.length'
                         class='text-muted small text-center py-1'
                     >
                         No DataSync feeds found
@@ -194,7 +207,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue';
 import { useMapStore } from '../../../src/stores/map.ts';
-import { getMissions } from '../lib/takcad-client.ts';
+import { getMissions, getSubscribedFeedGuids } from '../lib/takcad-client.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
 import {
     listEvents, createEvent, setEventStatus, deleteEvent, listIncidents,
@@ -223,10 +236,11 @@ const saving       = ref(false);
 const createError  = ref('');
 const busyId       = ref('');
 
-const feeds        = ref<MissionRef[]>([]);
-const loadingFeeds = ref(false);
-const feedsFetched = ref(false);
-const selectedFeed = ref<MissionRef | null>(null);
+const feeds           = ref<MissionRef[]>([]);
+const loadingFeeds    = ref(false);
+const feedsFetched    = ref(false);
+const selectedFeed    = ref<MissionRef | null>(null);
+const subscribedGuids = ref<Set<string>>(new Set());
 
 const form = reactive({
     name:   '',
@@ -272,8 +286,13 @@ async function loadList() {
 async function fetchFeeds() {
     loadingFeeds.value = true;
     feedsFetched.value = false;
-    try { feeds.value = await getMissions(); }
-    catch { feeds.value = []; }
+    try {
+        subscribedGuids.value = await getSubscribedFeedGuids();
+        const all = await getMissions();
+        // Subscribed feeds first — unsubscribed ones render disabled below them.
+        feeds.value = [...all].sort((a, b) =>
+            Number(subscribedGuids.value.has(b.guid)) - Number(subscribedGuids.value.has(a.guid)));
+    } catch { feeds.value = []; }
     finally { loadingFeeds.value = false; feedsFetched.value = true; }
 }
 

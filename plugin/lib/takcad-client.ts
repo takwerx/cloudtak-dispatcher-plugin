@@ -10,6 +10,7 @@
  */
 
 import { std } from '../../../src/std.ts';
+import Subscription from '../../../src/base/subscription.ts';
 import type {
     IncidentRef, IncidentMetadata, IncidentTypeRef,
     VehicleRef, VehicleType,
@@ -115,6 +116,18 @@ export interface MissionRef {
 export async function getMissions(): Promise<MissionRef[]> {
     const resp = await std('/api/marti/mission', { method: 'GET' }) as { items?: MissionRef[] } | null;
     return resp?.items ?? [];
+}
+
+// Feeds the user is actually subscribed to (CloudTAK local DB, no network call).
+// Incident markers are written INTO the event's feed, so an unsubscribed dispatcher
+// sees no markers — the pickers disable unsubscribed feeds and the event bar warns.
+export async function getSubscribedFeedGuids(): Promise<Set<string>> {
+    try {
+        const subs = await Subscription.localList({ subscribed: true });
+        return new Set([...subs].map(s => s.guid));
+    } catch {
+        return new Set();
+    }
 }
 
 // Read the mission log entries (for incident number counting).
