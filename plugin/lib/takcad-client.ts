@@ -100,7 +100,7 @@ export const getRoles       = ()                => cadGet<Role[]>('getRoles');
 // Used by both modes. TAK-CAD mode loads server types but falls back to this.
 export const DEFAULT_INCIDENT_TYPES = [
     'Medical Emergency', 'Medical Assist', 'Fire', 'Traffic Accident',
-    'Hazardous Spill', 'Criminal Activity', 'Public Disturbance', 'Bomb Threat',
+    'Hazardous Spill', 'Criminal Activity', 'Fight', 'Public Disturbance', 'Bomb Threat',
     'Animal Control', 'Gas Leak', 'Water Main Break', 'Missing Person',
     'Crowd Control', 'VIP Security', 'Welfare Check', 'Other',
 ];
