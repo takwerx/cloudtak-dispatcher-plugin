@@ -222,7 +222,7 @@ export function buildReportHtml(
 </style>
 </head>
 <body>
-<div class='printbar'><button onclick='window.print()'>Print / Save as PDF</button></div>
+<div class='printbar'><button id='rpt-print' onclick='window.print()'>Print / Save as PDF</button></div>
 <div class='rpt-head'>
 <div>
 ${agency?.name ? `<div class='agency'>${esc(agency.name)}</div>` : ''}
@@ -263,7 +263,6 @@ ${narrative.map(p => `<p class='narrative'>${esc(p)}</p>`).join('')}
 
 <h2>Incident log (${incidents.length})</h2>
 ${log || `<p class='muted'>No incidents in the selected period.</p>`}
-<script>window.addEventListener('load', function () { setTimeout(function () { window.print(); }, 300); });</script>
 </body>
 </html>`;
 }
@@ -328,15 +327,31 @@ export function downloadFile(filename: string, mime: string, content: string): v
 }
 
 export function openPrintWindow(html: string): boolean {
-    // Blob URL, not document.write into about:blank: a blob document carries no inherited
-    // CSP from the app's response headers, so the report's inline styles and its
-    // window.print() button work regardless of how the deployment is fronted.
     const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
     const w = window.open(url, '_blank');
     if (!w) {
         URL.revokeObjectURL(url);
         return false;
     }
+    // CloudTAK's nginx ships a CSP with no script-src 'unsafe-inline', and blob documents
+    // INHERIT the creator page's CSP (field-confirmed on 13.49) — so any script inside the
+    // report doc is dead in-app. Drive printing from here instead: programmatic calls from
+    // the bundled plugin are allowed script; only inline execution is blocked. The report's
+    // own onclick still serves the downloaded-HTML case (file:// carries no CSP).
+    let armed = false;
+    const arm = () => {
+        if (armed) return;
+        armed = true;
+        try {
+            w.document.getElementById('rpt-print')?.addEventListener('click', () => w.print());
+            setTimeout(() => w.print(), 250);
+        } catch { /* window torn down — user still has the tab */ }
+    };
+    w.addEventListener('load', arm, { once: true });
+    // Fallback in case 'load' fired before the listener attached (blob loads are fast).
+    setTimeout(() => {
+        try { if (w.document.readyState === 'complete') arm(); } catch { /* ignore */ }
+    }, 800);
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
     return true;
 }
