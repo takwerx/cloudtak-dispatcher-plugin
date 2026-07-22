@@ -1,8 +1,8 @@
 {
-    "name": "cloudtak-plugin-takcad",
-    "version": "0.1.0",
+    "name": "cloudtak-plugin-dispatcher",
+    "version": "1.0.0",
     "type": "module",
-    "description": "CloudTAK plugin — TAK CAD dispatcher",
+    "description": "CloudTAK Dispatcher plugin — Events, incidents, responders, after-action reports",
     "scripts": {
         "lint":  "eslint .",
         "check": "vue-tsc --noEmit"
