@@ -55,16 +55,15 @@
                             v-for='f in feeds'
                             :key='f.guid'
                             class='btn btn-sm w-100 text-start px-3 py-2 border-0 border-bottom rounded-0'
-                            style='font-size:12px'
+                            :style='subscribedGuids.has(f.guid)
+                                ? "font-size:12px"
+                                : "font-size:12px;color:#8a97a5;opacity:1"'
                             :disabled='!subscribedGuids.has(f.guid)'
                             :title='subscribedGuids.has(f.guid) ? f.name : "Subscribe to this feed in CloudTAK → Data Sync first"'
                             @click='selectedFeed = f'
                         >
                             {{ f.name }}
-                            <span
-                                v-if='!subscribedGuids.has(f.guid)'
-                                class='text-muted'
-                            > — not subscribed</span>
+                            <span v-if='!subscribedGuids.has(f.guid)'> — not subscribed</span>
                         </button>
                     </div>
                     <div
