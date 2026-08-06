@@ -146,11 +146,14 @@
                     class='badge bg-secondary'
                 >Archived</span>
                 <button
-                    class='btn btn-link btn-sm p-0 text-muted text-decoration-none'
-                    title='Generate after-action report'
-                    @click='showReport = true'
+                    class='btn btn-link btn-sm p-0 text-muted'
+                    title='Manage — report, call types, agency header'
+                    @click='showManage = true'
                 >
-                    Report
+                    <IconSettings
+                        :size='16'
+                        stroke='1.5'
+                    />
                 </button>
                 <button
                     class='btn btn-link btn-sm p-0 text-muted text-decoration-none'
@@ -194,6 +197,17 @@
                 <ReportView
                     :event='store.activeEvent'
                     @close='showReport = false'
+                />
+            </div>
+
+            <!-- ── Standalone: manage (report / call types / agency) ────────────── -->
+            <div
+                v-else-if='showManage && store.activeEvent'
+                class='flex-grow-1 overflow-hidden'
+            >
+                <ManagePanel
+                    @close='showManage = false'
+                    @report='showManage = false; showReport = true'
                 />
             </div>
 
@@ -242,12 +256,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onErrorCaptured, watch } from 'vue';
 import ProfileConfig from '../../../src/base/profile.ts';
-import { IconHeadset, IconPictureInPictureOn } from '@tabler/icons-vue';
+import { IconHeadset, IconPictureInPictureOn, IconSettings } from '@tabler/icons-vue';
 import IncidentListView from './IncidentListView.vue';
 import VehicleListView  from './VehicleListView.vue';
 import PersonnelListView from './PersonnelListView.vue';
 import EventsView from './EventsView.vue';
 import ReportView from './ReportView.vue';
+import ManagePanel from './ManagePanel.vue';
 import { getIncidentTypes, getVehicleTypes, getVehicles, getPersonnel, getRoles, getIncidentMetadata, getMissions, getSubscribedFeedGuids } from '../lib/takcad-client.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
 import type { IncidentTypeRef, VehicleType, VehicleRef, PersonRef, Role } from '../lib/takcad-types.ts';
@@ -285,6 +300,7 @@ onErrorCaptured((err) => {
 
 const activeTab        = ref<TabKey>('incidents');
 const showReport       = ref(false);
+const showManage       = ref(false);
 const activeCount      = ref(0);
 const connectionStatus = ref('');
 const incidentTypes    = ref<IncidentTypeRef[]>([]);
@@ -348,6 +364,7 @@ function closeEvent() {
     saveLastEventId(null);
     activeCount.value = 0;
     showReport.value = false;
+    showManage.value = false;
 }
 
 async function detect() {
