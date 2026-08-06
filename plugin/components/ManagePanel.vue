@@ -16,13 +16,22 @@
                 <div class='small text-muted fw-semibold text-uppercase mb-1'>
                     After-Action Report
                 </div>
-                <button
-                    class='btn btn-sm btn-warning w-100'
-                    @click='emit("report")'
-                >
-                    Generate report…
-                </button>
+                <div class='card border'>
+                    <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
+                        <div class='text-muted small'>
+                            Call counts, narrative, and exports (PDF / CSV / JSON) for this event.
+                        </div>
+                        <button
+                            class='btn btn-sm btn-warning'
+                            @click='emit("report")'
+                        >
+                            Generate report…
+                        </button>
+                    </div>
+                </div>
             </div>
+
+            <hr class='my-1'>
 
             <!-- Custom call types -->
             <div>
@@ -83,6 +92,8 @@
                     </div>
                 </div>
             </div>
+
+            <hr class='my-1'>
 
             <!-- Agency header -->
             <div>
