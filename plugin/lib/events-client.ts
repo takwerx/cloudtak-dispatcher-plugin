@@ -10,6 +10,9 @@ export interface DispatcherEvent {
     prefix: string;
     feed_guid: string;
     feed_name: string;
+    // TAK channel (Marti group) this event is bound to; null = legacy event, visible
+    // to everyone. The server enforces channel membership on every event/incident route.
+    channel: string | null;
     status: 'active' | 'archived';
     seq: number;
     created_at: string;
@@ -48,6 +51,7 @@ export interface CreateEventBody {
     prefix: string;
     feed_guid: string;
     feed_name: string;
+    channel?: string;
 }
 
 export interface CreateIncidentBody {

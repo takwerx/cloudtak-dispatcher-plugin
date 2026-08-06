@@ -130,6 +130,39 @@ export async function getSubscribedFeedGuids(): Promise<Set<string>> {
     }
 }
 
+// ── Channels (Marti groups) ───────────────────────────────────────────────────
+
+// Channels the user is a member of (deduped: TAK returns IN/OUT rows per channel).
+export async function getUserChannels(): Promise<string[]> {
+    const resp = await std('/api/marti/group?useCache=true', { method: 'GET' }) as { data?: { name: string }[] } | null;
+    return [...new Set((resp?.data ?? []).map(g => g.name))].sort();
+}
+
+export interface CreatedFeed {
+    guid: string;
+    name: string;
+    token?: string;
+}
+
+// Create a DataSync feed (Marti mission) scoped to a single channel; caller becomes owner.
+export async function createFeed(name: string, channel: string, description = ''): Promise<CreatedFeed> {
+    const resp = await std('/api/marti/mission', {
+        method: 'POST',
+        body: { name, group: [channel], description },
+    }) as { guid?: string; name?: string; token?: string } | null;
+    if (!resp?.guid) throw new Error('Feed creation failed — no mission returned');
+    return { guid: resp.guid, name: resp.name ?? name, token: resp.token };
+}
+
+// Re-scope an existing feed to a channel. Only works when the caller owns the mission —
+// callers must surface the failure rather than proceed with a mis-scoped feed.
+export async function setFeedChannel(feedName: string, channel: string): Promise<void> {
+    await std(`/api/marti/missions/${encodeURIComponent(feedName)}`, {
+        method: 'PATCH',
+        body: { groups: [channel] },
+    });
+}
+
 // Read the mission log entries (for incident number counting).
 // CloudTAK's log route keys by mission NAME; entries carry a `content` field.
 export async function getMissionLog(missionName: string): Promise<{ content: string }[]> {

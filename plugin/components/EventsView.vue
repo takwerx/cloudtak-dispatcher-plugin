@@ -36,9 +36,56 @@
                     </div>
                 </div>
                 <div>
+                    <label class='form-label small text-muted mb-1'>Channel <span class='text-danger'>*</span></label>
+                    <select
+                        v-model='selectedChannel'
+                        class='form-select form-select-sm border'
+                    >
+                        <option
+                            value=''
+                            disabled
+                        >
+                            {{ loadingChannels ? 'Loading channels…' : (channels.length ? 'Select a channel' : 'No channels available') }}
+                        </option>
+                        <option
+                            v-for='c in channels'
+                            :key='c'
+                            :value='c'
+                        >
+                            {{ c }}
+                        </option>
+                    </select>
+                    <div class='form-text small'>
+                        Only members of this channel can see the event; its DataSync feed is scoped to it too.
+                    </div>
+                </div>
+                <div>
                     <label class='form-label small text-muted mb-1'>DataSync Feed <span class='text-danger'>*</span></label>
+                    <div class='d-flex rounded overflow-hidden border mb-1'>
+                        <button
+                            v-for='m in FEED_MODES'
+                            :key='m.key'
+                            class='flex-fill btn btn-sm py-1 rounded-0 border-0 small'
+                            :class='feedMode === m.key ? "bg-primary text-white" : "text-muted"'
+                            @click='feedMode = m.key'
+                        >
+                            {{ m.label }}
+                        </button>
+                    </div>
+                    <template v-if='feedMode === "create"'>
+                        <input
+                            v-model='newFeedName'
+                            type='text'
+                            class='form-control form-control-sm border'
+                            placeholder='Feed name (defaults to event name)'
+                            @input='onFeedNameInput'
+                        >
+                        <div class='form-text small'>
+                            Creates the feed in the selected channel and subscribes you automatically.
+                        </div>
+                    </template>
                     <button
-                        v-if='!selectedFeed'
+                        v-if='feedMode === "existing" && !selectedFeed'
                         class='btn btn-sm btn-outline-secondary w-100'
                         :disabled='loadingFeeds'
                         @click='fetchFeeds'
@@ -47,7 +94,7 @@
                         {{ loadingFeeds ? 'Loading…' : '+ Select DataSync Feed' }}
                     </button>
                     <div
-                        v-if='!selectedFeed && feeds.length'
+                        v-if='feedMode === "existing" && !selectedFeed && feeds.length'
                         class='border rounded mt-1'
                         style='max-height:160px;overflow-y:auto;background:var(--bs-body-bg,#1e2228)'
                     >
@@ -67,20 +114,20 @@
                         </button>
                     </div>
                     <div
-                        v-if='!selectedFeed && feeds.length && feeds.some(f => !subscribedGuids.has(f.guid))'
+                        v-if='feedMode === "existing" && !selectedFeed && feeds.length && feeds.some(f => !subscribedGuids.has(f.guid))'
                         class='text-muted small py-1'
                     >
                         Incident markers ride the feed — unsubscribed feeds are disabled.
                         Subscribe in CloudTAK → Data Sync, then reopen this list.
                     </div>
                     <div
-                        v-else-if='!selectedFeed && feedsFetched && !loadingFeeds && !feeds.length'
+                        v-else-if='feedMode === "existing" && !selectedFeed && feedsFetched && !loadingFeeds && !feeds.length'
                         class='text-muted small text-center py-1'
                     >
                         No DataSync feeds found
                     </div>
                     <div
-                        v-if='selectedFeed'
+                        v-if='feedMode === "existing" && selectedFeed'
                         class='d-flex align-items-center gap-2 small mt-1'
                     >
                         <span class='badge bg-primary text-white'>DataSync</span>
@@ -102,7 +149,8 @@
                 </div>
                 <button
                     class='btn btn-sm btn-warning'
-                    :disabled='saving || !form.name.trim() || !selectedFeed'
+                    :disabled='saving || !form.name.trim() || !selectedChannel
+                        || (feedMode === "existing" && !selectedFeed)'
                     @click='submitCreate'
                 >
                     <span v-if='saving' class='spinner-border spinner-border-sm me-1' />
@@ -162,6 +210,11 @@
                         <div class='d-flex align-items-center gap-2'>
                             <span class='fw-semibold small text-truncate'>{{ ev.name }}</span>
                             <span
+                                v-if='ev.channel'
+                                class='badge bg-secondary small'
+                                :title='`Visible to channel ${ev.channel}`'
+                            >{{ ev.channel }}</span>
+                            <span
                                 v-if='ev.status === "archived"'
                                 class='badge bg-secondary small'
                             >Archived</span>
@@ -206,7 +259,8 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue';
 import { useMapStore } from '../../../src/stores/map.ts';
-import { getMissions, getSubscribedFeedGuids } from '../lib/takcad-client.ts';
+import { getMissions, getSubscribedFeedGuids, getUserChannels, createFeed, setFeedChannel } from '../lib/takcad-client.ts';
+import OverlayManager from '../../../src/base/overlay.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
 import {
     listEvents, createEvent, setEventStatus, deleteEvent, listIncidents,
@@ -241,6 +295,21 @@ const feedsFetched    = ref(false);
 const selectedFeed    = ref<MissionRef | null>(null);
 const subscribedGuids = ref<Set<string>>(new Set());
 
+// Channel binding (required on new events) + feed source: bootstrap a channel-scoped
+// feed by default, or re-scope an existing feed the user owns.
+const FEED_MODES = [
+    { key: 'create',   label: 'New feed'      },
+    { key: 'existing', label: 'Existing feed' },
+] as const;
+type FeedMode = typeof FEED_MODES[number]['key'];
+
+const channels        = ref<string[]>([]);
+const loadingChannels = ref(false);
+const selectedChannel = ref('');
+const feedMode        = ref<FeedMode>('create');
+const newFeedName     = ref('');
+let feedNameDirty     = false;
+
 const form = reactive({
     name:   '',
     prefix: '',
@@ -263,6 +332,11 @@ function derivePrefix(name: string): string {
 
 function onNameInput() {
     if (!prefixDirty) form.prefix = derivePrefix(form.name);
+    if (!feedNameDirty) newFeedName.value = form.name.trim();
+}
+
+function onFeedNameInput() {
+    feedNameDirty = true;
 }
 
 async function loadList() {
@@ -303,18 +377,66 @@ function openCreate() {
     feeds.value = [];
     feedsFetched.value = false;
     createError.value = '';
+    selectedChannel.value = '';
+    feedMode.value = 'create';
+    newFeedName.value = '';
+    feedNameDirty = false;
     view.value = 'create';
+    loadingChannels.value = true;
+    getUserChannels()
+        .then(c => { channels.value = c; })
+        .catch(() => { channels.value = []; })
+        .finally(() => { loadingChannels.value = false; });
 }
 
 async function submitCreate() {
-    if (!form.name.trim() || !selectedFeed.value) return;
+    if (!form.name.trim() || !selectedChannel.value) return;
+    if (feedMode.value === 'existing' && !selectedFeed.value) return;
     saving.value = true; createError.value = '';
     try {
+        let feedGuid: string;
+        let feedName: string;
+        if (feedMode.value === 'create') {
+            const feed = await createFeed(
+                newFeedName.value.trim() || form.name.trim(),
+                selectedChannel.value,
+                `Dispatcher feed for event ${form.name.trim()}`,
+            );
+            feedGuid = feed.guid;
+            feedName = feed.name;
+            // Subscribe the creator right away so markers render without a Data Sync
+            // detour (best-effort — the event bar warns + offers Recheck if it fails).
+            try {
+                await OverlayManager.createLoaded({
+                    name:    feed.name,
+                    url:     `/mission/${encodeURIComponent(feed.guid)}`,
+                    type:    'geojson',
+                    mode:    'mission',
+                    token:   feed.token,
+                    mode_id: feed.guid,
+                });
+                await mapStore.loadMission(feed.guid);
+            } catch (e) {
+                console.warn('[dispatcher] feed auto-subscribe failed', e);
+            }
+        } else {
+            // An existing feed must end up scoped to the event's channel — only its
+            // owner can do that, so fail the create rather than ship a mis-scoped feed.
+            try {
+                await setFeedChannel(selectedFeed.value!.name, selectedChannel.value);
+            } catch {
+                throw new Error(`Could not scope feed "${selectedFeed.value!.name}" to channel `
+                    + `"${selectedChannel.value}" — only the feed owner can. Use "New feed" instead.`);
+            }
+            feedGuid = selectedFeed.value!.guid;
+            feedName = selectedFeed.value!.name;
+        }
         const ev = await createEvent({
             name:      form.name.trim(),
             prefix:    (form.prefix || derivePrefix(form.name) || 'INC').toUpperCase(),
-            feed_guid: selectedFeed.value.guid,
-            feed_name: selectedFeed.value.name,
+            feed_guid: feedGuid,
+            feed_name: feedName,
+            channel:   selectedChannel.value,
         });
         store.events = [ev, ...store.events];
         view.value = 'list';

@@ -131,6 +131,11 @@
                 <span class='badge bg-primary text-white'>Event</span>
                 <div class='flex-grow-1 text-truncate'>
                     <span class='fw-semibold'>{{ store.activeEvent.name }}</span>
+                    <span
+                        v-if='store.activeEvent.channel'
+                        class='badge bg-secondary text-white ms-1'
+                        :title='`Visible to channel ${store.activeEvent.channel}`'
+                    >{{ store.activeEvent.channel }}</span>
                     <span class='ms-2'>
                         <span class='badge bg-primary text-white'>DataSync</span>
                         <span class='fw-semibold'>{{ store.activeEvent.feed_name }}</span>

@@ -15,6 +15,7 @@ import Err from '@openaddresses/batch-error';
 // This file therefore requires CloudTAK >= 13.45; the infra-TAK installer copies it
 // into api/stateless/routes/ and refuses to install onto a pre-split tree.
 import Auth from '../../common/auth.js';
+import { TAKAPI, APIAuthCertificate } from '@tak-ps/node-tak';
 import type ConfigStateless from '../config.js';
 
 // Server-side store for the standalone Dispatcher: Events (1:1 with a DataSync feed) and the
@@ -32,6 +33,7 @@ interface EventRow {
     prefix: string;
     feed_guid: string;
     feed_name: string;
+    channel: string | null;
     status: string;
     seq: number;
     created_at: string;
@@ -81,6 +83,49 @@ function mapIncident(row: IncidentRow): IncidentRow {
     return { ...row, assigned: asArray(row.assigned), notes: asArray(row.notes) };
 }
 
+// ── Channel scoping ───────────────────────────────────────────────────────────
+// An Event can be bound to a TAK channel (Marti group); only members of that channel
+// can see or touch it (events with no channel predate the feature and stay visible
+// to everyone). Membership is resolved server-side against TAK Server with the
+// caller's own client certificate — same pattern as the TAK-CAD proxy — and cached
+// briefly per user so events-list refreshes don't hammer the TAK API.
+
+const CHANNEL_TTL_MS = 60_000;
+const channelCache = new Map<string, { ts: number; channels: Set<string> }>();
+
+async function userChannels(config: ConfigStateless, email: string): Promise<Set<string>> {
+    const hit = channelCache.get(email);
+    if (hit && Date.now() - hit.ts < CHANNEL_TTL_MS) return hit.channels;
+    const profile = await config.models.Profile.from(email);
+    const api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(profile.auth.cert, profile.auth.key));
+    const groups = await api.Group.list({}) as { data?: { name: string }[] };
+    const channels = new Set((groups.data ?? []).map(g => g.name));
+    channelCache.set(email, { ts: Date.now(), channels });
+    return channels;
+}
+
+function canSee(channels: Set<string>, ev: Pick<EventRow, 'channel'>): boolean {
+    return !ev.channel || channels.has(ev.channel);
+}
+
+async function eventById(config: ConfigStateless, eventid: string): Promise<EventRow | null> {
+    const rows = await query<EventRow>(config, sql`
+        SELECT id, name, prefix, feed_guid, feed_name, channel, status, seq, created_at, created_by
+        FROM dispatcher_events WHERE id = ${eventid}
+    `);
+    return rows[0] ?? null;
+}
+
+// Resolve caller + membership, load the event, and 403/404 unless they can see it.
+async function requireEventAccess(config: ConfigStateless, email: string, eventid: string): Promise<EventRow> {
+    const ev = await eventById(config, eventid);
+    if (!ev) throw new Err(404, null, 'Event not found');
+    if (!canSee(await userChannels(config, email), ev)) {
+        throw new Err(403, null, 'No access to this event\'s channel');
+    }
+    return ev;
+}
+
 export default async function router(schema: Schema, config: ConfigStateless) {
     // Idempotent schema bootstrap. Best-effort so a transient DB hiccup can't block CloudTAK
     // startup; CREATE TABLE IF NOT EXISTS is safe to re-run on every load.
@@ -121,6 +166,10 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 key   TEXT PRIMARY KEY,
                 value JSONB NOT NULL
             )
+        `);
+        // Channel scoping (v1.1): NULL = legacy event, visible to everyone.
+        await config.pg.execute(sql`
+            ALTER TABLE dispatcher_events ADD COLUMN IF NOT EXISTS channel TEXT
         `);
     } catch (err) {
         console.error('[dispatcher] table bootstrap failed', err);
@@ -184,12 +233,13 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
-            await Auth.is_auth(config, req);
+            const user = await Auth.as_user(config, req);
+            const channels = await userChannels(config, user.email);
             const events = await query<EventRow>(config, sql`
-                SELECT id, name, prefix, feed_guid, feed_name, status, seq, created_at, created_by
+                SELECT id, name, prefix, feed_guid, feed_name, channel, status, seq, created_at, created_by
                 FROM dispatcher_events ORDER BY created_at DESC
             `);
-            res.json({ events });
+            res.json({ events: events.filter(e => canSee(channels, e)) });
         } catch (err) {
             Err.respond(err, res);
         }
@@ -204,17 +254,22 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             prefix: Type.String(),
             feed_guid: Type.String(),
             feed_name: Type.String(),
+            channel: Type.Optional(Type.String()),
         }),
         res: Type.Any(),
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            const channel = (req.body.channel || '').trim() || null;
+            if (channel && !(await userChannels(config, user.email)).has(channel)) {
+                throw new Err(403, null, `You are not a member of channel "${channel}"`);
+            }
             const id = randomUUID();
             const prefix = (req.body.prefix || 'INC').replace(/[^A-Z0-9-]/gi, '').toUpperCase().slice(0, 12) || 'INC';
             const events = await query<EventRow>(config, sql`
-                INSERT INTO dispatcher_events (id, name, prefix, feed_guid, feed_name, created_by)
-                VALUES (${id}, ${req.body.name}, ${prefix}, ${req.body.feed_guid}, ${req.body.feed_name}, ${user.email})
-                RETURNING id, name, prefix, feed_guid, feed_name, status, seq, created_at, created_by
+                INSERT INTO dispatcher_events (id, name, prefix, feed_guid, feed_name, channel, created_by)
+                VALUES (${id}, ${req.body.name}, ${prefix}, ${req.body.feed_guid}, ${req.body.feed_name}, ${channel}, ${user.email})
+                RETURNING id, name, prefix, feed_guid, feed_name, channel, status, seq, created_at, created_by
             `);
             res.json({ event: events[0] });
         } catch (err) {
@@ -225,18 +280,30 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     await schema.patch('/dispatcher/events/:eventid', {
         name: 'Update Event',
         group: 'Dispatcher',
-        description: 'Archive or reactivate an event',
+        description: 'Archive/reactivate an event, or assign its channel',
         params: Type.Object({ eventid: Type.String() }),
-        body: Type.Object({ status: Type.Union([Type.Literal('active'), Type.Literal('archived')]) }),
+        body: Type.Object({
+            status: Type.Optional(Type.Union([Type.Literal('active'), Type.Literal('archived')])),
+            channel: Type.Optional(Type.String()),
+        }),
         res: Type.Any(),
     }, async (req, res) => {
         try {
-            await Auth.is_auth(config, req);
+            const user = await Auth.as_user(config, req);
+            const ev = await requireEventAccess(config, user.email, req.params.eventid);
+            const nextChannel = req.body.channel !== undefined
+                ? ((req.body.channel || '').trim() || null)
+                : ev.channel;
+            if (nextChannel && nextChannel !== ev.channel
+                && !(await userChannels(config, user.email)).has(nextChannel)) {
+                throw new Err(403, null, `You are not a member of channel "${nextChannel}"`);
+            }
             const events = await query<EventRow>(config, sql`
-                UPDATE dispatcher_events SET status = ${req.body.status} WHERE id = ${req.params.eventid}
-                RETURNING id, name, prefix, feed_guid, feed_name, status, seq, created_at, created_by
+                UPDATE dispatcher_events
+                SET status = ${req.body.status ?? ev.status}, channel = ${nextChannel}
+                WHERE id = ${req.params.eventid}
+                RETURNING id, name, prefix, feed_guid, feed_name, channel, status, seq, created_at, created_by
             `);
-            if (!events.length) throw new Err(404, null, 'Event not found');
             res.json({ event: events[0] });
         } catch (err) {
             Err.respond(err, res);
@@ -251,7 +318,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
-            await Auth.is_auth(config, req);
+            const user = await Auth.as_user(config, req);
+            await requireEventAccess(config, user.email, req.params.eventid);
             await config.pg.execute(sql`DELETE FROM dispatcher_events WHERE id = ${req.params.eventid}`);
             res.json({ status: 200, message: 'deleted' });
         } catch (err) {
@@ -269,7 +337,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
-            await Auth.is_auth(config, req);
+            const user = await Auth.as_user(config, req);
+            await requireEventAccess(config, user.email, req.params.eventid);
             const incidents = await query<IncidentRow>(config, sql`
                 SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
                        status, assigned, notes, created_at, closed_at
@@ -298,7 +367,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
-            await Auth.is_auth(config, req);
+            const user = await Auth.as_user(config, req);
+            await requireEventAccess(config, user.email, req.params.eventid);
 
             // Atomically claim the next sequence number for this event.
             const bumped = await query<{ seq: number; prefix: string }>(config, sql`
@@ -350,7 +420,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
-            await Auth.is_auth(config, req);
+            const user = await Auth.as_user(config, req);
 
             // Read-modify-write: merge the patch over the current row, then write all columns.
             const current = await query<IncidentRow>(config, sql`
@@ -360,6 +430,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             `);
             if (!current.length) throw new Err(404, null, 'Incident not found');
             const cur = current[0];
+            await requireEventAccess(config, user.email, cur.event_id);
             const b = req.body;
 
             const next = {
