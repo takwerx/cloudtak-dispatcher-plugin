@@ -16,7 +16,16 @@
 
         <!-- Type — shared dropdown in both modes -->
         <div>
-            <label class='form-label small text-muted mb-1'>Incident Type <span class='text-danger'>*</span></label>
+            <label class='form-label small text-muted mb-1'>Incident Type <span class='text-danger'>*</span>
+                <button
+                    v-if='serverMode === "standalone"'
+                    class='btn btn-sm btn-link p-0 ms-2 text-decoration-none small'
+                    type='button'
+                    @click='showTypeEditor = !showTypeEditor'
+                >
+                    {{ showTypeEditor ? 'done' : 'manage' }}
+                </button>
+            </label>
             <select
                 v-model='form.incidentType'
                 required
@@ -33,6 +42,60 @@
                     {{ t }}
                 </option>
             </select>
+            <!-- Custom call types: shared per-CloudTAK (dispatcher_settings), merged with defaults -->
+            <div
+                v-if='showTypeEditor'
+                class='border rounded mt-1 p-2 d-flex flex-column gap-1'
+            >
+                <div class='d-flex flex-wrap gap-1'>
+                    <span
+                        v-for='t in customTypes'
+                        :key='t'
+                        class='badge bg-secondary text-white d-flex align-items-center gap-1'
+                    >
+                        {{ t }}
+                        <button
+                            class='btn btn-link p-0 text-white text-decoration-none'
+                            style='font-size:10px;line-height:1'
+                            type='button'
+                            title='Remove custom type'
+                            @click='removeCustomType(t)'
+                        >
+                            ✕
+                        </button>
+                    </span>
+                    <span
+                        v-if='!customTypes.length'
+                        class='text-muted small'
+                    >No custom call types yet</span>
+                </div>
+                <div class='d-flex gap-1'>
+                    <input
+                        v-model='newTypeName'
+                        type='text'
+                        class='form-control form-control-sm border flex-grow-1'
+                        placeholder='Add call type…'
+                        @keyup.enter='addCustomType'
+                    >
+                    <button
+                        class='btn btn-sm btn-outline-secondary'
+                        type='button'
+                        :disabled='!newTypeName.trim() || savingTypes'
+                        @click='addCustomType'
+                    >
+                        Add
+                    </button>
+                </div>
+                <div
+                    v-if='typeEditorError'
+                    class='text-danger small'
+                >
+                    {{ typeEditorError }}
+                </div>
+                <div class='text-muted small'>
+                    Shared with every dispatcher on this CloudTAK.
+                </div>
+            </div>
         </div>
 
         <!-- Date/Time -->
@@ -264,7 +327,7 @@ import type { GeocodeSuggestion, MissionRef } from '../lib/takcad-client.ts';
 import type { IncidentRef, IncidentTypeRef } from '../lib/takcad-types.ts';
 import { STATUS_ACTIVE } from '../lib/takcad-types.ts';
 import { dropIncidentMarker, postMissionCallLog, postFeedChat } from '../lib/map-marker.ts';
-import { createIncident } from '../lib/events-client.ts';
+import { createIncident, getDispatcherSettings, putDispatcherSetting } from '../lib/events-client.ts';
 import type { DispatcherIncident } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
 
@@ -294,12 +357,64 @@ const incidentNumber = ref('');
 let geoDebounce: ReturnType<typeof setTimeout>;
 
 // Shared type list: TAK-CAD server types (names only) or default list
+// Custom call types (standalone only): deployment-shared via dispatcher_settings,
+// merged over the built-in defaults. TAK-CAD mode keeps its server-provided list.
+const customTypes     = ref<string[]>([]);
+const showTypeEditor  = ref(false);
+const newTypeName     = ref('');
+const savingTypes     = ref(false);
+const typeEditorError = ref('');
+
 const typeOptions = computed<string[]>(() => {
     if (props.serverMode === 'takcad' && props.incidentTypes.length) {
         return props.incidentTypes.map(t => t.name);
     }
-    return DEFAULT_INCIDENT_TYPES;
+    const extra = customTypes.value
+        .filter(t => !DEFAULT_INCIDENT_TYPES.includes(t))
+        .sort();
+    // Keep 'Other' at the bottom, custom types above it.
+    const base = DEFAULT_INCIDENT_TYPES.filter(t => t !== 'Other');
+    return [...base, ...extra, 'Other'];
 });
+
+async function addCustomType() {
+    const name = newTypeName.value.trim();
+    if (!name) return;
+    typeEditorError.value = '';
+    if (typeOptions.value.some(t => t.toLowerCase() === name.toLowerCase())) {
+        typeEditorError.value = 'That call type already exists';
+        return;
+    }
+    savingTypes.value = true;
+    const prev = customTypes.value;
+    try {
+        customTypes.value = [...prev, name];
+        await putDispatcherSetting('incident_types', customTypes.value);
+        newTypeName.value = '';
+        form.incidentType = name;
+    } catch (e) {
+        customTypes.value = prev;
+        typeEditorError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        savingTypes.value = false;
+    }
+}
+
+async function removeCustomType(name: string) {
+    typeEditorError.value = '';
+    savingTypes.value = true;
+    const prev = customTypes.value;
+    try {
+        customTypes.value = prev.filter(t => t !== name);
+        await putDispatcherSetting('incident_types', customTypes.value);
+        if (form.incidentType === name) form.incidentType = '';
+    } catch (e) {
+        customTypes.value = prev;
+        typeEditorError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        savingTypes.value = false;
+    }
+}
 
 const form = reactive({
     incidentType:      '',
@@ -382,6 +497,17 @@ function pickOnMap() {
 }
 
 onMounted(async () => {
+    // Custom call types load best-effort — an older server without the settings route
+    // just leaves the defaults.
+    if (props.serverMode === 'standalone') {
+        getDispatcherSettings().then((s) => {
+            const list = s.incident_types;
+            if (Array.isArray(list)) {
+                customTypes.value = list.filter((t): t is string => typeof t === 'string');
+            }
+        }).catch(() => { /* defaults only */ });
+    }
+
     // TAK-CAD mode pre-generates a number from the feed's mission log. Standalone numbers are
     // assigned by the server on create (returned in the incident row), so we don't pre-gen them.
     if (props.serverMode === 'takcad' && props.activeFeed && !props.uid) {
