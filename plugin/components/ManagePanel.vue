@@ -11,7 +11,7 @@
         </div>
 
         <div class='flex-grow-1 overflow-auto p-3 d-flex flex-column gap-3'>
-            <!-- Report -->
+            <!-- Report (incl. the agency header + logo it renders with) -->
             <div>
                 <div class='small text-muted fw-semibold text-uppercase mb-1'>
                     After-Action Report
@@ -20,13 +20,69 @@
                     <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
                         <div class='text-muted small'>
                             Call counts, narrative, and exports (PDF / CSV / JSON) for this event.
+                            The agency header below appears on every report.
                         </div>
-                        <button
-                            class='btn btn-sm btn-warning'
-                            @click='emit("report")'
+                        <label class='mb-0 text-muted'>Agency name
+                            <input
+                                v-model='agency.name'
+                                type='text'
+                                class='form-control form-control-sm border'
+                                placeholder='e.g. New Hanover Co PS Comms'
+                            >
+                        </label>
+                        <label class='mb-0 text-muted'>Agency ID
+                            <input
+                                v-model='agency.id'
+                                type='text'
+                                class='form-control form-control-sm border'
+                                placeholder='e.g. FDID / ORI'
+                            >
+                        </label>
+                        <div class='d-flex align-items-center gap-2'>
+                            <img
+                                v-if='agency.logo'
+                                :src='agency.logo'
+                                alt='Agency logo'
+                                style='max-height:40px;max-width:90px'
+                            >
+                            <input
+                                type='file'
+                                accept='image/*'
+                                class='form-control form-control-sm border flex-grow-1'
+                                @change='onLogoFile'
+                            >
+                            <button
+                                v-if='agency.logo'
+                                class='btn btn-sm btn-link text-danger p-0 text-decoration-none'
+                                @click='agency.logo = null'
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <div
+                            v-if='agencyError'
+                            class='alert alert-danger py-1 px-2 small mb-0'
                         >
-                            Generate report…
-                        </button>
+                            {{ agencyError }}
+                        </div>
+                        <div class='d-flex gap-2'>
+                            <button
+                                class='btn btn-sm btn-outline-secondary'
+                                :disabled='savingAgency'
+                                @click='saveAgency'
+                            >
+                                <span
+                                    v-if='savingAgency'
+                                    class='spinner-border spinner-border-sm me-1'
+                                />{{ agencySaved ? 'Saved ✓' : 'Save header' }}
+                            </button>
+                            <button
+                                class='btn btn-sm btn-warning flex-grow-1'
+                                @click='emit("report")'
+                            >
+                                Generate report…
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -93,74 +149,6 @@
                 </div>
             </div>
 
-            <hr class='my-1'>
-
-            <!-- Agency header -->
-            <div>
-                <div class='small text-muted fw-semibold text-uppercase mb-1'>
-                    Agency Header
-                </div>
-                <div class='card border'>
-                    <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
-                        <label class='mb-0 text-muted'>Agency name
-                            <input
-                                v-model='agency.name'
-                                type='text'
-                                class='form-control form-control-sm border'
-                                placeholder='e.g. New Hanover Co PS Comms'
-                            >
-                        </label>
-                        <label class='mb-0 text-muted'>Agency ID
-                            <input
-                                v-model='agency.id'
-                                type='text'
-                                class='form-control form-control-sm border'
-                                placeholder='e.g. FDID / ORI'
-                            >
-                        </label>
-                        <div class='d-flex align-items-center gap-2'>
-                            <img
-                                v-if='agency.logo'
-                                :src='agency.logo'
-                                alt='Agency logo'
-                                style='max-height:40px;max-width:90px'
-                            >
-                            <input
-                                type='file'
-                                accept='image/*'
-                                class='form-control form-control-sm border flex-grow-1'
-                                @change='onLogoFile'
-                            >
-                            <button
-                                v-if='agency.logo'
-                                class='btn btn-sm btn-link text-danger p-0 text-decoration-none'
-                                @click='agency.logo = null'
-                            >
-                                ✕
-                            </button>
-                        </div>
-                        <div
-                            v-if='agencyError'
-                            class='alert alert-danger py-1 px-2 small mb-0'
-                        >
-                            {{ agencyError }}
-                        </div>
-                        <button
-                            class='btn btn-sm btn-outline-secondary align-self-start'
-                            :disabled='savingAgency'
-                            @click='saveAgency'
-                        >
-                            <span
-                                v-if='savingAgency'
-                                class='spinner-border spinner-border-sm me-1'
-                            />{{ agencySaved ? 'Saved ✓' : 'Save agency header' }}
-                        </button>
-                        <div class='text-muted small'>
-                            Shown on report headers for every dispatcher on this CloudTAK.
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
     </div>
 </template>
