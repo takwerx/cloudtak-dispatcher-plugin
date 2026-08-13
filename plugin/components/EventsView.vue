@@ -49,11 +49,12 @@
                         </button>
                     </div>
                     <template v-if='feedMode === "create"'>
+                        <label class='form-label small text-muted mb-1 mt-1'>DataSync Feed Name <span class='text-danger'>*</span></label>
                         <input
                             v-model='newFeedName'
                             type='text'
                             class='form-control form-control-sm border mb-1'
-                            placeholder='Feed name (defaults to event name)'
+                            placeholder='Defaults to the event name'
                             @input='onFeedNameInput'
                         >
                         <label class='form-label small text-muted mb-1'>Channel for the new feed <span class='text-danger'>*</span></label>
