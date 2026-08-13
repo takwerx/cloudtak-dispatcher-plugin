@@ -149,16 +149,20 @@ export interface CreatedFeed {
     guid: string;
     name: string;
     token?: string;
+    groups?: string | string[];
 }
 
 // Create a DataSync feed (Marti mission) scoped to a single channel; caller becomes owner.
+// CAUTION: TAK Server keys missions by NAME — "creating" an existing name can return the
+// pre-existing mission instead of a new one. Callers must verify the returned groups
+// contain the requested channel (see EventsView.submitCreate) before using the feed.
 export async function createFeed(name: string, channel: string, description = ''): Promise<CreatedFeed> {
     const resp = await std('/api/marti/mission', {
         method: 'POST',
         body: { name, group: [channel], description },
-    }) as { guid?: string; name?: string; token?: string } | null;
+    }) as { guid?: string; name?: string; token?: string; groups?: string | string[] } | null;
     if (!resp?.guid) throw new Error('Feed creation failed — no mission returned');
-    return { guid: resp.guid, name: resp.name ?? name, token: resp.token };
+    return { guid: resp.guid, name: resp.name ?? name, token: resp.token, groups: resp.groups };
 }
 
 // Re-scope an existing feed to a channel. Only works when the caller owns the mission —

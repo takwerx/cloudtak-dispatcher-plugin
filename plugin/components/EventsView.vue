@@ -452,11 +452,25 @@ async function submitCreate() {
         let channel: string;
         if (feedMode.value === 'create') {
             channel = selectedChannel.value;
+            const wantedName = newFeedName.value.trim() || form.name.trim();
+            // TAK Server keys missions by NAME — a duplicate "create" silently returns
+            // the existing mission. Guard twice: against every feed we can see, then
+            // against the returned channel list (covers feeds in channels we can't see).
+            const visible = await getMissions().catch(() => [] as MissionRef[]);
+            if (visible.some(m => m.name.toLowerCase() === wantedName.toLowerCase())) {
+                throw new Error(`A DataSync feed named "${wantedName}" already exists — `
+                    + 'choose another name, or attach it via "Existing feed".');
+            }
             const feed = await createFeed(
-                newFeedName.value.trim() || form.name.trim(),
+                wantedName,
                 channel,
                 `Dispatcher feed for event ${form.name.trim()}`,
             );
+            const gotChannels = feedChannels(feed);
+            if (gotChannels.length && !gotChannels.includes(channel)) {
+                throw new Error(`A feed named "${wantedName}" already exists on the TAK Server `
+                    + `(in ${gotChannels.join(', ')}) — choose a different name.`);
+            }
             feedGuid = feed.guid;
             feedName = feed.name;
             await subscribeToFeed(feed.guid, feed.name, feed.token);
