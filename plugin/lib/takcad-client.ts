@@ -111,6 +111,13 @@ export interface MissionRef {
     guid:        string;
     name:        string;
     description?: string;
+    // Channel(s) the feed lives in — Marti returns a single string when there's one.
+    groups?:     string | string[];
+}
+
+export function feedChannels(f: Pick<MissionRef, 'groups'>): string[] {
+    if (!f.groups) return [];
+    return Array.isArray(f.groups) ? f.groups : [f.groups];
 }
 
 export async function getMissions(): Promise<MissionRef[]> {

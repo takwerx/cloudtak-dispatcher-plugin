@@ -36,30 +36,6 @@
                     </div>
                 </div>
                 <div>
-                    <label class='form-label small text-muted mb-1'>Channel <span class='text-danger'>*</span></label>
-                    <select
-                        v-model='selectedChannel'
-                        class='form-select form-select-sm border'
-                    >
-                        <option
-                            value=''
-                            disabled
-                        >
-                            {{ loadingChannels ? 'Loading channels…' : (channels.length ? 'Select a channel' : 'No channels available') }}
-                        </option>
-                        <option
-                            v-for='c in channels'
-                            :key='c'
-                            :value='c'
-                        >
-                            {{ c }}
-                        </option>
-                    </select>
-                    <div class='form-text small'>
-                        Only members of this channel can see the event; its DataSync feed is scoped to it too.
-                    </div>
-                </div>
-                <div>
                     <label class='form-label small text-muted mb-1'>DataSync Feed <span class='text-danger'>*</span></label>
                     <div class='d-flex rounded overflow-hidden border mb-1'>
                         <button
@@ -76,12 +52,32 @@
                         <input
                             v-model='newFeedName'
                             type='text'
-                            class='form-control form-control-sm border'
+                            class='form-control form-control-sm border mb-1'
                             placeholder='Feed name (defaults to event name)'
                             @input='onFeedNameInput'
                         >
+                        <label class='form-label small text-muted mb-1'>Channel for the new feed <span class='text-danger'>*</span></label>
+                        <select
+                            v-model='selectedChannel'
+                            class='form-select form-select-sm border'
+                        >
+                            <option
+                                value=''
+                                disabled
+                            >
+                                {{ loadingChannels ? 'Loading channels…' : (channels.length ? 'Select a channel' : 'No channels available') }}
+                            </option>
+                            <option
+                                v-for='c in channels'
+                                :key='c'
+                                :value='c'
+                            >
+                                {{ c }}
+                            </option>
+                        </select>
                         <div class='form-text small'>
-                            Creates the feed in the selected channel and subscribes you automatically.
+                            The feed is created in this channel and you're subscribed automatically.
+                            The event inherits the feed's channel — only its members see either.
                         </div>
                     </template>
                     <button
@@ -126,19 +122,50 @@
                     >
                         No DataSync feeds found
                     </div>
-                    <div
-                        v-if='feedMode === "existing" && selectedFeed'
-                        class='d-flex align-items-center gap-2 small mt-1'
-                    >
-                        <span class='badge bg-primary text-white'>DataSync</span>
-                        <span class='text-truncate flex-grow-1'>{{ selectedFeed.name }}</span>
-                        <button
-                            class='btn btn-link btn-sm p-0 text-muted text-decoration-none'
-                            @click='selectedFeed = null; feeds = []; feedsFetched = false'
+                    <template v-if='feedMode === "existing" && selectedFeed'>
+                        <div class='d-flex align-items-center gap-2 small mt-1'>
+                            <span class='badge bg-primary text-white'>DataSync</span>
+                            <span class='text-truncate flex-grow-1'>{{ selectedFeed.name }}</span>
+                            <span
+                                v-if='existingChannelOptions.length === 1'
+                                class='badge bg-secondary text-white'
+                                :title='`Feed channel — the event inherits it`'
+                            >{{ existingChannelOptions[0] }}</span>
+                            <button
+                                class='btn btn-link btn-sm p-0 text-muted text-decoration-none'
+                                @click='selectedFeed = null; feeds = []; feedsFetched = false'
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <template v-if='existingChannelOptions.length > 1'>
+                            <label class='form-label small text-muted mb-1 mt-1'>Feed is in multiple channels — pick the event's</label>
+                            <select
+                                v-model='existingChannel'
+                                class='form-select form-select-sm border'
+                            >
+                                <option
+                                    v-for='c in existingChannelOptions'
+                                    :key='c'
+                                    :value='c'
+                                >
+                                    {{ c }}
+                                </option>
+                            </select>
+                        </template>
+                        <div
+                            v-if='!existingChannelOptions.length'
+                            class='text-warning small mt-1'
                         >
-                            ✕
-                        </button>
-                    </div>
+                            This feed has no channel — the event would be visible to everyone.
+                        </div>
+                        <div
+                            v-else
+                            class='form-text small'
+                        >
+                            The event inherits the feed's channel — only its members see either.
+                        </div>
+                    </template>
                 </div>
 
                 <div
@@ -149,7 +176,8 @@
                 </div>
                 <button
                     class='btn btn-sm btn-warning'
-                    :disabled='saving || !form.name.trim() || !selectedChannel
+                    :disabled='saving || !form.name.trim()
+                        || (feedMode === "create" && !selectedChannel)
                         || (feedMode === "existing" && !selectedFeed)'
                     @click='submitCreate'
                 >
@@ -257,9 +285,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, watch, onMounted } from 'vue';
 import { useMapStore } from '../../../src/stores/map.ts';
-import { getMissions, getSubscribedFeedGuids, getUserChannels, createFeed, setFeedChannel } from '../lib/takcad-client.ts';
+import { getMissions, getSubscribedFeedGuids, getUserChannels, createFeed, feedChannels } from '../lib/takcad-client.ts';
 import OverlayManager from '../../../src/base/overlay.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
 import {
@@ -295,8 +323,11 @@ const feedsFetched    = ref(false);
 const selectedFeed    = ref<MissionRef | null>(null);
 const subscribedGuids = ref<Set<string>>(new Set());
 
-// Channel binding (required on new events) + feed source: bootstrap a channel-scoped
-// feed by default, or re-scope an existing feed the user owns.
+// The channel belongs to the FEED, never picked against it (operator design,
+// 2026-08-06): a NEW feed gets its channel assigned at creation; an EXISTING feed
+// already has one and the event simply inherits it. The user's credentials bound
+// everything — Marti only lists feeds in their channels, and the server enforces
+// membership on the event. No mismatch is possible.
 const FEED_MODES = [
     { key: 'create',   label: 'New feed'      },
     { key: 'existing', label: 'Existing feed' },
@@ -305,10 +336,28 @@ type FeedMode = typeof FEED_MODES[number]['key'];
 
 const channels        = ref<string[]>([]);
 const loadingChannels = ref(false);
-const selectedChannel = ref('');
+const selectedChannel = ref('');           // create mode: channel for the new feed
 const feedMode        = ref<FeedMode>('create');
 const newFeedName     = ref('');
 let feedNameDirty     = false;
+
+// Existing mode: the event's channel comes FROM the picked feed.
+const existingChannel        = ref('');
+const existingChannelOptions = ref<string[]>([]);
+
+watch(selectedFeed, (f) => {
+    if (!f) {
+        existingChannelOptions.value = [];
+        existingChannel.value = '';
+        return;
+    }
+    const all = feedChannels(f);
+    // Prefer the feed channels the user is a member of; fall back to the feed's own
+    // list (the server still validates membership on create).
+    const mine = all.filter(c => channels.value.includes(c));
+    existingChannelOptions.value = mine.length ? mine : all;
+    existingChannel.value = existingChannelOptions.value[0] ?? '';
+});
 
 const form = reactive({
     name:   '',
@@ -390,16 +439,19 @@ function openCreate() {
 }
 
 async function submitCreate() {
-    if (!form.name.trim() || !selectedChannel.value) return;
+    if (!form.name.trim()) return;
+    if (feedMode.value === 'create' && !selectedChannel.value) return;
     if (feedMode.value === 'existing' && !selectedFeed.value) return;
     saving.value = true; createError.value = '';
     try {
         let feedGuid: string;
         let feedName: string;
+        let channel: string;
         if (feedMode.value === 'create') {
+            channel = selectedChannel.value;
             const feed = await createFeed(
                 newFeedName.value.trim() || form.name.trim(),
-                selectedChannel.value,
+                channel,
                 `Dispatcher feed for event ${form.name.trim()}`,
             );
             feedGuid = feed.guid;
@@ -420,23 +472,19 @@ async function submitCreate() {
                 console.warn('[dispatcher] feed auto-subscribe failed', e);
             }
         } else {
-            // An existing feed must end up scoped to the event's channel — only its
-            // owner can do that, so fail the create rather than ship a mis-scoped feed.
-            try {
-                await setFeedChannel(selectedFeed.value!.name, selectedChannel.value);
-            } catch {
-                throw new Error(`Could not scope feed "${selectedFeed.value!.name}" to channel `
-                    + `"${selectedChannel.value}" — only the feed owner can. Use "New feed" instead.`);
-            }
+            // The event inherits the existing feed's channel — the feed itself is
+            // never modified. A channel-less (public) feed yields a channel-less
+            // event, visible to everyone (the form warns before this point).
             feedGuid = selectedFeed.value!.guid;
             feedName = selectedFeed.value!.name;
+            channel  = existingChannel.value;
         }
         const ev = await createEvent({
             name:      form.name.trim(),
             prefix:    (form.prefix || derivePrefix(form.name) || 'INC').toUpperCase(),
             feed_guid: feedGuid,
             feed_name: feedName,
-            channel:   selectedChannel.value,
+            channel:   channel || undefined,
         });
         store.events = [ev, ...store.events];
         view.value = 'list';
