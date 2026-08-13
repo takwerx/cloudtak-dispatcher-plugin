@@ -98,26 +98,14 @@
                             v-for='f in feeds'
                             :key='f.guid'
                             class='btn btn-sm w-100 text-start px-3 py-2 border-0 border-bottom rounded-0'
-                            :style='subscribedGuids.has(f.guid)
-                                ? "font-size:12px"
-                                : "font-size:12px;color:#8a97a5;opacity:1"'
-                            :disabled='!subscribedGuids.has(f.guid)'
-                            :title='subscribedGuids.has(f.guid) ? f.name : "Subscribe to this feed in CloudTAK → Data Sync first"'
+                            style='font-size:12px'
                             @click='selectedFeed = f'
                         >
                             {{ f.name }}
-                            <span v-if='!subscribedGuids.has(f.guid)'> — not subscribed</span>
                         </button>
                     </div>
                     <div
-                        v-if='feedMode === "existing" && !selectedFeed && feeds.length && feeds.some(f => !subscribedGuids.has(f.guid))'
-                        class='text-muted small py-1'
-                    >
-                        Incident markers ride the feed — unsubscribed feeds are disabled.
-                        Subscribe in CloudTAK → Data Sync, then reopen this list.
-                    </div>
-                    <div
-                        v-else-if='feedMode === "existing" && !selectedFeed && feedsFetched && !loadingFeeds && !feeds.length'
+                        v-if='feedMode === "existing" && !selectedFeed && feedsFetched && !loadingFeeds && !feeds.length'
                         class='text-muted small text-center py-1'
                     >
                         No DataSync feeds found
@@ -164,6 +152,7 @@
                             class='form-text small'
                         >
                             The event inherits the feed's channel — only its members see either.
+                            You'll be subscribed to the feed automatically.
                         </div>
                     </template>
                 </div>
@@ -287,7 +276,7 @@
 <script setup lang="ts">
 import { ref, reactive, watch, onMounted } from 'vue';
 import { useMapStore } from '../../../src/stores/map.ts';
-import { getMissions, getSubscribedFeedGuids, getUserChannels, createFeed, feedChannels } from '../lib/takcad-client.ts';
+import { getMissions, getUserChannels, createFeed, feedChannels } from '../lib/takcad-client.ts';
 import OverlayManager from '../../../src/base/overlay.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
 import {
@@ -321,7 +310,6 @@ const feeds           = ref<MissionRef[]>([]);
 const loadingFeeds    = ref(false);
 const feedsFetched    = ref(false);
 const selectedFeed    = ref<MissionRef | null>(null);
-const subscribedGuids = ref<Set<string>>(new Set());
 
 // The channel belongs to the FEED, never picked against it (operator design,
 // 2026-08-06): a NEW feed gets its channel assigned at creation; an EXISTING feed
@@ -408,14 +396,29 @@ async function loadList() {
 async function fetchFeeds() {
     loadingFeeds.value = true;
     feedsFetched.value = false;
-    try {
-        subscribedGuids.value = await getSubscribedFeedGuids();
-        const all = await getMissions();
-        // Subscribed feeds first — unsubscribed ones render disabled below them.
-        feeds.value = [...all].sort((a, b) =>
-            Number(subscribedGuids.value.has(b.guid)) - Number(subscribedGuids.value.has(a.guid)));
-    } catch { feeds.value = []; }
+    try { feeds.value = await getMissions(); }
+    catch { feeds.value = []; }
     finally { loadingFeeds.value = false; feedsFetched.value = true; }
+}
+
+// Subscribe the current user to a feed — same overlay + loadMission path CloudTAK's
+// own mission UI uses, guarded against double-subscribing. Best-effort: the event
+// bar warns and offers Recheck if it fails.
+async function subscribeToFeed(guid: string, name: string, token?: string) {
+    try {
+        if (OverlayManager.loadedByMode('mission', guid)) return;
+        await OverlayManager.createLoaded({
+            name,
+            url:     `/mission/${encodeURIComponent(guid)}`,
+            type:    'geojson',
+            mode:    'mission',
+            token,
+            mode_id: guid,
+        });
+        await mapStore.loadMission(guid);
+    } catch (e) {
+        console.warn('[dispatcher] feed subscribe failed', e);
+    }
 }
 
 function openCreate() {
@@ -456,21 +459,7 @@ async function submitCreate() {
             );
             feedGuid = feed.guid;
             feedName = feed.name;
-            // Subscribe the creator right away so markers render without a Data Sync
-            // detour (best-effort — the event bar warns + offers Recheck if it fails).
-            try {
-                await OverlayManager.createLoaded({
-                    name:    feed.name,
-                    url:     `/mission/${encodeURIComponent(feed.guid)}`,
-                    type:    'geojson',
-                    mode:    'mission',
-                    token:   feed.token,
-                    mode_id: feed.guid,
-                });
-                await mapStore.loadMission(feed.guid);
-            } catch (e) {
-                console.warn('[dispatcher] feed auto-subscribe failed', e);
-            }
+            await subscribeToFeed(feed.guid, feed.name, feed.token);
         } else {
             // The event inherits the existing feed's channel — the feed itself is
             // never modified. A channel-less (public) feed yields a channel-less
@@ -478,6 +467,7 @@ async function submitCreate() {
             feedGuid = selectedFeed.value!.guid;
             feedName = selectedFeed.value!.name;
             channel  = existingChannel.value;
+            await subscribeToFeed(feedGuid, feedName);
         }
         const ev = await createEvent({
             name:      form.name.trim(),
