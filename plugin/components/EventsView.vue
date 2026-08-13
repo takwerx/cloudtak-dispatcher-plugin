@@ -229,11 +229,11 @@
                         <div class='d-flex align-items-center gap-2'>
                             <span class='fw-semibold small text-truncate'>{{ ev.name }}</span>
                             <span
-                                v-if='ev.channel'
+                                v-if='displayChannel(ev)'
                                 class='badge small'
                                 style='background:#64748b;color:#fff'
-                                :title='`Visible to channel ${ev.channel}`'
-                            >{{ ev.channel }}</span>
+                                :title='`Visible to channel ${displayChannel(ev)}`'
+                            >{{ displayChannel(ev) }}</span>
                             <span
                                 v-if='ev.status === "archived"'
                                 class='badge bg-secondary small'
@@ -302,6 +302,12 @@ const reportEvent  = ref<DispatcherEvent | null>(null);
 function openReport(ev: DispatcherEvent) {
     reportEvent.value = ev;
     view.value = 'report';
+}
+
+// Badge text: the feed's live channels (server-resolved), falling back to the
+// label captured at creation. Feeds always live in channels — empty = public feed.
+function displayChannel(ev: DispatcherEvent): string {
+    return ev.feed_channels?.length ? ev.feed_channels.join(', ') : (ev.channel ?? '');
 }
 const loading      = ref(false);
 const loadError    = ref('');

@@ -98,7 +98,7 @@ function mapIncident(row: IncidentRow): IncidentRow {
 
 const TAK_CACHE_TTL_MS = 60_000;
 const channelCache = new Map<string, { ts: number; channels: Set<string> }>();
-const feedCache = new Map<string, { ts: number; guids: Set<string> }>();
+const feedCache = new Map<string, { ts: number; feeds: Map<string, string[]> }>();
 
 async function userApi(config: ConfigStateless, email: string) {
     const profile = await config.models.Profile.from(email);
@@ -116,15 +116,20 @@ async function userChannels(config: ConfigStateless, email: string): Promise<Set
     return channels;
 }
 
-// DataSync feeds (missions) TAK Server currently shows this user.
-async function userFeedGuids(config: ConfigStateless, email: string): Promise<Set<string>> {
+// DataSync feeds (missions) TAK Server currently shows this user, with each feed's
+// live channel list — feeds ALWAYS live in channels; this is the display truth the
+// event badges render from (the stored event.channel label is only a fallback).
+async function userFeeds(config: ConfigStateless, email: string): Promise<Map<string, string[]>> {
     const hit = feedCache.get(email);
-    if (hit && Date.now() - hit.ts < TAK_CACHE_TTL_MS) return hit.guids;
+    if (hit && Date.now() - hit.ts < TAK_CACHE_TTL_MS) return hit.feeds;
     const api = await userApi(config, email);
-    const missions = await api.Mission.list({}) as { data?: { guid: string }[] };
-    const guids = new Set((missions.data ?? []).map(m => m.guid));
-    feedCache.set(email, { ts: Date.now(), guids });
-    return guids;
+    const missions = await api.Mission.list({}) as { data?: { guid: string; groups?: string | string[] }[] };
+    const feeds = new Map<string, string[]>();
+    for (const m of missions.data ?? []) {
+        feeds.set(m.guid, !m.groups ? [] : Array.isArray(m.groups) ? m.groups : [m.groups]);
+    }
+    feedCache.set(email, { ts: Date.now(), feeds });
+    return feeds;
 }
 
 async function eventById(config: ConfigStateless, eventid: string): Promise<EventRow | null> {
@@ -139,7 +144,7 @@ async function eventById(config: ConfigStateless, eventid: string): Promise<Even
 async function requireEventAccess(config: ConfigStateless, email: string, eventid: string): Promise<EventRow> {
     const ev = await eventById(config, eventid);
     if (!ev) throw new Err(404, null, 'Event not found');
-    if (!(await userFeedGuids(config, email)).has(ev.feed_guid)) {
+    if (!(await userFeeds(config, email)).has(ev.feed_guid)) {
         throw new Err(403, null, 'No access to this event\'s DataSync feed');
     }
     return ev;
@@ -253,12 +258,18 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
-            const feedGuids = await userFeedGuids(config, user.email);
+            const feeds = await userFeeds(config, user.email);
             const events = await query<EventRow>(config, sql`
                 SELECT id, name, prefix, feed_guid, feed_name, channel, status, seq, created_at, created_by
                 FROM dispatcher_events ORDER BY created_at DESC
             `);
-            res.json({ events: events.filter(e => feedGuids.has(e.feed_guid)) });
+            res.json({
+                events: events
+                    .filter(e => feeds.has(e.feed_guid))
+                    // feed_channels = the feed's LIVE channels (badges render from this;
+                    // stored channel label is only a fallback for older responses).
+                    .map(e => ({ ...e, feed_channels: feeds.get(e.feed_guid) ?? [] })),
+            });
         } catch (err) {
             Err.respond(err, res);
         }

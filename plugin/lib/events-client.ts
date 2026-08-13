@@ -10,9 +10,12 @@ export interface DispatcherEvent {
     prefix: string;
     feed_guid: string;
     feed_name: string;
-    // Channel label inherited from the event's feed at creation (display only).
-    // Visibility is feed-driven: the server shows an event iff TAK shows you its feed.
+    // Channel label captured from the feed at creation — fallback display only.
     channel: string | null;
+    // The feed's LIVE channels, resolved by the server per request. Badges render
+    // from this; visibility itself is feed-driven (you see the event iff TAK shows
+    // you its feed). Feeds always live in channels — an empty list = public feed.
+    feed_channels?: string[];
     status: 'active' | 'archived';
     seq: number;
     created_at: string;

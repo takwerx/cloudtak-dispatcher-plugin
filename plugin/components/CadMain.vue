@@ -132,11 +132,11 @@
                 <div class='flex-grow-1 text-truncate'>
                     <span class='fw-semibold'>{{ store.activeEvent.name }}</span>
                     <span
-                        v-if='store.activeEvent.channel'
+                        v-if='activeEventChannel'
                         class='badge ms-1'
                         style='background:#64748b;color:#fff'
-                        :title='`Visible to channel ${store.activeEvent.channel}`'
-                    >{{ store.activeEvent.channel }}</span>
+                        :title='`Visible to channel ${activeEventChannel}`'
+                    >{{ activeEventChannel }}</span>
                     <span class='ms-2'>
                         <span class='badge bg-primary text-white'>DataSync</span>
                         <span class='fw-semibold'>{{ store.activeEvent.feed_name }}</span>
@@ -282,6 +282,13 @@ import { popOutDispatcher, dockDispatcher } from '../lib/float-pane.ts';
 const props = defineProps<{ floating?: boolean }>();
 
 const floatedElsewhere = computed(() => store.floating && !props.floating);
+
+// Badge text for the open event: the feed's live channels, else the stored label.
+const activeEventChannel = computed(() => {
+    const ev = store.activeEvent;
+    if (!ev) return '';
+    return ev.feed_channels?.length ? ev.feed_channels.join(', ') : (ev.channel ?? '');
+});
 
 const TABS = [
     { key: 'incidents',  label: 'Incidents',  takCadOnly: false },
