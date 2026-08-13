@@ -140,6 +140,11 @@
                     <span class='ms-2'>
                         <span class='badge bg-primary text-white'>DataSync</span>
                         <span class='fw-semibold'>{{ store.activeEvent.feed_name }}</span>
+                        <span
+                            v-if='feedSubscribed'
+                            class='text-success fw-bold'
+                            title='Subscribed to this feed — markers will render'
+                        >✓</span>
                     </span>
                 </div>
                 <span

@@ -504,6 +504,10 @@ async function submitCreate() {
 }
 
 async function open(ev: DispatcherEvent) {
+    // Subscribe-on-open: feed-driven access means anyone who can open the event may
+    // subscribe to its feed — so do it for them and markers just work, creator or not.
+    // Best-effort; the event bar's warning + Recheck remains the fallback.
+    await subscribeToFeed(ev.feed_guid, ev.feed_name);
     store.activeEvent = ev;
     emit('opened', ev);
 }

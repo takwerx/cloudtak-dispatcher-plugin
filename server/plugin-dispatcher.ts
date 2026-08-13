@@ -83,29 +83,48 @@ function mapIncident(row: IncidentRow): IncidentRow {
     return { ...row, assigned: asArray(row.assigned), notes: asArray(row.notes) };
 }
 
-// ── Channel scoping ───────────────────────────────────────────────────────────
-// An Event can be bound to a TAK channel (Marti group); only members of that channel
-// can see or touch it (events with no channel predate the feature and stay visible
-// to everyone). Membership is resolved server-side against TAK Server with the
-// caller's own client certificate — same pattern as the TAK-CAD proxy — and cached
-// briefly per user so events-list refreshes don't hammer the TAK API.
+// ── Feed-driven visibility ────────────────────────────────────────────────────
+// The chain is event → feed → channel (operator design, 2026-08-13): every event
+// syncs to a DataSync feed, the feed carries the channel, and the channel drives
+// access. Enforcement therefore derives from ONE rule — you can see an event iff
+// TAK Server shows you its feed. That single rule covers everything: channel
+// removal hides the feed (and thus the event), toggling a channel off hides its
+// missions (and thus its events), a public feed means a public event, and legacy
+// channel-less events simply follow their feed like everything else. The stored
+// event.channel is display metadata (badges); the feed is the law. Orphaned
+// events (feed deleted outside the plugin) become invisible — the rows persist
+// in the DB. Resolved with the caller's own client certificate — same pattern as
+// the TAK-CAD proxy — and cached briefly per user so refreshes don't hammer TAK.
 
-const CHANNEL_TTL_MS = 60_000;
+const TAK_CACHE_TTL_MS = 60_000;
 const channelCache = new Map<string, { ts: number; channels: Set<string> }>();
+const feedCache = new Map<string, { ts: number; guids: Set<string> }>();
 
+async function userApi(config: ConfigStateless, email: string) {
+    const profile = await config.models.Profile.from(email);
+    return await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(profile.auth.cert, profile.auth.key));
+}
+
+// Channels the user is a member of — used to validate channel labels on write.
 async function userChannels(config: ConfigStateless, email: string): Promise<Set<string>> {
     const hit = channelCache.get(email);
-    if (hit && Date.now() - hit.ts < CHANNEL_TTL_MS) return hit.channels;
-    const profile = await config.models.Profile.from(email);
-    const api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(profile.auth.cert, profile.auth.key));
+    if (hit && Date.now() - hit.ts < TAK_CACHE_TTL_MS) return hit.channels;
+    const api = await userApi(config, email);
     const groups = await api.Group.list({}) as { data?: { name: string }[] };
     const channels = new Set((groups.data ?? []).map(g => g.name));
     channelCache.set(email, { ts: Date.now(), channels });
     return channels;
 }
 
-function canSee(channels: Set<string>, ev: Pick<EventRow, 'channel'>): boolean {
-    return !ev.channel || channels.has(ev.channel);
+// DataSync feeds (missions) TAK Server currently shows this user.
+async function userFeedGuids(config: ConfigStateless, email: string): Promise<Set<string>> {
+    const hit = feedCache.get(email);
+    if (hit && Date.now() - hit.ts < TAK_CACHE_TTL_MS) return hit.guids;
+    const api = await userApi(config, email);
+    const missions = await api.Mission.list({}) as { data?: { guid: string }[] };
+    const guids = new Set((missions.data ?? []).map(m => m.guid));
+    feedCache.set(email, { ts: Date.now(), guids });
+    return guids;
 }
 
 async function eventById(config: ConfigStateless, eventid: string): Promise<EventRow | null> {
@@ -116,12 +135,12 @@ async function eventById(config: ConfigStateless, eventid: string): Promise<Even
     return rows[0] ?? null;
 }
 
-// Resolve caller + membership, load the event, and 403/404 unless they can see it.
+// Load the event and 403/404 unless the caller's TAK view includes its feed.
 async function requireEventAccess(config: ConfigStateless, email: string, eventid: string): Promise<EventRow> {
     const ev = await eventById(config, eventid);
     if (!ev) throw new Err(404, null, 'Event not found');
-    if (!canSee(await userChannels(config, email), ev)) {
-        throw new Err(403, null, 'No access to this event\'s channel');
+    if (!(await userFeedGuids(config, email)).has(ev.feed_guid)) {
+        throw new Err(403, null, 'No access to this event\'s DataSync feed');
     }
     return ev;
 }
@@ -167,7 +186,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 value JSONB NOT NULL
             )
         `);
-        // Channel scoping (v1.1): NULL = legacy event, visible to everyone.
+        // Channel label (v1.1) — display metadata; visibility is feed-driven (v1.2).
         await config.pg.execute(sql`
             ALTER TABLE dispatcher_events ADD COLUMN IF NOT EXISTS channel TEXT
         `);
@@ -234,12 +253,12 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
-            const channels = await userChannels(config, user.email);
+            const feedGuids = await userFeedGuids(config, user.email);
             const events = await query<EventRow>(config, sql`
                 SELECT id, name, prefix, feed_guid, feed_name, channel, status, seq, created_at, created_by
                 FROM dispatcher_events ORDER BY created_at DESC
             `);
-            res.json({ events: events.filter(e => canSee(channels, e)) });
+            res.json({ events: events.filter(e => feedGuids.has(e.feed_guid)) });
         } catch (err) {
             Err.respond(err, res);
         }

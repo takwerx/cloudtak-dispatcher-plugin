@@ -10,8 +10,8 @@ export interface DispatcherEvent {
     prefix: string;
     feed_guid: string;
     feed_name: string;
-    // TAK channel (Marti group) this event is bound to; null = legacy event, visible
-    // to everyone. The server enforces channel membership on every event/incident route.
+    // Channel label inherited from the event's feed at creation (display only).
+    // Visibility is feed-driven: the server shows an event iff TAK shows you its feed.
     channel: string | null;
     status: 'active' | 'archived';
     seq: number;
