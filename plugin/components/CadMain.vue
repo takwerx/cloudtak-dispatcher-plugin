@@ -133,7 +133,8 @@
                     <span class='fw-semibold'>{{ store.activeEvent.name }}</span>
                     <span
                         v-if='store.activeEvent.channel'
-                        class='badge bg-secondary text-white ms-1'
+                        class='badge ms-1'
+                        style='background:#64748b;color:#fff'
                         :title='`Visible to channel ${store.activeEvent.channel}`'
                     >{{ store.activeEvent.channel }}</span>
                     <span class='ms-2'>

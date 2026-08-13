@@ -117,7 +117,8 @@
                             <span class='text-truncate flex-grow-1'>{{ selectedFeed.name }}</span>
                             <span
                                 v-if='existingChannelOptions.length === 1'
-                                class='badge bg-secondary text-white'
+                                class='badge'
+                                style='background:#64748b;color:#fff'
                                 :title='`Feed channel — the event inherits it`'
                             >{{ existingChannelOptions[0] }}</span>
                             <button
@@ -229,7 +230,8 @@
                             <span class='fw-semibold small text-truncate'>{{ ev.name }}</span>
                             <span
                                 v-if='ev.channel'
-                                class='badge bg-secondary small'
+                                class='badge small'
+                                style='background:#64748b;color:#fff'
                                 :title='`Visible to channel ${ev.channel}`'
                             >{{ ev.channel }}</span>
                             <span
