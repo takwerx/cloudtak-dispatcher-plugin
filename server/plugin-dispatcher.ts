@@ -253,11 +253,17 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     await schema.get('/dispatcher/events', {
         name: 'List Events',
         group: 'Dispatcher',
-        description: 'List all dispatcher events (active + archived)',
+        description: 'List dispatcher events visible to the caller (active + archived)',
+        query: Type.Object({
+            // fresh=1 bypasses the 60s feed-visibility cache — the board's manual
+            // refresh uses it so a channel toggle shows immediately.
+            fresh: Type.Optional(Type.String()),
+        }),
         res: Type.Any(),
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            if (req.query.fresh) feedCache.delete(user.email);
             const feeds = await userFeeds(config, user.email);
             const events = await query<EventRow>(config, sql`
                 SELECT id, name, prefix, feed_guid, feed_name, channel, status, seq, created_at, created_by

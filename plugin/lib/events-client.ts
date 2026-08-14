@@ -69,8 +69,9 @@ export interface CreateIncidentBody {
 export type IncidentPatch = Partial<Pick<DispatcherIncident,
     'type' | 'address' | 'lat' | 'lon' | 'dispatcher' | 'details' | 'status' | 'assigned' | 'notes'>>;
 
-export async function listEvents(): Promise<DispatcherEvent[]> {
-    const r = await std('/api/dispatcher/events', { method: 'GET' }) as { events?: DispatcherEvent[] };
+// fresh=true bypasses the server's 60s channel-visibility cache (manual refresh).
+export async function listEvents(fresh = false): Promise<DispatcherEvent[]> {
+    const r = await std(`/api/dispatcher/events${fresh ? '?fresh=1' : ''}`, { method: 'GET' }) as { events?: DispatcherEvent[] };
     return Array.isArray(r?.events) ? r.events : [];
 }
 

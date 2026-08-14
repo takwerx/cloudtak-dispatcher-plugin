@@ -191,6 +191,18 @@
             <div class='d-flex align-items-center px-3 py-2 border-bottom flex-shrink-0 gap-2'>
                 <span class='text-muted small me-auto'>Events</span>
                 <button
+                    class='btn btn-sm btn-link p-0 text-muted'
+                    title='Refresh — re-checks your channel access immediately'
+                    :disabled='refreshing'
+                    @click='refreshEvents(true)'
+                >
+                    <IconRefresh
+                        :size='16'
+                        stroke='1.5'
+                        :class='refreshing ? "opacity-50" : ""'
+                    />
+                </button>
+                <button
                     class='btn btn-sm btn-warning'
                     @click='openCreate'
                 >
@@ -277,7 +289,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onMounted } from 'vue';
+import { ref, reactive, watch, onMounted, onUnmounted } from 'vue';
+import { IconRefresh } from '@tabler/icons-vue';
 import { useMapStore } from '../../../src/stores/map.ts';
 import { getMissions, getUserChannels, createFeed, feedChannels } from '../lib/takcad-client.ts';
 import OverlayManager from '../../../src/base/overlay.ts';
@@ -401,6 +414,31 @@ async function loadList() {
         loading.value = false;
     }
 }
+
+// Re-pull the board without the mount-time side effects. fresh=true (the manual
+// refresh button) bypasses the server's 60s channel-visibility cache so a channel
+// toggle reflects immediately; the background poll rides the cache.
+const refreshing = ref(false);
+async function refreshEvents(fresh = false) {
+    refreshing.value = true;
+    try {
+        store.events = await listEvents(fresh);
+        loadError.value = '';
+    } catch (e) {
+        loadError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        refreshing.value = false;
+    }
+}
+
+// Keep the visible board honest without user action (channel toggles/removals
+// show up within ~a minute even if nobody clicks refresh).
+const pollTimer = setInterval(() => {
+    if (view.value === 'list' && !store.activeEvent) {
+        refreshEvents().catch(() => { /* transient */ });
+    }
+}, 60_000);
+onUnmounted(() => clearInterval(pollTimer));
 
 async function fetchFeeds() {
     loadingFeeds.value = true;
