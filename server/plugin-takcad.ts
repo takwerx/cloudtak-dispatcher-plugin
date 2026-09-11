@@ -137,7 +137,9 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             } else {
                 const user = await Auth.as_user(config, req);
                 const profile = await config.models.Profile.from(user.email);
-                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(profile.auth.cert, profile.auth.key));
+                const auth = profile.auth;
+                if (!auth) throw new Err(401, null, 'User has been provisioned but has not yet logged in');
+                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(auth.cert, auth.key));
             }
 
             const params = new URLSearchParams();
@@ -179,7 +181,9 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             } else {
                 const user = await Auth.as_user(config, req);
                 const profile = await config.models.Profile.from(user.email);
-                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(profile.auth.cert, profile.auth.key));
+                const auth = profile.auth;
+                if (!auth) throw new Err(401, null, 'User has been provisioned but has not yet logged in');
+                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(auth.cert, auth.key));
             }
 
             const params = new URLSearchParams();
@@ -219,7 +223,9 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             } else {
                 const user = await Auth.as_user(config, req);
                 const profile = await config.models.Profile.from(user.email);
-                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(profile.auth.cert, profile.auth.key));
+                const auth = profile.auth;
+                if (!auth) throw new Err(401, null, 'User has been provisioned but has not yet logged in');
+                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(auth.cert, auth.key));
             }
 
             const data = await api.fetch(new URL(`${TAKCAD_BASE}/result?fn=${encodeURIComponent(String(req.query.fn))}`, String(config.server.api)), {
@@ -255,7 +261,9 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             } else {
                 const user = await Auth.as_user(config, req);
                 const profile = await config.models.Profile.from(user.email);
-                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(profile.auth.cert, profile.auth.key));
+                const auth = profile.auth;
+                if (!auth) throw new Err(401, null, 'User has been provisioned but has not yet logged in');
+                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(auth.cert, auth.key));
             }
 
             const params = new URLSearchParams();

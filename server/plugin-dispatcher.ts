@@ -102,7 +102,9 @@ const feedCache = new Map<string, { ts: number; feeds: Map<string, string[]> }>(
 
 async function userApi(config: ConfigStateless, email: string) {
     const profile = await config.models.Profile.from(email);
-    return await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(profile.auth.cert, profile.auth.key));
+    const auth = profile.auth;
+    if (!auth) throw new Err(401, null, 'User has been provisioned but has not yet logged in');
+    return await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(auth.cert, auth.key));
 }
 
 // Channels the user is a member of — used to validate channel labels on write.
