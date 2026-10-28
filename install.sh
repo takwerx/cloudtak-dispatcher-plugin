@@ -175,6 +175,7 @@ else
     elif [ -f "$DOCKERIGNORE" ] && grep -qE '^[[:space:]]*(/)?app/plugins/\*[[:space:]]*$' "$DOCKERIGNORE"; then
         {
             echo "$DOCKERIGNORE_MARK"
+            echo "# copy of CloudTAK's .dockerignore + our re-include; re-run install.sh after updating CloudTAK"
             cat "$DOCKERIGNORE"
             echo
             echo "# re-include the Dispatcher web plugin"
