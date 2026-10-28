@@ -18,7 +18,7 @@ The plugin auto-detects its environment on load:
 ## Layout
 
 - `plugin/` — the CloudTAK web plugin (Vue 3 / TypeScript), discovered and bundled by CloudTAK's
-  Vite build into `web/plugins/`.
+  Vite build from the web app's `plugins/` dir (`app/plugins/` on CloudTAK >= 13.102.0, `api/web/plugins/` before).
 - `server/` — CloudTAK API route files copied into CloudTAK's `api/stateless/routes/`
   (CloudTAK >= 13.45 — the hub/api split moved route loading there; pre-split trees are not supported):
   - `plugin-dispatcher.ts` — the standalone Events/Incidents store (CloudTAK Postgres) + CRUD
@@ -29,7 +29,7 @@ The plugin auto-detects its environment on load:
 ## Install
 
 This plugin has two halves that must land in two different places in your CloudTAK source tree —
-`plugin/` (the web UI, into `api/web/plugins/`) and `server/` (the API routes, into
+`plugin/` (the web UI, into `app/plugins/` — `api/web/plugins/` on CloudTAK older than 13.102.0) and `server/` (the API routes, into
 `api/stateless/routes/` — requires CloudTAK >= 13.45).
 CloudTAK's built-in `WEB_PLUGINS` env var **cannot** install it: it only handles the web half, it
 clones the whole repo (nesting the plugin one level too deep for Vite), and it drops the server
@@ -44,7 +44,7 @@ copies the two halves into place, and rebuilds the CloudTAK API image for you.
 ### Option 2 — standalone CloudTAK (`install.sh`)
 
 For CloudTAK deployments **not** managed by infra-TAK. `install.sh` does exactly what the infra-TAK
-installer does — copies `plugin/` → `api/web/plugins/tak-dispatcher/`, copies `server/*.ts` →
+installer does — copies `plugin/` → `app/plugins/tak-dispatcher/` (`api/web/plugins/` on older CloudTAK, auto-detected), copies `server/*.ts` →
 `api/stateless/routes/` (refusing on pre-13.45 trees), then rebuilds and restarts the CloudTAK API image.
 
 ```bash
@@ -67,6 +67,11 @@ the right-side menu.
 ./install.sh --pull /path/to/CloudTAK
 ```
 
+**After updating CloudTAK itself**, re-run `./install.sh --pull /path/to/CloudTAK`. CloudTAK
+sometimes moves where it builds plugins from (13.102.0 did); re-running puts the plugin where
+your new CloudTAK version looks for it. If the menu item is missing after an update, this is
+the fix.
+
 **Removing:**
 
 ```bash
@@ -78,7 +83,7 @@ Requires `bash`, `docker` + `docker compose` (and `git` for `--pull`).
 
 ## Requirements
 
-- CloudTAK 13.2+
+- CloudTAK 13.45+
 
 ## License
 

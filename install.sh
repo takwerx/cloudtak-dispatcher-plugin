@@ -10,7 +10,8 @@
 # plugin loads but every API call 404s ("can't reach API").
 #
 # This script does exactly what the infra-TAK console's plugin marketplace does:
-#   • copy  plugin/        → <CloudTAK>/api/web/plugins/tak-dispatcher/   (web plugin)
+#   • copy  plugin/        → <CloudTAK>/app/plugins/tak-dispatcher/       (web plugin; CloudTAK
+#                            13.102.0+. Older CloudTAK uses api/web/plugins/ — auto-detected)
 #   • copy  server/*.ts    → <CloudTAK>/api/routes/                       (server routes)
 #   • rebuild + restart the CloudTAK API image so both are baked in.
 #
@@ -72,7 +73,24 @@ if [ "$DO_BUILD" -eq 1 ] && [ ! -f "$CT_DIR/docker-compose.yml" ]; then
     exit 1
 fi
 
-WEB_DEST="$CT_DIR/api/web/plugins/$INSTALL_DIR_NAME"
+# CloudTAK 13.102.0 moved the web app out of api/web/ into app/. Vite only bundles plugins
+# from the web app's own plugins/ dir, so a plugin copied into the OLD dir is not an error:
+# it is simply never built in and the menu item never appears. Pick the dir this tree uses.
+if [ -d "$CT_DIR/app/src" ]; then
+    WEB_REL="app"
+else
+    WEB_REL="api/web"
+fi
+WEB_DEST="$CT_DIR/$WEB_REL/plugins/$INSTALL_DIR_NAME"
+# Where an install from before the move left the plugin (swept so it doesn't linger).
+OLD_WEB_DEST="$CT_DIR/api/web/plugins/$INSTALL_DIR_NAME"
+# CloudTAK main (after 13.116.0) added "app/plugins/*" to .dockerignore, so the image build
+# never sees a plugin folder copied in here (only *.ts files) — same silent "installed, no
+# menu item". BuildKit reads Dockerfile.dockerignore ahead of .dockerignore, so we ship one
+# that re-includes our folder, without touching CloudTAK's tracked .dockerignore.
+DOCKERIGNORE="$CT_DIR/.dockerignore"
+DOCKERIGNORE_OVERRIDE="$CT_DIR/Dockerfile.dockerignore"
+DOCKERIGNORE_MARK="# managed by cloudtak-dispatcher-plugin install.sh"
 # CloudTAK 13.45+ (hub/api split) loads server routes from api/stateless/routes/ and
 # no longer compiles api/routes/. The routes in this repo target the 13.45+ contract
 # (ConfigStateless, api/common libs), so a pre-split tree cannot build them — refuse
@@ -103,9 +121,15 @@ fi
 
 if [ "$ACTION" = "remove" ]; then
     # --- uninstall -----------------------------------------------------------------
-    if [ -d "$WEB_DEST" ]; then
-        rm -rf "$WEB_DEST"
-        echo "Removed web plugin: api/web/plugins/$INSTALL_DIR_NAME"
+    for dest in "$WEB_DEST" "$OLD_WEB_DEST"; do
+        if [ -d "$dest" ]; then
+            rm -rf "$dest"
+            echo "Removed web plugin: ${dest#$CT_DIR/}"
+        fi
+    done
+    if [ -f "$DOCKERIGNORE_OVERRIDE" ] && head -n1 "$DOCKERIGNORE_OVERRIDE" | grep -qF "$DOCKERIGNORE_MARK"; then
+        rm -f "$DOCKERIGNORE_OVERRIDE"
+        echo "Removed build-context override: Dockerfile.dockerignore"
     fi
     for src in "$REPO_DIR"/server/*.ts; do
         [ -e "$src" ] || continue
@@ -129,12 +153,40 @@ else
         echo "       The dispatcher server routes require CloudTAK >= 13.45 — update CloudTAK first." >&2
         exit 1
     fi
-    mkdir -p "$CT_DIR/api/web/plugins" "$ROUTES_DEST"
+    mkdir -p "$CT_DIR/$WEB_REL/plugins" "$ROUTES_DEST"
 
     # Web plugin: replace the dir wholesale so removed files don't linger.
     rm -rf "$WEB_DEST"
     cp -R "$REPO_DIR/plugin" "$WEB_DEST"
-    echo "Installed web plugin: api/web/plugins/$INSTALL_DIR_NAME"
+    echo "Installed web plugin: $WEB_REL/plugins/$INSTALL_DIR_NAME"
+
+    # An earlier version of this script (or an upgrade across CloudTAK 13.102.0) may have
+    # left a copy in the old api/web/plugins/ — dead weight that Vite never reads.
+    if [ "$WEB_REL" != "api/web" ] && [ -d "$OLD_WEB_DEST" ]; then
+        rm -rf "$OLD_WEB_DEST"
+        echo "Removed stale pre-move copy: api/web/plugins/$INSTALL_DIR_NAME"
+    fi
+
+    # Keep the plugin folder inside the Docker build context (see DOCKERIGNORE above).
+    # Only ever touch a Dockerfile.dockerignore we wrote ourselves.
+    if [ -f "$DOCKERIGNORE_OVERRIDE" ] && ! head -n1 "$DOCKERIGNORE_OVERRIDE" | grep -qF "$DOCKERIGNORE_MARK"; then
+        echo "WARNING: $DOCKERIGNORE_OVERRIDE exists and is not ours — leaving it alone." >&2
+        echo "         Make sure it does not exclude $WEB_REL/plugins/$INSTALL_DIR_NAME." >&2
+    elif [ -f "$DOCKERIGNORE" ] && grep -qE '^[[:space:]]*(/)?app/plugins/\*[[:space:]]*$' "$DOCKERIGNORE"; then
+        {
+            echo "$DOCKERIGNORE_MARK"
+            echo "# copy of CloudTAK's .dockerignore + our re-include; re-run install.sh after updating CloudTAK"
+            cat "$DOCKERIGNORE"
+            echo
+            echo "# re-include the Dispatcher web plugin"
+            echo "!$WEB_REL/plugins/$INSTALL_DIR_NAME"
+        } > "$DOCKERIGNORE_OVERRIDE"
+        echo "Wrote build-context override: Dockerfile.dockerignore (keeps $WEB_REL/plugins/$INSTALL_DIR_NAME in the image build)"
+    elif [ -f "$DOCKERIGNORE_OVERRIDE" ]; then
+        # CloudTAK no longer excludes plugin folders; drop our now-stale copy.
+        rm -f "$DOCKERIGNORE_OVERRIDE"
+        echo "Removed stale build-context override: Dockerfile.dockerignore"
+    fi
 
     # Server routes: every *.ts in server/ → api/stateless/routes/ (auto-loaded by
     # schema.load). Also sweep stale copies out of the pre-split api/routes/ so an
@@ -160,6 +212,21 @@ fi
 
 echo "Rebuilding CloudTAK API image — this takes 5–15 minutes..."
 ( cd "$CT_DIR" && docker compose build --no-cache api )
+
+# A plugin that never made it into the web bundle gives no build error — the menu item just
+# never shows up. Look inside the freshly built image so that case is loud, not silent.
+if [ "$ACTION" = "install" ]; then
+    in_bundle=$( cd "$CT_DIR" && docker compose run --rm --no-deps --entrypoint sh api -c \
+        '[ -d /home/etl/app/dist/assets ] || { echo skip; exit 0; }; grep -rlq "plugin-tak-dispatcher" /home/etl/app/dist/assets && echo yes || echo no' \
+        2>/dev/null | tail -n1 ) || in_bundle=""
+    if [ "$in_bundle" = "no" ]; then
+        echo >&2
+        echo "WARNING: the Dispatcher plugin is NOT in the built CloudTAK web bundle, so it will" >&2
+        echo "         not show up in the menu. Check that $WEB_REL/plugins/$INSTALL_DIR_NAME exists in $CT_DIR" >&2
+        echo "         and is not excluded by .dockerignore / Dockerfile.dockerignore, then re-run." >&2
+    fi
+fi
+
 echo "Restarting CloudTAK API container..."
 ( cd "$CT_DIR" && docker compose up -d --force-recreate api )
 
