@@ -67,6 +67,11 @@ the right-side menu.
 ./install.sh --pull /path/to/CloudTAK
 ```
 
+**After updating CloudTAK itself**, re-run `./install.sh --pull /path/to/CloudTAK`. CloudTAK
+sometimes moves where it builds plugins from (13.102.0 did); re-running puts the plugin where
+your new CloudTAK version looks for it. If the menu item is missing after an update, this is
+the fix.
+
 **Removing:**
 
 ```bash
@@ -78,7 +83,7 @@ Requires `bash`, `docker` + `docker compose` (and `git` for `--pull`).
 
 ## Requirements
 
-- CloudTAK 13.2+
+- CloudTAK 13.45+
 
 ## License
 
