@@ -84,6 +84,13 @@ fi
 WEB_DEST="$CT_DIR/$WEB_REL/plugins/$INSTALL_DIR_NAME"
 # Where an install from before the move left the plugin (swept so it doesn't linger).
 OLD_WEB_DEST="$CT_DIR/api/web/plugins/$INSTALL_DIR_NAME"
+# CloudTAK main (after 13.116.0) added "app/plugins/*" to .dockerignore, so the image build
+# never sees a plugin folder copied in here (only *.ts files) — same silent "installed, no
+# menu item". BuildKit reads Dockerfile.dockerignore ahead of .dockerignore, so we ship one
+# that re-includes our folder, without touching CloudTAK's tracked .dockerignore.
+DOCKERIGNORE="$CT_DIR/.dockerignore"
+DOCKERIGNORE_OVERRIDE="$CT_DIR/Dockerfile.dockerignore"
+DOCKERIGNORE_MARK="# managed by cloudtak-dispatcher-plugin install.sh"
 # CloudTAK 13.45+ (hub/api split) loads server routes from api/stateless/routes/ and
 # no longer compiles api/routes/. The routes in this repo target the 13.45+ contract
 # (ConfigStateless, api/common libs), so a pre-split tree cannot build them — refuse
@@ -120,6 +127,10 @@ if [ "$ACTION" = "remove" ]; then
             echo "Removed web plugin: ${dest#$CT_DIR/}"
         fi
     done
+    if [ -f "$DOCKERIGNORE_OVERRIDE" ] && head -n1 "$DOCKERIGNORE_OVERRIDE" | grep -qF "$DOCKERIGNORE_MARK"; then
+        rm -f "$DOCKERIGNORE_OVERRIDE"
+        echo "Removed build-context override: Dockerfile.dockerignore"
+    fi
     for src in "$REPO_DIR"/server/*.ts; do
         [ -e "$src" ] || continue
         fname="$(basename "$src")"
@@ -154,6 +165,26 @@ else
     if [ "$WEB_REL" != "api/web" ] && [ -d "$OLD_WEB_DEST" ]; then
         rm -rf "$OLD_WEB_DEST"
         echo "Removed stale pre-move copy: api/web/plugins/$INSTALL_DIR_NAME"
+    fi
+
+    # Keep the plugin folder inside the Docker build context (see DOCKERIGNORE above).
+    # Only ever touch a Dockerfile.dockerignore we wrote ourselves.
+    if [ -f "$DOCKERIGNORE_OVERRIDE" ] && ! head -n1 "$DOCKERIGNORE_OVERRIDE" | grep -qF "$DOCKERIGNORE_MARK"; then
+        echo "WARNING: $DOCKERIGNORE_OVERRIDE exists and is not ours — leaving it alone." >&2
+        echo "         Make sure it does not exclude $WEB_REL/plugins/$INSTALL_DIR_NAME." >&2
+    elif [ -f "$DOCKERIGNORE" ] && grep -qE '^[[:space:]]*(/)?app/plugins/\*[[:space:]]*$' "$DOCKERIGNORE"; then
+        {
+            echo "$DOCKERIGNORE_MARK"
+            cat "$DOCKERIGNORE"
+            echo
+            echo "# re-include the Dispatcher web plugin"
+            echo "!$WEB_REL/plugins/$INSTALL_DIR_NAME"
+        } > "$DOCKERIGNORE_OVERRIDE"
+        echo "Wrote build-context override: Dockerfile.dockerignore (keeps $WEB_REL/plugins/$INSTALL_DIR_NAME in the image build)"
+    elif [ -f "$DOCKERIGNORE_OVERRIDE" ]; then
+        # CloudTAK no longer excludes plugin folders; drop our now-stale copy.
+        rm -f "$DOCKERIGNORE_OVERRIDE"
+        echo "Removed stale build-context override: Dockerfile.dockerignore"
     fi
 
     # Server routes: every *.ts in server/ → api/stateless/routes/ (auto-loaded by
