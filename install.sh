@@ -211,6 +211,21 @@ fi
 
 echo "Rebuilding CloudTAK API image — this takes 5–15 minutes..."
 ( cd "$CT_DIR" && docker compose build --no-cache api )
+
+# A plugin that never made it into the web bundle gives no build error — the menu item just
+# never shows up. Look inside the freshly built image so that case is loud, not silent.
+if [ "$ACTION" = "install" ]; then
+    in_bundle=$( cd "$CT_DIR" && docker compose run --rm --no-deps --entrypoint sh api -c \
+        '[ -d /home/etl/app/dist/assets ] || { echo skip; exit 0; }; grep -rlq "plugin-tak-dispatcher" /home/etl/app/dist/assets && echo yes || echo no' \
+        2>/dev/null | tail -n1 ) || in_bundle=""
+    if [ "$in_bundle" = "no" ]; then
+        echo >&2
+        echo "WARNING: the Dispatcher plugin is NOT in the built CloudTAK web bundle, so it will" >&2
+        echo "         not show up in the menu. Check that $WEB_REL/plugins/$INSTALL_DIR_NAME exists in $CT_DIR" >&2
+        echo "         and is not excluded by .dockerignore / Dockerfile.dockerignore, then re-run." >&2
+    fi
+fi
+
 echo "Restarting CloudTAK API container..."
 ( cd "$CT_DIR" && docker compose up -d --force-recreate api )
 
