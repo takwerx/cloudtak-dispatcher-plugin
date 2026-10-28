@@ -10,7 +10,8 @@
 # plugin loads but every API call 404s ("can't reach API").
 #
 # This script does exactly what the infra-TAK console's plugin marketplace does:
-#   • copy  plugin/        → <CloudTAK>/api/web/plugins/tak-dispatcher/   (web plugin)
+#   • copy  plugin/        → <CloudTAK>/app/plugins/tak-dispatcher/       (web plugin; CloudTAK
+#                            13.102.0+. Older CloudTAK uses api/web/plugins/ — auto-detected)
 #   • copy  server/*.ts    → <CloudTAK>/api/routes/                       (server routes)
 #   • rebuild + restart the CloudTAK API image so both are baked in.
 #
@@ -72,7 +73,17 @@ if [ "$DO_BUILD" -eq 1 ] && [ ! -f "$CT_DIR/docker-compose.yml" ]; then
     exit 1
 fi
 
-WEB_DEST="$CT_DIR/api/web/plugins/$INSTALL_DIR_NAME"
+# CloudTAK 13.102.0 moved the web app out of api/web/ into app/. Vite only bundles plugins
+# from the web app's own plugins/ dir, so a plugin copied into the OLD dir is not an error:
+# it is simply never built in and the menu item never appears. Pick the dir this tree uses.
+if [ -d "$CT_DIR/app/src" ]; then
+    WEB_REL="app"
+else
+    WEB_REL="api/web"
+fi
+WEB_DEST="$CT_DIR/$WEB_REL/plugins/$INSTALL_DIR_NAME"
+# Where an install from before the move left the plugin (swept so it doesn't linger).
+OLD_WEB_DEST="$CT_DIR/api/web/plugins/$INSTALL_DIR_NAME"
 # CloudTAK 13.45+ (hub/api split) loads server routes from api/stateless/routes/ and
 # no longer compiles api/routes/. The routes in this repo target the 13.45+ contract
 # (ConfigStateless, api/common libs), so a pre-split tree cannot build them — refuse
@@ -103,10 +114,12 @@ fi
 
 if [ "$ACTION" = "remove" ]; then
     # --- uninstall -----------------------------------------------------------------
-    if [ -d "$WEB_DEST" ]; then
-        rm -rf "$WEB_DEST"
-        echo "Removed web plugin: api/web/plugins/$INSTALL_DIR_NAME"
-    fi
+    for dest in "$WEB_DEST" "$OLD_WEB_DEST"; do
+        if [ -d "$dest" ]; then
+            rm -rf "$dest"
+            echo "Removed web plugin: ${dest#$CT_DIR/}"
+        fi
+    done
     for src in "$REPO_DIR"/server/*.ts; do
         [ -e "$src" ] || continue
         fname="$(basename "$src")"
@@ -129,12 +142,19 @@ else
         echo "       The dispatcher server routes require CloudTAK >= 13.45 — update CloudTAK first." >&2
         exit 1
     fi
-    mkdir -p "$CT_DIR/api/web/plugins" "$ROUTES_DEST"
+    mkdir -p "$CT_DIR/$WEB_REL/plugins" "$ROUTES_DEST"
 
     # Web plugin: replace the dir wholesale so removed files don't linger.
     rm -rf "$WEB_DEST"
     cp -R "$REPO_DIR/plugin" "$WEB_DEST"
-    echo "Installed web plugin: api/web/plugins/$INSTALL_DIR_NAME"
+    echo "Installed web plugin: $WEB_REL/plugins/$INSTALL_DIR_NAME"
+
+    # An earlier version of this script (or an upgrade across CloudTAK 13.102.0) may have
+    # left a copy in the old api/web/plugins/ — dead weight that Vite never reads.
+    if [ "$WEB_REL" != "api/web" ] && [ -d "$OLD_WEB_DEST" ]; then
+        rm -rf "$OLD_WEB_DEST"
+        echo "Removed stale pre-move copy: api/web/plugins/$INSTALL_DIR_NAME"
+    fi
 
     # Server routes: every *.ts in server/ → api/stateless/routes/ (auto-loaded by
     # schema.load). Also sweep stale copies out of the pre-split api/routes/ so an
