@@ -1,0 +1,67 @@
+name: PR checks
+
+# Automatic checks on every PR (ops #329, same shape as infra-TAK's PR checks). No Claude involved.
+# A red check blocks the merge once `checks-ok` is made a required check. Run the same things locally:
+#   bash .github/ci/static_checks.sh      (needs shellcheck and PyYAML)
+#   CI_TOOLS=<folder with typescript and vue installed> node .github/ci/syntax_ts_vue.mjs
+on:
+  pull_request:
+    branches: [dev, main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# GitHub-hosted runners only (public repo; fork PRs must never reach the self-hosted Studio runners).
+# Pinned to ubuntu-24.04, not ubuntu-latest, so the checks mean the same thing every run.
+jobs:
+  # bash -n, shellcheck (errors fail, warnings are listed), JSON/YAML parse, Python compile.
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      # shellcheck pinned so "error" means the same thing every run (the runner image's own moves).
+      - run: pip install shellcheck-py==0.11.0.1 pyyaml && shellcheck --version
+      - run: bash .github/ci/static_checks.sh
+
+  # Syntax check of every .ts and .vue file (plugin/ and server/), using the same TypeScript and Vue
+  # versions the plugin's lockfile pins. Syntax only: type checking (`npm run check`) needs a CloudTAK
+  # checkout around the plugin (it imports ../../../src/...), so it is not a PR check.
+  syntax:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: npm install --prefix "$RUNNER_TEMP/ci-tools" --no-save --no-package-lock --no-audit --no-fund typescript@6.0.3 vue@3.5.40
+      - run: node .github/ci/syntax_ts_vue.mjs
+        env:
+          CI_TOOLS: ${{ runner.temp }}/ci-tools
+
+  # One stable name to require in branch protection. A failed or cancelled job fails it.
+  checks-ok:
+    if: always()
+    needs: [static, syntax]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "*|*" cancelled "*) echo "::error::a required check failed"; exit 1 ;;
+          esac
