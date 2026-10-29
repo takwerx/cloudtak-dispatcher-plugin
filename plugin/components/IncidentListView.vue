@@ -528,7 +528,8 @@
                                 {{ inc.address || `${(inc.lat ?? 0).toFixed(5)}, ${(inc.lon ?? 0).toFixed(5)}` }}
                             </div>
                             <div class='small text-muted'>
-                                {{ inc.type }} · {{ shortTime(inc.created_at) }}
+                                {{ inc.type }} · {{ shortTime(inc.created_at) }}<template v-if='inc.report_number'>
+                                    · Rpt {{ inc.report_number }}</template>
                             </div>
                             <div
                                 v-if='slLatestNoteText(inc)'
@@ -592,6 +593,42 @@
                                 </div>
                                 <div class='col-8'>
                                     {{ slDetail.dispatcher || '—' }}
+                                </div>
+                                <div class='col-4 text-muted'>
+                                    Report #
+                                </div>
+                                <div class='col-8'>
+                                    <!-- Editable whether active or closed: report numbers often arrive after close -->
+                                    <div
+                                        v-if='slReportEditing'
+                                        class='d-flex gap-1'
+                                    >
+                                        <input
+                                            v-model='slReportInput'
+                                            type='text'
+                                            maxlength='64'
+                                            class='form-control form-control-sm border'
+                                            placeholder='Report number'
+                                            @keydown.enter='slSaveReportNumber(slDetail)'
+                                            @keydown.esc='slReportEditing = false'
+                                        >
+                                        <button
+                                            class='btn btn-sm btn-outline-secondary'
+                                            :disabled='slSaving'
+                                            @click='slSaveReportNumber(slDetail)'
+                                        >
+                                            Save
+                                        </button>
+                                    </div>
+                                    <template v-else>
+                                        {{ slDetail.report_number || '—' }}
+                                        <button
+                                            class='btn btn-link btn-sm p-0 ms-1 text-decoration-none'
+                                            @click='slStartReportEdit(slDetail)'
+                                        >
+                                            {{ slDetail.report_number ? 'Edit' : 'Add' }}
+                                        </button>
+                                    </template>
                                 </div>
                                 <template v-if='slDetail.details'>
                                     <div class='col-4 text-muted'>
@@ -1110,6 +1147,8 @@ const slView            = ref<SlViewName>('list');
 const slTab             = ref<SlTab>('active');
 const slDetail          = ref<DispatcherIncident | null>(null);
 const slNoteInput       = ref('');
+const slReportEditing   = ref(false);
+const slReportInput     = ref('');
 const slContactSearch   = ref('');
 const slSaving          = ref(false);
 const slDetailError     = ref('');
@@ -1270,6 +1309,7 @@ async function slOpenDetail(id: string) {
     slView.value = 'detail';
     slContactSearch.value = '';
     slDetailError.value = '';
+    slReportEditing.value = false;
     showContactPicker.value = false;
     pickerSelected.value = [];
     await loadContacts();
@@ -1303,6 +1343,29 @@ async function slAssignContact(inc: DispatcherIncident, contact: TakContact) {
         }
     } catch (e) {
         slDetailError.value = e instanceof Error ? e.message : String(e);
+    }
+}
+
+// Report number: the server logs every change as a timestamped note, so only the
+// field itself is sent (no read-modify-write of the notes array from the browser).
+function slStartReportEdit(inc: DispatcherIncident) {
+    slReportInput.value = inc.report_number ?? '';
+    slReportEditing.value = true;
+}
+
+async function slSaveReportNumber(inc: DispatcherIncident) {
+    if (slSaving.value) return;  // Enter can fire again while the first save is in flight
+    const value = slReportInput.value.trim();
+    if (value === (inc.report_number ?? '')) { slReportEditing.value = false; return; }
+    slSaving.value = true; slDetailError.value = '';
+    try {
+        const updated = await patchIncident(inc.id, { report_number: value });
+        slApplyIncident(updated);
+        slReportEditing.value = false;
+    } catch (e) {
+        slDetailError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        slSaving.value = false;
     }
 }
 
