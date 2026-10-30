@@ -175,6 +175,18 @@
             />
         </div>
 
+        <!-- Report number (standalone only; optional, can also be added later) -->
+        <div v-if='serverMode === "standalone"'>
+            <label class='form-label small text-muted mb-1'>Report Number</label>
+            <input
+                v-model='form.reportNumber'
+                type='text'
+                maxlength='64'
+                class='form-control form-control-sm border'
+                placeholder='Optional — can be added later'
+            >
+        </div>
+
         <!-- Caller Info (takcad only, collapsible) -->
         <div v-if='serverMode === "takcad"'>
             <button
@@ -319,6 +331,7 @@ const form = reactive({
     lat:        null as number | null,
     lon:        null as number | null,
     details:    '',
+    reportNumber: '',
     callerName:  '',
     callerPhone: '',
     callerType:  '',
@@ -472,6 +485,7 @@ async function submitStandalone(address: string) {
             lon:        form.lon!,
             dispatcher,
             details:    form.details,
+            report_number: form.reportNumber.trim() || undefined,
         });
 
         // CoT marker + DataSync log/chat (best-effort; the record already exists server-side).

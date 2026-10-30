@@ -50,6 +50,7 @@ interface IncidentRow {
     lon: number | null;
     dispatcher: string | null;
     details: string | null;
+    report_number: string | null;
     status: string;
     assigned: unknown;
     notes: unknown;
@@ -76,6 +77,15 @@ function asArray(v: unknown): unknown[] {
         }
     }
     return Array.isArray(x) ? x : [];
+}
+
+// Report numbers are free text from the agency's records system. Trim, cap the length,
+// and store an empty value as NULL so "cleared" and "never set" read the same.
+const REPORT_NUMBER_MAX = 64;
+function normReportNumber(v: string | undefined): string | null {
+    const t = (v ?? '').trim();
+    if (t.length > REPORT_NUMBER_MAX) throw new Err(400, null, `Report number is too long (${REPORT_NUMBER_MAX} characters max)`);
+    return t || null;
 }
 
 // Normalize an incident row's jsonb fields to arrays before sending it to the client.
@@ -196,6 +206,11 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         // Channel label (v1.1) — display metadata; visibility is feed-driven (v1.2).
         await config.pg.execute(sql`
             ALTER TABLE dispatcher_events ADD COLUMN IF NOT EXISTS channel TEXT
+        `);
+        // Report number — optional agency report/case number, often assigned after
+        // the incident is opened. Nullable, so existing incidents are unaffected.
+        await config.pg.execute(sql`
+            ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS report_number TEXT
         `);
     } catch (err) {
         console.error('[dispatcher] table bootstrap failed', err);
@@ -379,7 +394,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             await requireEventAccess(config, user.email, req.params.eventid);
             const incidents = await query<IncidentRow>(config, sql`
                 SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
-                       status, assigned, notes, created_at, closed_at
+                       report_number, status, assigned, notes, created_at, closed_at
                 FROM dispatcher_incidents WHERE event_id = ${req.params.eventid}
                 ORDER BY created_at ASC
             `);
@@ -401,12 +416,14 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             lon: Type.Number(),
             dispatcher: Type.Optional(Type.String()),
             details: Type.Optional(Type.String()),
+            report_number: Type.Optional(Type.String()),
         }),
         res: Type.Any(),
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
             await requireEventAccess(config, user.email, req.params.eventid);
+            const reportNumber = normReportNumber(req.body.report_number);
 
             // Atomically claim the next sequence number for this event.
             const bumped = await query<{ seq: number; prefix: string }>(config, sql`
@@ -419,19 +436,20 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             const id = randomUUID();
             // Details entered at creation also seed the notes log as its first entry —
             // dispatchers work off the running note stream, where details-only was invisible.
-            const seedNotes = req.body.details
-                ? [{ text: req.body.details, time: new Date().toISOString() }]
-                : [];
+            const now = new Date().toISOString();
+            const seedNotes: { text: string; time: string }[] = [];
+            if (req.body.details) seedNotes.push({ text: req.body.details, time: now });
+            if (reportNumber) seedNotes.push({ text: `Report number: ${reportNumber}`, time: now });
             const incidents = await query<IncidentRow>(config, sql`
                 INSERT INTO dispatcher_incidents
-                    (id, event_id, number, type, address, lat, lon, dispatcher, details, notes)
+                    (id, event_id, number, type, address, lat, lon, dispatcher, details, report_number, notes)
                 VALUES
                     (${id}, ${req.params.eventid}, ${number}, ${req.body.type ?? null},
                      ${req.body.address ?? null}, ${req.body.lat}, ${req.body.lon},
-                     ${req.body.dispatcher ?? null}, ${req.body.details ?? null},
+                     ${req.body.dispatcher ?? null}, ${req.body.details ?? null}, ${reportNumber},
                      ${JSON.stringify(seedNotes)}::jsonb)
                 RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                          status, assigned, notes, created_at, closed_at
+                          report_number, status, assigned, notes, created_at, closed_at
             `);
             res.json({ incident: mapIncident(incidents[0]) });
         } catch (err) {
@@ -451,6 +469,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             lon: Type.Optional(Type.Number()),
             dispatcher: Type.Optional(Type.String()),
             details: Type.Optional(Type.String()),
+            report_number: Type.Optional(Type.String()),
             status: Type.Optional(Type.Union([Type.Literal('active'), Type.Literal('closed')])),
             assigned: Type.Optional(Type.Array(Type.Any())),
             notes: Type.Optional(Type.Array(Type.Any())),
@@ -463,7 +482,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             // Read-modify-write: merge the patch over the current row, then write all columns.
             const current = await query<IncidentRow>(config, sql`
                 SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
-                       status, assigned, notes, created_at, closed_at
+                       report_number, status, assigned, notes, created_at, closed_at
                 FROM dispatcher_incidents WHERE id = ${req.params.incidentid}
             `);
             if (!current.length) throw new Err(404, null, 'Incident not found');
@@ -482,6 +501,21 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 assigned: b.assigned ?? asArray(cur.assigned),
                 notes: b.notes ?? asArray(cur.notes),
             };
+            // Report number: undefined = leave as is; '' = clear. A change is logged as a
+            // timestamped note here on the server, so the history survives even though the
+            // column itself only holds the current value.
+            const reportNumber = b.report_number !== undefined
+                ? normReportNumber(b.report_number)
+                : cur.report_number;
+            if (reportNumber !== cur.report_number) {
+                next.notes = [...next.notes, {
+                    text: reportNumber
+                        ? (cur.report_number ? `Report number changed: ${cur.report_number} → ${reportNumber}` : `Report number: ${reportNumber}`)
+                        : `Report number cleared (was ${cur.report_number})`,
+                    time: new Date().toISOString(),
+                }];
+            }
+
             // Closing stamps closed_at; reopening clears it.
             const closedAt = next.status === 'closed'
                 ? (cur.closed_at ?? new Date().toISOString())
@@ -495,13 +529,14 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                     lon        = ${next.lon},
                     dispatcher = ${next.dispatcher},
                     details    = ${next.details},
+                    report_number = ${reportNumber},
                     status     = ${next.status},
                     assigned   = ${JSON.stringify(next.assigned)}::jsonb,
                     notes      = ${JSON.stringify(next.notes)}::jsonb,
                     closed_at  = ${closedAt}
                 WHERE id = ${req.params.incidentid}
                 RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                          status, assigned, notes, created_at, closed_at
+                          report_number, status, assigned, notes, created_at, closed_at
             `);
             res.json({ incident: mapIncident(incidents[0]) });
         } catch (err) {

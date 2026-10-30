@@ -1,6 +1,6 @@
 {
     "name": "cloudtak-plugin-dispatcher",
-    "version": "1.2.1",
+    "version": "1.3.0",
     "type": "module",
     "description": "CloudTAK Dispatcher plugin — Events, incidents, responders, after-action reports",
     "scripts": {
@@ -9,7 +9,6 @@
     },
     "devDependencies": {
         "@eslint/js":                        "^10.0.1",
-        "@tak-ps/cloudtak":                  "file:../../../CloudTAK/api/web",
         "@tak-ps/node-cot":                  "^12.3.0",
         "@tabler/icons-vue":                 "^3.31.0",
         "@typescript-eslint/eslint-plugin":  "^8.52.0",

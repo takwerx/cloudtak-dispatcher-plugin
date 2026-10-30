@@ -183,6 +183,7 @@ export function buildReportHtml(
                 ${i.closed_at ? `<tr><td>Closed</td><td>${esc(fmt(new Date(i.closed_at)))}</td></tr>` : ''}
                 <tr><td>Location</td><td>${esc(i.address || `${(i.lat ?? 0).toFixed(5)}, ${(i.lon ?? 0).toFixed(5)}`)}</td></tr>
                 <tr><td>Dispatcher</td><td>${esc(i.dispatcher || '—')}</td></tr>
+                ${i.report_number ? `<tr><td>Report #</td><td>${esc(i.report_number)}</td></tr>` : ''}
                 <tr><td>Units</td><td>${assigned}</td></tr>
             </table>
             <div class='notes'>${notes}</div>
@@ -274,11 +275,12 @@ function csvCell(v: string | number | null | undefined): string {
 
 export function buildCsv(incidents: DispatcherIncident[]): string {
     const header = [
-        'number', 'type', 'status', 'created_at', 'closed_at', 'address',
+        'number', 'report_number', 'type', 'status', 'created_at', 'closed_at', 'address',
         'lat', 'lon', 'dispatcher', 'assigned_units', 'details', 'notes',
     ].join(',');
     const rows = incidents.map(i => [
         csvCell(i.number),
+        csvCell(i.report_number),
         csvCell(i.type),
         csvCell(i.status),
         csvCell(i.created_at),

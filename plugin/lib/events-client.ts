@@ -42,6 +42,7 @@ export interface DispatcherIncident {
     lon: number | null;
     dispatcher: string | null;
     details: string | null;
+    report_number: string | null;
     status: 'active' | 'closed';
     assigned: AssignedContact[];
     notes: IncidentNote[];
@@ -64,10 +65,13 @@ export interface CreateIncidentBody {
     lon: number;
     dispatcher?: string;
     details?: string;
+    report_number?: string;
 }
 
+// report_number: send '' to clear it.
 export type IncidentPatch = Partial<Pick<DispatcherIncident,
-    'type' | 'address' | 'lat' | 'lon' | 'dispatcher' | 'details' | 'status' | 'assigned' | 'notes'>>;
+    'type' | 'address' | 'lat' | 'lon' | 'dispatcher' | 'details' | 'status' | 'assigned' | 'notes'>>
+    & { report_number?: string };
 
 // fresh=true bypasses the server's 60s channel-visibility cache (manual refresh).
 export async function listEvents(fresh = false): Promise<DispatcherEvent[]> {
