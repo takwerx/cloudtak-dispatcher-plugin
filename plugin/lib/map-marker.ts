@@ -17,7 +17,25 @@ export interface MarkerIncident {
     time:        string;
     dispatcher:  string;
     details:     string;
+    callerName?:  string;  // omitted/blank when the caller is off the marker
+    callerPhone?: string;
     feedGuid?:   string;  // DataSync mission GUID to route the marker into
+}
+
+// Dial-friendly form of a phone number for <contact phone>: digits with an optional leading
+// '+'. Anything after an extension marker (x / ext / #) is dropped, since it would otherwise
+// be dialed as part of the number. Returns '' when there is nothing dialable.
+export function dialablePhone(raw: string | null | undefined): string {
+    const head = String(raw ?? '').split(/\s*(?:ext\.?|x|#)/i)[0].trim();
+    const digits = head.replace(/\D/g, '');
+    if (!digits) return '';
+    return (head.startsWith('+') ? '+' : '') + digits;
+}
+
+// "Caller: <name> · <phone>", leaving out whichever is blank; '' when both are.
+export function callerRemark(name?: string | null, phone?: string | null): string {
+    const bits = [String(name ?? '').trim(), String(phone ?? '').trim()].filter(Boolean);
+    return bits.length ? `Caller: ${bits.join(' · ')}` : '';
 }
 
 // Build the remarks string for a CoT incident marker.
@@ -28,6 +46,7 @@ function buildRemarks(incident: MarkerIncident): string {
         incident.type,
         `Start: ${hhmm}`,
         incident.dispatcher ? `Dispatcher: ${incident.dispatcher}` : '',
+        callerRemark(incident.callerName, incident.callerPhone),
         incident.details    ? incident.details                       : '',
     ].filter(Boolean);
     return parts.join(' | ');
@@ -75,6 +94,10 @@ export async function dropIncidentMarker(mapStore: MapStore, incident: MarkerInc
     norm.properties.type = 'a-n-G';
     norm.properties.how  = 'h-g-i-g-o';
     norm.properties.icon = INCIDENT_ICON;
+    // normalize_geojson drops `contact`, so restore it: field clients (ATAK/iTAK/TAK Aware)
+    // can offer a call action from <contact phone>. Only when there is a dialable number.
+    const dial = dialablePhone(incident.callerPhone);
+    if (dial) norm.properties.contact = { callsign: norm.properties.callsign, phone: dial };
     const withOrigin = incident.feedGuid
         ? { ...norm, origin: { mode: 'Mission', mode_id: incident.feedGuid } }
         : norm;

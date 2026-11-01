@@ -43,6 +43,8 @@ export interface DispatcherIncident {
     dispatcher: string | null;
     details: string | null;
     report_number: string | null;
+    caller_name: string | null;
+    caller_phone: string | null;
     status: 'active' | 'closed';
     assigned: AssignedContact[];
     notes: IncidentNote[];
@@ -66,12 +68,14 @@ export interface CreateIncidentBody {
     dispatcher?: string;
     details?: string;
     report_number?: string;
+    caller_name?: string;
+    caller_phone?: string;
 }
 
-// report_number: send '' to clear it.
+// report_number / caller_name / caller_phone: send '' to clear.
 export type IncidentPatch = Partial<Pick<DispatcherIncident,
     'type' | 'address' | 'lat' | 'lon' | 'dispatcher' | 'details' | 'status' | 'assigned' | 'notes'>>
-    & { report_number?: string };
+    & { report_number?: string; caller_name?: string; caller_phone?: string };
 
 // fresh=true bypasses the server's 60s channel-visibility cache (manual refresh).
 export async function listEvents(fresh = false): Promise<DispatcherEvent[]> {
@@ -130,6 +134,17 @@ export interface AgencySettings {
 export async function getDispatcherSettings(): Promise<Record<string, unknown>> {
     const r = await std('/api/dispatcher/settings', { method: 'GET' }) as { settings?: Record<string, unknown> };
     return r?.settings ?? {};
+}
+
+// Shared setting: put caller name / phone on the CoT incident marker (default on).
+// Stored as dispatcher_settings key 'caller_on_markers'; anything but false means on.
+export async function getCallerOnMarkers(): Promise<boolean> {
+    try {
+        const s = await getDispatcherSettings();
+        return s.caller_on_markers !== false;
+    } catch {
+        return true;
+    }
 }
 
 export async function putDispatcherSetting(key: string, value: unknown): Promise<void> {

@@ -51,6 +51,8 @@ interface IncidentRow {
     dispatcher: string | null;
     details: string | null;
     report_number: string | null;
+    caller_name: string | null;
+    caller_phone: string | null;
     status: string;
     assigned: unknown;
     notes: unknown;
@@ -85,6 +87,17 @@ const REPORT_NUMBER_MAX = 64;
 function normReportNumber(v: string | undefined): string | null {
     const t = (v ?? '').trim();
     if (t.length > REPORT_NUMBER_MAX) throw new Err(400, null, `Report number is too long (${REPORT_NUMBER_MAX} characters max)`);
+    return t || null;
+}
+
+// Caller name and callback phone are free text from the call taker. Same handling as the
+// report number: trim, cap the length, and store empty as NULL. Unlike the report number
+// they are NOT copied into the notes log, so clearing them removes them from the record.
+const CALLER_NAME_MAX = 120;
+const CALLER_PHONE_MAX = 40;
+function normCaller(v: string | undefined, max: number, label: string): string | null {
+    const t = (v ?? '').trim();
+    if (t.length > max) throw new Err(400, null, `${label} is too long (${max} characters max)`);
     return t || null;
 }
 
@@ -211,6 +224,13 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         // the incident is opened. Nullable, so existing incidents are unaffected.
         await config.pg.execute(sql`
             ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS report_number TEXT
+        `);
+        // Caller name / callback phone (standalone mode) — optional, nullable.
+        await config.pg.execute(sql`
+            ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS caller_name TEXT
+        `);
+        await config.pg.execute(sql`
+            ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS caller_phone TEXT
         `);
     } catch (err) {
         console.error('[dispatcher] table bootstrap failed', err);
@@ -394,7 +414,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             await requireEventAccess(config, user.email, req.params.eventid);
             const incidents = await query<IncidentRow>(config, sql`
                 SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
-                       report_number, status, assigned, notes, created_at, closed_at
+                       report_number, caller_name, caller_phone, status, assigned, notes, created_at, closed_at
                 FROM dispatcher_incidents WHERE event_id = ${req.params.eventid}
                 ORDER BY created_at ASC
             `);
@@ -417,6 +437,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             dispatcher: Type.Optional(Type.String()),
             details: Type.Optional(Type.String()),
             report_number: Type.Optional(Type.String()),
+            caller_name: Type.Optional(Type.String()),
+            caller_phone: Type.Optional(Type.String()),
         }),
         res: Type.Any(),
     }, async (req, res) => {
@@ -424,6 +446,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             const user = await Auth.as_user(config, req);
             await requireEventAccess(config, user.email, req.params.eventid);
             const reportNumber = normReportNumber(req.body.report_number);
+            const callerName = normCaller(req.body.caller_name, CALLER_NAME_MAX, 'Caller name');
+            const callerPhone = normCaller(req.body.caller_phone, CALLER_PHONE_MAX, 'Caller phone');
 
             // Atomically claim the next sequence number for this event.
             const bumped = await query<{ seq: number; prefix: string }>(config, sql`
@@ -442,14 +466,15 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             if (reportNumber) seedNotes.push({ text: `Report number: ${reportNumber}`, time: now });
             const incidents = await query<IncidentRow>(config, sql`
                 INSERT INTO dispatcher_incidents
-                    (id, event_id, number, type, address, lat, lon, dispatcher, details, report_number, notes)
+                    (id, event_id, number, type, address, lat, lon, dispatcher, details, report_number, caller_name, caller_phone, notes)
                 VALUES
                     (${id}, ${req.params.eventid}, ${number}, ${req.body.type ?? null},
                      ${req.body.address ?? null}, ${req.body.lat}, ${req.body.lon},
                      ${req.body.dispatcher ?? null}, ${req.body.details ?? null}, ${reportNumber},
+                     ${callerName}, ${callerPhone},
                      ${JSON.stringify(seedNotes)}::jsonb)
                 RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                          report_number, status, assigned, notes, created_at, closed_at
+                          report_number, caller_name, caller_phone, status, assigned, notes, created_at, closed_at
             `);
             res.json({ incident: mapIncident(incidents[0]) });
         } catch (err) {
@@ -470,6 +495,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             dispatcher: Type.Optional(Type.String()),
             details: Type.Optional(Type.String()),
             report_number: Type.Optional(Type.String()),
+            caller_name: Type.Optional(Type.String()),
+            caller_phone: Type.Optional(Type.String()),
             status: Type.Optional(Type.Union([Type.Literal('active'), Type.Literal('closed')])),
             assigned: Type.Optional(Type.Array(Type.Any())),
             notes: Type.Optional(Type.Array(Type.Any())),
@@ -482,7 +509,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             // Read-modify-write: merge the patch over the current row, then write all columns.
             const current = await query<IncidentRow>(config, sql`
                 SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
-                       report_number, status, assigned, notes, created_at, closed_at
+                       report_number, caller_name, caller_phone, status, assigned, notes, created_at, closed_at
                 FROM dispatcher_incidents WHERE id = ${req.params.incidentid}
             `);
             if (!current.length) throw new Err(404, null, 'Incident not found');
@@ -516,6 +543,14 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 }];
             }
 
+            // Caller details: undefined = leave as is; '' = clear. Not logged to notes.
+            const callerName = b.caller_name !== undefined
+                ? normCaller(b.caller_name, CALLER_NAME_MAX, 'Caller name')
+                : cur.caller_name;
+            const callerPhone = b.caller_phone !== undefined
+                ? normCaller(b.caller_phone, CALLER_PHONE_MAX, 'Caller phone')
+                : cur.caller_phone;
+
             // Closing stamps closed_at; reopening clears it.
             const closedAt = next.status === 'closed'
                 ? (cur.closed_at ?? new Date().toISOString())
@@ -530,13 +565,15 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                     dispatcher = ${next.dispatcher},
                     details    = ${next.details},
                     report_number = ${reportNumber},
+                    caller_name  = ${callerName},
+                    caller_phone = ${callerPhone},
                     status     = ${next.status},
                     assigned   = ${JSON.stringify(next.assigned)}::jsonb,
                     notes      = ${JSON.stringify(next.notes)}::jsonb,
                     closed_at  = ${closedAt}
                 WHERE id = ${req.params.incidentid}
                 RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                          report_number, status, assigned, notes, created_at, closed_at
+                          report_number, caller_name, caller_phone, status, assigned, notes, created_at, closed_at
             `);
             res.json({ incident: mapIncident(incidents[0]) });
         } catch (err) {

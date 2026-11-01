@@ -15,6 +15,11 @@ The plugin auto-detects its environment on load:
 - **TAK-CAD** — if the TAK-CAD TAK Server plugin is detected, the full CAD UI (Vehicles,
   Personnel, incident types/roles) lights up on top of the standalone capabilities.
 
+Standalone incidents can also carry an optional **Caller Name** and **Caller Phone** (add or edit them
+any time, active or closed). They show on the incident marker's remarks, and a dialable copy of the number
+goes in the marker's `<contact phone>` so field clients can offer a call. **Manage → Caller Details** turns
+that off for the whole CloudTAK (default on). They are included in the after-action report and CSV.
+
 ## Layout
 
 - `plugin/` — the CloudTAK web plugin (Vue 3 / TypeScript), discovered and bundled by CloudTAK's

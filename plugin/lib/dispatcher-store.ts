@@ -15,6 +15,8 @@ interface DispatcherState {
     events:         DispatcherEvent[];
     activeEvent:    DispatcherEvent | null;
     incidents:      DispatcherIncident[];
+    // Shared 'Caller details on map markers' setting (Manage panel); markers read it synchronously.
+    callerOnMarkers: boolean;
 }
 
 export const dispatcherStore = reactive<DispatcherState>({
@@ -25,6 +27,7 @@ export const dispatcherStore = reactive<DispatcherState>({
     events:         [],
     activeEvent:    null,
     incidents:      [],
+    callerOnMarkers: true,
 });
 
 // The board itself is now server-backed (CloudTAK Postgres via the dispatcher route), so it

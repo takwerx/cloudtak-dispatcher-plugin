@@ -89,6 +89,44 @@
 
             <hr class='my-1'>
 
+            <!-- Caller details on map markers -->
+            <div>
+                <div class='small text-muted fw-semibold text-uppercase mb-1'>
+                    Caller Details
+                </div>
+                <div class='card border'>
+                    <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
+                        <div class='form-check form-switch mb-0'>
+                            <input
+                                id='callerOnMarkers'
+                                v-model='callerOnMarkers'
+                                class='form-check-input'
+                                type='checkbox'
+                                :disabled='savingCaller'
+                                @change='saveCallerOnMarkers'
+                            >
+                            <label
+                                class='form-check-label'
+                                for='callerOnMarkers'
+                            >Show caller name and phone on incident markers</label>
+                        </div>
+                        <div class='text-muted small'>
+                            On: field units see the caller and can tap the number to call. Off: caller
+                            details stay in the Dispatcher only. Applies to every dispatcher on this
+                            CloudTAK; markers already on the map update the next time the incident changes.
+                        </div>
+                        <div
+                            v-if='callerError'
+                            class='text-danger small'
+                        >
+                            {{ callerError }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <hr class='my-1'>
+
             <!-- Custom call types -->
             <div>
                 <div class='small text-muted fw-semibold text-uppercase mb-1'>
@@ -157,6 +195,7 @@
 import { ref, reactive, onMounted } from 'vue';
 import { getDispatcherSettings, putDispatcherSetting } from '../lib/events-client.ts';
 import type { AgencySettings } from '../lib/events-client.ts';
+import { dispatcherStore } from '../lib/dispatcher-store.ts';
 
 const emit = defineEmits<{
     (e: 'close'):  void;
@@ -203,6 +242,26 @@ async function removeCustomType(name: string) {
         typeEditorError.value = e instanceof Error ? e.message : String(e);
     } finally {
         savingTypes.value = false;
+    }
+}
+
+// ── Caller details on markers (deployment-shared; default on) ──
+const callerOnMarkers = ref(true);
+const savingCaller    = ref(false);
+const callerError     = ref('');
+
+async function saveCallerOnMarkers() {
+    savingCaller.value = true;
+    callerError.value = '';
+    const want = callerOnMarkers.value;
+    try {
+        await putDispatcherSetting('caller_on_markers', want);
+        dispatcherStore.callerOnMarkers = want;
+    } catch (e) {
+        callerOnMarkers.value = !want;
+        callerError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        savingCaller.value = false;
     }
 }
 
@@ -255,6 +314,8 @@ function onLogoFile(ev: Event) {
 onMounted(async () => {
     try {
         const s = await getDispatcherSettings();
+        callerOnMarkers.value = s.caller_on_markers !== false;
+        dispatcherStore.callerOnMarkers = callerOnMarkers.value;
         const list = s.incident_types;
         if (Array.isArray(list)) {
             customTypes.value = list.filter((t): t is string => typeof t === 'string');
