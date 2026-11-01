@@ -95,9 +95,14 @@ export async function dropIncidentMarker(mapStore: MapStore, incident: MarkerInc
     norm.properties.how  = 'h-g-i-g-o';
     norm.properties.icon = INCIDENT_ICON;
     // normalize_geojson drops `contact`, so restore it: field clients (ATAK/iTAK/TAK Aware)
-    // can offer a call action from <contact phone>. Only when there is a dialable number.
+    // can offer a call action from <contact phone>. Always set it: CloudTAK merges an update
+    // into the stored marker key by key and cannot remove one, so leaving `contact` out would
+    // keep the old phone on the marker after the phone is cleared or Caller Details is turned
+    // off. A contact without a phone replaces the old one.
     const dial = dialablePhone(incident.callerPhone);
-    if (dial) norm.properties.contact = { callsign: norm.properties.callsign, phone: dial };
+    norm.properties.contact = dial
+        ? { callsign: norm.properties.callsign, phone: dial }
+        : { callsign: norm.properties.callsign };
     const withOrigin = incident.feedGuid
         ? { ...norm, origin: { mode: 'Mission', mode_id: incident.feedGuid } }
         : norm;
