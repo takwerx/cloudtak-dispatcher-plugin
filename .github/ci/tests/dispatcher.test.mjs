@@ -179,3 +179,16 @@ test('buildRemarks joins type, start, dispatcher and details, skipping blanks', 
     assert.match(r, /^Fire \| Start: \d\d:\d\d \| Dispatcher: Dana \| smoke showing$/)
     assert.equal(mm.buildRemarks(incident({ dispatcher: '', details: '' })).split(' | ').length, 2)
 })
+
+// --- both features together (caller details from ops #403 + broadcast from ops #410) ----------
+
+test('broadcast + caller details: the Core Event remarks carry the caller, and clearing it removes it', async () => {
+    await fd.showIncident(mapStore(), incident({ uid: 'b-caller', coreEventId: 'core-5',
+        callerName: 'Pat Doe', callerPhone: '+1 555 010 2999' }))
+    const withCaller = writes().find(c => c.method === 'PATCH' && c.url === '/api/core/event/core-5')
+    assert.match(withCaller.body.remarks, /\| Caller: Pat Doe · \+1 555 010 2999 \|/)
+    globalThis.__calls = []
+    await fd.showIncident(mapStore(), incident({ uid: 'b-caller', coreEventId: 'core-5', callerName: '', callerPhone: '' }))
+    const cleared = writes().find(c => c.method === 'PATCH' && c.url === '/api/core/event/core-5')
+    assert.ok(!/Caller/.test(cleared.body.remarks), 'a cleared caller (or Caller Details off) leaves no caller in the remarks')
+})
