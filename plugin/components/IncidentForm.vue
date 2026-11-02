@@ -194,7 +194,10 @@
                 class='btn btn-sm btn-link text-muted p-0 text-decoration-none'
                 @click='showCaller = !showCaller'
             >
-                {{ showCaller ? '▾' : '▸' }} Caller Info
+                {{ showCaller ? '▾' : '▸' }} Caller Info<span
+                    v-if='serverMode === "standalone"'
+                    class='ms-1'
+                >(first caller; add more from the incident)</span>
             </button>
             <div
                 v-if='showCaller'
@@ -508,8 +511,7 @@ async function submitStandalone(address: string) {
                 time:       incident.created_at,
                 dispatcher,
                 details:    form.details,
-                callerName:  dispatcherStore.callerOnMarkers ? (incident.caller_name ?? '')  : '',
-                callerPhone: dispatcherStore.callerOnMarkers ? (incident.caller_phone ?? '') : '',
+                callers:    dispatcherStore.callerOnMarkers ? (incident.callers ?? []) : [],
                 feedGuid:   event.feed_guid,
             });
         } catch (e) {

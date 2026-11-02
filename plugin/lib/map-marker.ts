@@ -3,10 +3,11 @@ import { normalize_geojson } from '@tak-ps/node-cot/normalize_geojson';
 import type { useMapStore } from '../../../src/stores/map.ts';
 import SubscriptionChat from '../../../src/base/subscription-chat.ts';
 import ProfileConfig from '../../../src/base/profile.ts';
-import { dialablePhone, callerRemark, markerContact } from './marker-contact.ts';
+import { dialablePhone, callersRemark, markerContactFor } from './marker-contact.ts';
+import type { MarkerCaller } from './marker-contact.ts';
 
 // Re-exported so the components keep importing these from here.
-export { dialablePhone, callerRemark };
+export { dialablePhone, callersRemark };
 
 type MapStore = ReturnType<typeof useMapStore>;
 
@@ -21,8 +22,7 @@ export interface MarkerIncident {
     time:        string;
     dispatcher:  string;
     details:     string;
-    callerName?:  string;  // omitted/blank when the caller is off the marker
-    callerPhone?: string;
+    callers?:    MarkerCaller[];  // empty/omitted when Caller Details is off: nothing about callers goes out
     feedGuid?:   string;  // DataSync mission GUID to route the marker into
 }
 
@@ -34,7 +34,7 @@ function buildRemarks(incident: MarkerIncident): string {
         incident.type,
         `Start: ${hhmm}`,
         incident.dispatcher ? `Dispatcher: ${incident.dispatcher}` : '',
-        callerRemark(incident.callerName, incident.callerPhone),
+        callersRemark(incident.callers),
         incident.details    ? incident.details                       : '',
     ].filter(Boolean);
     return parts.join(' | ');
@@ -85,7 +85,7 @@ export async function dropIncidentMarker(mapStore: MapStore, incident: MarkerInc
     // normalize_geojson drops `contact`, so restore it: field clients (ATAK/iTAK/TAK Aware)
     // can offer a call action from <contact phone>. Always set (see markerContact): an update
     // cannot remove a key from the stored marker.
-    norm.properties.contact = markerContact(norm.properties.callsign, incident.callerPhone);
+    norm.properties.contact = markerContactFor(norm.properties.callsign, incident.callers);
     const withOrigin = incident.feedGuid
         ? { ...norm, origin: { mode: 'Mission', mode_id: incident.feedGuid } }
         : norm;

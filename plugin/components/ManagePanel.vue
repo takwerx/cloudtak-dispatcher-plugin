@@ -108,11 +108,12 @@
                             <label
                                 class='form-check-label'
                                 for='callerOnMarkers'
-                            >Show caller name and phone on incident markers</label>
+                            >Show callers on incident markers</label>
                         </div>
                         <div class='text-muted small'>
-                            On: field units see the caller and can tap the number to call. Off: caller
-                            details stay in the Dispatcher only. Applies to every dispatcher on this
+                            On: field units see every caller (name, phone, note) and can tap the primary
+                            caller's number to call. Off: no caller details reach field devices; they stay
+                            in the Dispatcher only. Applies to every dispatcher on this
                             CloudTAK; markers already on the map update the next time the incident changes.
                         </div>
                         <div

@@ -51,8 +51,11 @@ interface IncidentRow {
     dispatcher: string | null;
     details: string | null;
     report_number: string | null;
-    caller_name: string | null;
-    caller_phone: string | null;
+    // `callers` is the stored list. caller_name / caller_phone are NOT columns we read: mapIncident
+    // derives them from the primary caller so older clients and PR code keep a single name/phone.
+    callers?: unknown;
+    caller_name?: string | null;
+    caller_phone?: string | null;
     status: string;
     assigned: unknown;
     notes: unknown;
@@ -90,20 +93,157 @@ function normReportNumber(v: string | undefined): string | null {
     return t || null;
 }
 
-// Caller name and callback phone are free text from the call taker. Same handling as the
-// report number: trim, cap the length, and store empty as NULL. Unlike the report number
-// they are NOT copied into the notes log, so clearing them removes them from the record.
+// ── Callers ─────────────────────────────────────────────────────────────────────
+// An incident keeps a list of callers (several calls about one crash, each with the time of the
+// call). Exactly one is the PRIMARY caller: the first one added unless a dispatcher picks another.
+// A CoT <contact> holds one phone, so the primary caller's number is the marker's tap-to-call
+// number; every caller is listed in the marker remarks, the report and the CSV. Callers are NOT
+// copied into the notes log, so switching Caller Details off keeps all of it off the markers.
+// The list logic below is pure (no database) so plugin/test/callers-server.test.ts can run it.
+// <callers-pure>
 const CALLER_NAME_MAX = 120;
 const CALLER_PHONE_MAX = 40;
+const CALLER_NOTE_MAX = 200;
+const CALLERS_MAX = 50;
+
+interface CallerEntry {
+    id: string;
+    name: string | null;
+    phone: string | null;
+    note: string | null;
+    time: string;      // when the call was received (ISO)
+    primary: boolean;
+}
+
+// Free text from the call taker: trim, cap the length, store empty as NULL.
 function normCaller(v: string | undefined, max: number, label: string): string | null {
     const t = (v ?? '').trim();
     if (t.length > max) throw new Err(400, null, `${label} is too long (${max} characters max)`);
     return t || null;
 }
 
-// Normalize an incident row's jsonb fields to arrays before sending it to the client.
+// The time of a call: a valid date, stored as ISO. Missing means "now".
+function normCallTime(v: string | undefined): string {
+    if (v === undefined || v === '') return new Date().toISOString();
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) throw new Err(400, null, 'Call time is not a valid date');
+    return d.toISOString();
+}
+
+// Normalize a stored list: drop junk, order by call time (stable), and enforce exactly one
+// primary (the first one marked, else the first caller) whenever the list is not empty.
+function normalizeCallers(v: unknown): CallerEntry[] {
+    const list = asArray(v)
+        .filter((c): c is Record<string, unknown> => !!c && typeof c === 'object')
+        .map((c, i) => ({
+            id: typeof c.id === 'string' && c.id ? c.id : `caller-${i}`,
+            name: typeof c.name === 'string' && c.name ? c.name : null,
+            phone: typeof c.phone === 'string' && c.phone ? c.phone : null,
+            note: typeof c.note === 'string' && c.note ? c.note : null,
+            time: typeof c.time === 'string' && !Number.isNaN(new Date(c.time).getTime()) ? c.time : new Date(0).toISOString(),
+            primary: c.primary === true,
+            i,
+        }))
+        .sort((a, b) => (new Date(a.time).getTime() - new Date(b.time).getTime()) || (a.i - b.i));
+    const primaryIdx = Math.max(0, list.findIndex(c => c.primary));
+    return list.map(({ i: _i, ...c }, n) => ({ ...c, primary: n === primaryIdx }));
+}
+
+interface CallerInput {
+    name?: string;
+    phone?: string;
+    note?: string;
+    time?: string;
+    primary?: boolean;
+}
+
+// Add a caller (the first one is always primary). A caller needs a name or a phone.
+function addCallerTo(list: CallerEntry[], b: CallerInput): CallerEntry[] {
+    const name = normCaller(b.name, CALLER_NAME_MAX, 'Caller name');
+    const phone = normCaller(b.phone, CALLER_PHONE_MAX, 'Caller phone');
+    const note = normCaller(b.note, CALLER_NOTE_MAX, 'Caller note');
+    if (!name && !phone) throw new Err(400, null, 'Enter a caller name or phone number');
+    if (list.length >= CALLERS_MAX) throw new Err(400, null, `An incident can have at most ${CALLERS_MAX} callers`);
+    const primary = b.primary === true || list.length === 0;
+    const entry: CallerEntry = { id: randomUUID(), name, phone, note, time: normCallTime(b.time), primary };
+    return [...list.map(c => (primary ? { ...c, primary: false } : c)), entry];
+}
+
+// Edit one caller. undefined = leave as is, '' = clear. primary: true makes this caller the primary.
+function updateCallerIn(list: CallerEntry[], id: string, b: CallerInput): CallerEntry[] {
+    if (!list.some(c => c.id === id)) throw new Err(404, null, 'Caller not found');
+    const name = b.name !== undefined ? normCaller(b.name, CALLER_NAME_MAX, 'Caller name') : undefined;
+    const phone = b.phone !== undefined ? normCaller(b.phone, CALLER_PHONE_MAX, 'Caller phone') : undefined;
+    const note = b.note !== undefined ? normCaller(b.note, CALLER_NOTE_MAX, 'Caller note') : undefined;
+    const time = b.time !== undefined ? normCallTime(b.time) : undefined;
+    return list.map((c) => {
+        if (c.id !== id) return b.primary ? { ...c, primary: false } : c;
+        const next = {
+            ...c,
+            name: name !== undefined ? name : c.name,
+            phone: phone !== undefined ? phone : c.phone,
+            note: note !== undefined ? note : c.note,
+            time: time !== undefined ? time : c.time,
+            primary: b.primary ? true : c.primary,
+        };
+        if (!next.name && !next.phone) throw new Err(400, null, 'A caller needs a name or phone number. Remove the caller instead.');
+        return next;
+    });
+}
+
+// Remove a caller. If it was the primary, normalizeCallers promotes the first one left.
+function removeCallerFrom(list: CallerEntry[], id: string): CallerEntry[] {
+    if (!list.some(c => c.id === id)) throw new Err(404, null, 'Caller not found');
+    return list.filter(c => c.id !== id);
+}
+
+// A single caller from the New Incident form (or the old caller_name / caller_phone fields).
+function firstCaller(nameIn: string | undefined, phoneIn: string | undefined): CallerEntry[] {
+    const name = normCaller(nameIn, CALLER_NAME_MAX, 'Caller name');
+    const phone = normCaller(phoneIn, CALLER_PHONE_MAX, 'Caller phone');
+    return (name || phone)
+        ? [{ id: randomUUID(), name, phone, note: null, time: new Date().toISOString(), primary: true }]
+        : [];
+}
+// </callers-pure>
+
+// Normalize an incident row's jsonb fields to arrays before sending it to the client, and
+// derive caller_name / caller_phone from the primary caller.
 function mapIncident(row: IncidentRow): IncidentRow {
-    return { ...row, assigned: asArray(row.assigned), notes: asArray(row.notes) };
+    const callers = normalizeCallers(row.callers);
+    const primary = callers.find(c => c.primary);
+    return {
+        ...row,
+        assigned: asArray(row.assigned),
+        notes: asArray(row.notes),
+        callers,
+        caller_name: primary?.name ?? null,
+        caller_phone: primary?.phone ?? null,
+    };
+}
+
+// Lock the incident row, apply `edit` to its caller list and write it back, all in one
+// transaction, so two dispatchers changing callers at the same moment can't overwrite each
+// other. The incident PATCH never writes `callers`, and caller changes never write `notes`.
+async function editCallers(
+    config: ConfigStateless,
+    incidentid: string,
+    edit: (list: CallerEntry[]) => CallerEntry[],
+): Promise<IncidentRow> {
+    return await config.pg.transaction(async (tx) => {
+        const locked = await tx.execute(sql`
+            SELECT callers FROM dispatcher_incidents WHERE id = ${incidentid} FOR UPDATE
+        `) as unknown as { callers: unknown }[];
+        if (!locked.length) throw new Err(404, null, 'Incident not found');
+        const next = normalizeCallers(edit(normalizeCallers(locked[0].callers)));
+        const rows = await tx.execute(sql`
+            UPDATE dispatcher_incidents SET callers = ${JSON.stringify(next)}::jsonb
+            WHERE id = ${incidentid}
+            RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
+                      report_number, callers, status, assigned, notes, created_at, closed_at
+        `) as unknown as IncidentRow[];
+        return mapIncident(rows[0]);
+    });
 }
 
 // ── Feed-driven visibility ────────────────────────────────────────────────────
@@ -175,6 +315,15 @@ async function requireEventAccess(config: ConfigStateless, email: string, eventi
     return ev;
 }
 
+// Access check for the caller routes: the incident's Event feed must be visible to the user.
+async function requireIncidentAccess(config: ConfigStateless, email: string, incidentid: string): Promise<void> {
+    const rows = await query<{ event_id: string }>(config, sql`
+        SELECT event_id FROM dispatcher_incidents WHERE id = ${incidentid}
+    `);
+    if (!rows.length) throw new Err(404, null, 'Incident not found');
+    await requireEventAccess(config, email, rows[0].event_id);
+}
+
 export default async function router(schema: Schema, config: ConfigStateless) {
     // Idempotent schema bootstrap. Best-effort so a transient DB hiccup can't block CloudTAK
     // startup; CREATE TABLE IF NOT EXISTS is safe to re-run on every load.
@@ -225,12 +374,30 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         await config.pg.execute(sql`
             ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS report_number TEXT
         `);
-        // Caller name / callback phone (standalone mode) — optional, nullable.
+        // Callers (standalone mode): a list, so one incident can have several callers.
         await config.pg.execute(sql`
-            ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS caller_name TEXT
+            ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS callers JSONB NOT NULL DEFAULT '[]'::jsonb
         `);
+        // A database that ran the single-caller version has caller_name / caller_phone columns:
+        // move each value into the list once (as the primary caller, received when the incident
+        // was opened) and empty the old columns, so a restart never copies them twice.
         await config.pg.execute(sql`
-            ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS caller_phone TEXT
+            DO $$ BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = current_schema() AND table_name = 'dispatcher_incidents'
+                             AND column_name = 'caller_name')
+                   AND EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = current_schema() AND table_name = 'dispatcher_incidents'
+                             AND column_name = 'caller_phone') THEN
+                    UPDATE dispatcher_incidents
+                    SET callers = jsonb_build_array(jsonb_build_object(
+                            'id', gen_random_uuid()::text, 'name', caller_name, 'phone', caller_phone,
+                            'note', NULL, 'time', to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+                            'primary', true)),
+                        caller_name = NULL, caller_phone = NULL
+                    WHERE callers = '[]'::jsonb AND (caller_name IS NOT NULL OR caller_phone IS NOT NULL);
+                END IF;
+            END $$
         `);
     } catch (err) {
         console.error('[dispatcher] table bootstrap failed', err);
@@ -414,7 +581,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             await requireEventAccess(config, user.email, req.params.eventid);
             const incidents = await query<IncidentRow>(config, sql`
                 SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
-                       report_number, caller_name, caller_phone, status, assigned, notes, created_at, closed_at
+                       report_number, callers, status, assigned, notes, created_at, closed_at
                 FROM dispatcher_incidents WHERE event_id = ${req.params.eventid}
                 ORDER BY created_at ASC
             `);
@@ -446,8 +613,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             const user = await Auth.as_user(config, req);
             await requireEventAccess(config, user.email, req.params.eventid);
             const reportNumber = normReportNumber(req.body.report_number);
-            const callerName = normCaller(req.body.caller_name, CALLER_NAME_MAX, 'Caller name');
-            const callerPhone = normCaller(req.body.caller_phone, CALLER_PHONE_MAX, 'Caller phone');
+            // The New Incident form records the first caller; more are added from the incident.
+            const callers = firstCaller(req.body.caller_name, req.body.caller_phone);
 
             // Atomically claim the next sequence number for this event.
             const bumped = await query<{ seq: number; prefix: string }>(config, sql`
@@ -466,15 +633,15 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             if (reportNumber) seedNotes.push({ text: `Report number: ${reportNumber}`, time: now });
             const incidents = await query<IncidentRow>(config, sql`
                 INSERT INTO dispatcher_incidents
-                    (id, event_id, number, type, address, lat, lon, dispatcher, details, report_number, caller_name, caller_phone, notes)
+                    (id, event_id, number, type, address, lat, lon, dispatcher, details, report_number, callers, notes)
                 VALUES
                     (${id}, ${req.params.eventid}, ${number}, ${req.body.type ?? null},
                      ${req.body.address ?? null}, ${req.body.lat}, ${req.body.lon},
                      ${req.body.dispatcher ?? null}, ${req.body.details ?? null}, ${reportNumber},
-                     ${callerName}, ${callerPhone},
+                     ${JSON.stringify(callers)}::jsonb,
                      ${JSON.stringify(seedNotes)}::jsonb)
                 RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                          report_number, caller_name, caller_phone, status, assigned, notes, created_at, closed_at
+                          report_number, callers, status, assigned, notes, created_at, closed_at
             `);
             res.json({ incident: mapIncident(incidents[0]) });
         } catch (err) {
@@ -495,8 +662,6 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             dispatcher: Type.Optional(Type.String()),
             details: Type.Optional(Type.String()),
             report_number: Type.Optional(Type.String()),
-            caller_name: Type.Optional(Type.String()),
-            caller_phone: Type.Optional(Type.String()),
             status: Type.Optional(Type.Union([Type.Literal('active'), Type.Literal('closed')])),
             assigned: Type.Optional(Type.Array(Type.Any())),
             notes: Type.Optional(Type.Array(Type.Any())),
@@ -509,7 +674,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             // Read-modify-write: merge the patch over the current row, then write all columns.
             const current = await query<IncidentRow>(config, sql`
                 SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
-                       report_number, caller_name, caller_phone, status, assigned, notes, created_at, closed_at
+                       report_number, callers, status, assigned, notes, created_at, closed_at
                 FROM dispatcher_incidents WHERE id = ${req.params.incidentid}
             `);
             if (!current.length) throw new Err(404, null, 'Incident not found');
@@ -543,14 +708,6 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 }];
             }
 
-            // Caller details: undefined = leave as is; '' = clear. Not logged to notes.
-            const callerName = b.caller_name !== undefined
-                ? normCaller(b.caller_name, CALLER_NAME_MAX, 'Caller name')
-                : cur.caller_name;
-            const callerPhone = b.caller_phone !== undefined
-                ? normCaller(b.caller_phone, CALLER_PHONE_MAX, 'Caller phone')
-                : cur.caller_phone;
-
             // Closing stamps closed_at; reopening clears it.
             const closedAt = next.status === 'closed'
                 ? (cur.closed_at ?? new Date().toISOString())
@@ -565,17 +722,84 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                     dispatcher = ${next.dispatcher},
                     details    = ${next.details},
                     report_number = ${reportNumber},
-                    caller_name  = ${callerName},
-                    caller_phone = ${callerPhone},
                     status     = ${next.status},
                     assigned   = ${JSON.stringify(next.assigned)}::jsonb,
                     notes      = ${JSON.stringify(next.notes)}::jsonb,
                     closed_at  = ${closedAt}
                 WHERE id = ${req.params.incidentid}
                 RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                          report_number, caller_name, caller_phone, status, assigned, notes, created_at, closed_at
+                          report_number, callers, status, assigned, notes, created_at, closed_at
             `);
             res.json({ incident: mapIncident(incidents[0]) });
+        } catch (err) {
+            Err.respond(err, res);
+        }
+    });
+
+    // ── Callers ─────────────────────────────────────────────────────────────────
+    // Each change goes through editCallers (row lock + one UPDATE). Callers are not copied into
+    // the notes log; the list itself is the record, with the time of each call.
+
+    await schema.post('/dispatcher/incidents/:incidentid/callers', {
+        name: 'Add Caller',
+        group: 'Dispatcher',
+        description: 'Add a caller to an incident (the first caller becomes primary)',
+        params: Type.Object({ incidentid: Type.String() }),
+        body: Type.Object({
+            name: Type.Optional(Type.String()),
+            phone: Type.Optional(Type.String()),
+            note: Type.Optional(Type.String()),
+            time: Type.Optional(Type.String()),
+            primary: Type.Optional(Type.Boolean()),
+        }),
+        res: Type.Any(),
+    }, async (req, res) => {
+        try {
+            const user = await Auth.as_user(config, req);
+            await requireIncidentAccess(config, user.email, req.params.incidentid);
+            const incident = await editCallers(config, req.params.incidentid, list => addCallerTo(list, req.body));
+            res.json({ incident });
+        } catch (err) {
+            Err.respond(err, res);
+        }
+    });
+
+    await schema.patch('/dispatcher/incidents/:incidentid/callers/:callerid', {
+        name: 'Update Caller',
+        group: 'Dispatcher',
+        description: 'Edit a caller, or make them the primary caller',
+        params: Type.Object({ incidentid: Type.String(), callerid: Type.String() }),
+        body: Type.Object({
+            name: Type.Optional(Type.String()),
+            phone: Type.Optional(Type.String()),
+            note: Type.Optional(Type.String()),
+            time: Type.Optional(Type.String()),
+            primary: Type.Optional(Type.Literal(true)),
+        }),
+        res: Type.Any(),
+    }, async (req, res) => {
+        try {
+            const user = await Auth.as_user(config, req);
+            await requireIncidentAccess(config, user.email, req.params.incidentid);
+            const incident = await editCallers(config, req.params.incidentid, list => updateCallerIn(list, req.params.callerid, req.body));
+            res.json({ incident });
+        } catch (err) {
+            Err.respond(err, res);
+        }
+    });
+
+    await schema.delete('/dispatcher/incidents/:incidentid/callers/:callerid', {
+        name: 'Remove Caller',
+        group: 'Dispatcher',
+        description: 'Remove a caller (if it was primary, the first remaining caller becomes primary)',
+        params: Type.Object({ incidentid: Type.String(), callerid: Type.String() }),
+        res: Type.Any(),
+    }, async (req, res) => {
+        try {
+            const user = await Auth.as_user(config, req);
+            await requireIncidentAccess(config, user.email, req.params.incidentid);
+            const incident = await editCallers(config, req.params.incidentid, list => removeCallerFrom(list, req.params.callerid));
+            res.json({ incident });
         } catch (err) {
             Err.respond(err, res);
         }

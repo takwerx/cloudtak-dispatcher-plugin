@@ -15,10 +15,13 @@ The plugin auto-detects its environment on load:
 - **TAK-CAD** — if the TAK-CAD TAK Server plugin is detected, the full CAD UI (Vehicles,
   Personnel, incident types/roles) lights up on top of the standalone capabilities.
 
-Standalone incidents can also carry an optional **Caller Name** and **Caller Phone** (add or edit them
-any time, active or closed). They show on the incident marker's remarks, and a dialable copy of the number
-goes in the marker's `<contact phone>` so field clients can offer a call. **Manage → Caller Details** turns
-that off for the whole CloudTAK (default on). They are included in the after-action report and CSV.
+Standalone incidents keep a list of **callers** (name, phone, optional note, time of call). The New
+Incident form records the first caller; add more, edit them, or pick the **primary** caller from the
+incident at any time, active or closed. Every caller is listed in the incident marker's remarks, and a
+dialable copy of the primary caller's number goes in the marker's `<contact phone>` so field clients can
+offer a call. **Manage → Caller Details** turns that off for the whole CloudTAK (default on): with it off,
+no caller name, phone or note reaches a field device. Every caller is included in the after-action report
+and CSV. A database from the earlier single-caller version moves its caller into the list on start.
 
 ## Layout
 

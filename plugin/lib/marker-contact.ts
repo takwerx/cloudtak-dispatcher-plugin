@@ -11,10 +11,38 @@ export function dialablePhone(raw: string | null | undefined): string {
     return (head.startsWith('+') ? '+' : '') + digits;
 }
 
-// "Caller: <name> · <phone>", leaving out whichever is blank; '' when both are.
-export function callerRemark(name?: string | null, phone?: string | null): string {
-    const bits = [String(name ?? '').trim(), String(phone ?? '').trim()].filter(Boolean);
-    return bits.length ? `Caller: ${bits.join(' · ')}` : '';
+// A caller as the marker sees it (the shape the server sends in `callers`).
+export interface MarkerCaller {
+    name?:    string | null;
+    phone?:   string | null;
+    note?:    string | null;
+    primary?: boolean;
+}
+
+// The primary caller: the one marked primary, else the first. undefined when there are none.
+export function primaryCaller<T extends MarkerCaller>(callers?: T[] | null): T | undefined {
+    const list = callers ?? [];
+    return list.find(c => c.primary) ?? list[0];
+}
+
+// One caller as "<name> · <phone> — <note>", leaving out whatever is blank.
+function callerText(c: MarkerCaller): string {
+    const who = [String(c.name ?? '').trim(), String(c.phone ?? '').trim()].filter(Boolean).join(' · ');
+    const note = String(c.note ?? '').trim();
+    return [who, note].filter(Boolean).join(' — ');
+}
+
+// The marker remarks for the callers: "Caller: <one>" for a single caller, or
+// "Callers: <primary> (primary); <next>; ..." for several, primary first and the rest in the order
+// received. '' when there are none. Callers come ONLY from this list, never from the notes log,
+// so passing [] (Caller Details off) keeps every caller name, phone and note off the marker.
+export function callersRemark(callers?: MarkerCaller[] | null): string {
+    const list = (callers ?? []).filter(c => callerText(c));
+    if (!list.length) return '';
+    if (list.length === 1) return `Caller: ${callerText(list[0])}`;
+    const primary = primaryCaller(list);
+    const ordered = [...list.filter(c => c === primary), ...list.filter(c => c !== primary)];
+    return `Callers: ${ordered.map(c => callerText(c) + (c === primary ? ' (primary)' : '')).join('; ')}`;
 }
 
 // The <contact> for an incident marker: callsign always, phone only when there is a dialable one.
@@ -24,4 +52,10 @@ export function callerRemark(name?: string | null, phone?: string | null): strin
 export function markerContact(callsign: string, rawPhone: string | null | undefined): { callsign: string; phone?: string } {
     const dial = dialablePhone(rawPhone);
     return dial ? { callsign, phone: dial } : { callsign };
+}
+
+// The <contact> for a marker built from a caller list: the PRIMARY caller's phone (a CoT contact
+// holds one phone). Same always-send rule as markerContact.
+export function markerContactFor(callsign: string, callers?: MarkerCaller[] | null): { callsign: string; phone?: string } {
+    return markerContact(callsign, primaryCaller(callers)?.phone);
 }

@@ -43,6 +43,9 @@ export interface DispatcherIncident {
     dispatcher: string | null;
     details: string | null;
     report_number: string | null;
+    // Every caller on the incident, in the order received; exactly one is primary (none when empty).
+    callers: IncidentCaller[];
+    // The PRIMARY caller's name / phone, derived by the server (read-only shortcuts).
     caller_name: string | null;
     caller_phone: string | null;
     status: 'active' | 'closed';
@@ -50,6 +53,15 @@ export interface DispatcherIncident {
     notes: IncidentNote[];
     created_at: string;
     closed_at: string | null;
+}
+
+export interface IncidentCaller {
+    id: string;
+    name: string | null;
+    phone: string | null;
+    note: string | null;
+    time: string;       // when the call was received
+    primary: boolean;   // its phone is the tap-to-call number on the incident marker
 }
 
 export interface CreateEventBody {
@@ -68,14 +80,25 @@ export interface CreateIncidentBody {
     dispatcher?: string;
     details?: string;
     report_number?: string;
+    // The first caller (becomes the primary caller). More are added with addCaller().
     caller_name?: string;
     caller_phone?: string;
 }
 
-// report_number / caller_name / caller_phone: send '' to clear.
+// report_number: send '' to clear. Callers are changed with addCaller / updateCaller / removeCaller.
 export type IncidentPatch = Partial<Pick<DispatcherIncident,
     'type' | 'address' | 'lat' | 'lon' | 'dispatcher' | 'details' | 'status' | 'assigned' | 'notes'>>
-    & { report_number?: string; caller_name?: string; caller_phone?: string };
+    & { report_number?: string };
+
+// For addCaller / updateCaller. updateCaller: undefined = leave as is, '' = clear.
+// time: ISO date of the call (default now). primary: true makes this caller the primary.
+export interface CallerInput {
+    name?: string;
+    phone?: string;
+    note?: string;
+    time?: string;
+    primary?: boolean;
+}
 
 // fresh=true bypasses the server's 60s channel-visibility cache (manual refresh).
 export async function listEvents(fresh = false): Promise<DispatcherEvent[]> {
@@ -119,6 +142,32 @@ export async function patchIncident(id: string, patch: IncidentPatch): Promise<D
     const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         body: patch,
+    }) as { incident: DispatcherIncident };
+    return r.incident;
+}
+
+// ── Callers (the server applies each change under a row lock) ─────────────────────
+
+export async function addCaller(incidentId: string, body: CallerInput): Promise<DispatcherIncident> {
+    const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/callers`, {
+        method: 'POST',
+        body,
+    }) as { incident: DispatcherIncident };
+    return r.incident;
+}
+
+export async function updateCaller(incidentId: string, callerId: string, body: CallerInput): Promise<DispatcherIncident> {
+    const { primary, ...rest } = body;
+    const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/callers/${encodeURIComponent(callerId)}`, {
+        method: 'PATCH',
+        body: primary ? { ...rest, primary: true } : rest,
+    }) as { incident: DispatcherIncident };
+    return r.incident;
+}
+
+export async function removeCaller(incidentId: string, callerId: string): Promise<DispatcherIncident> {
+    const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/callers/${encodeURIComponent(callerId)}`, {
+        method: 'DELETE',
     }) as { incident: DispatcherIncident };
     return r.incident;
 }
