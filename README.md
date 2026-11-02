@@ -23,6 +23,19 @@ offer a call. **Manage → Caller Details** turns that off for the whole CloudTA
 no caller name, phone or note reaches a field device. Every caller is included in the after-action report
 and CSV. A database from the earlier single-caller version moves its caller into the list on start.
 
+### Delivery to field units (standalone)
+
+Each Event chooses how its incidents reach field devices when it is created:
+
+- **DataSync feed** (default) — each incident is a marker in the Event's DataSync feed. Field
+  users subscribe to the feed to see it, and can use the feed's log and chat.
+- **Broadcast to channel** — each incident is a CloudTAK **Core Event** shared with one channel.
+  The CloudTAK server sends it to everyone in that channel and re-sends it every 10 seconds, so
+  it appears on every device in the channel with nothing to subscribe to, including devices that
+  connect later. It is one way (field users can't edit it), and a closed incident is marked
+  `CLOSED` and drops off devices 60 minutes after closing. Needs a CloudTAK with Core Events and
+  its Admin Connection connected. The incidents also appear in CloudTAK's own Core Events list.
+
 ## Layout
 
 - `plugin/` — the CloudTAK web plugin (Vue 3 / TypeScript), discovered and bundled by CloudTAK's

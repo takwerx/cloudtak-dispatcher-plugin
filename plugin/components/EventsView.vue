@@ -36,6 +36,67 @@
                     </div>
                 </div>
                 <div>
+                    <label class='form-label small text-muted mb-1'>Delivery to field units</label>
+                    <div class='d-flex rounded overflow-hidden border mb-1'>
+                        <button
+                            v-for='d in DELIVERY_MODES'
+                            :key='d.key'
+                            class='flex-fill btn btn-sm py-1 rounded-0 border-0 small'
+                            :class='delivery === d.key ? "bg-primary text-white" : "text-muted"'
+                            :disabled='d.key === "broadcast" && broadcastAvailable === false'
+                            @click='delivery = d.key'
+                        >
+                            {{ d.label }}
+                        </button>
+                    </div>
+                    <div
+                        v-if='delivery === "broadcast"'
+                        class='form-text small'
+                    >
+                        Incidents appear on every device in the channel automatically — nothing to
+                        subscribe to. They update as you change them, and closed incidents drop off
+                        devices 60 minutes after closing. One way: field users can't edit them.
+                    </div>
+                    <div
+                        v-else
+                        class='form-text small'
+                    >
+                        Incidents are markers in a DataSync feed. Field users subscribe to the feed to
+                        see them, and can work in the feed's log and chat.
+                    </div>
+                    <div
+                        v-if='broadcastAvailable === false'
+                        class='form-text small text-warning'
+                    >
+                        Broadcast needs CloudTAK Core Events, which this CloudTAK doesn't have.
+                    </div>
+                    <template v-if='delivery === "broadcast"'>
+                        <label class='form-label small text-muted mb-1 mt-2'>Channel to broadcast to <span class='text-danger'>*</span></label>
+                        <select
+                            v-model='selectedChannel'
+                            class='form-select form-select-sm border'
+                        >
+                            <option
+                                value=''
+                                disabled
+                            >
+                                {{ loadingChannels ? 'Loading channels…' : (channels.length ? 'Select a channel' : 'No channels available') }}
+                            </option>
+                            <option
+                                v-for='c in channels'
+                                :key='c'
+                                :value='c'
+                            >
+                                {{ c }}
+                            </option>
+                        </select>
+                        <div class='form-text small'>
+                            Only members of this channel see the event and its incidents. It can't be
+                            changed later.
+                        </div>
+                    </template>
+                </div>
+                <div v-if='delivery === "datasync"'>
                     <label class='form-label small text-muted mb-1'>DataSync Feed <span class='text-danger'>*</span></label>
                     <div class='d-flex rounded overflow-hidden border mb-1'>
                         <button
@@ -168,8 +229,9 @@
                 <button
                     class='btn btn-sm btn-warning'
                     :disabled='saving || !form.name.trim()
-                        || (feedMode === "create" && !selectedChannel)
-                        || (feedMode === "existing" && !selectedFeed)'
+                        || (delivery === "broadcast" && !selectedChannel)
+                        || (delivery === "datasync" && feedMode === "create" && !selectedChannel)
+                        || (delivery === "datasync" && feedMode === "existing" && !selectedFeed)'
                     @click='submitCreate'
                 >
                     <span v-if='saving' class='spinner-border spinner-border-sm me-1' />
@@ -252,7 +314,7 @@
                             >Archived</span>
                         </div>
                         <div class='small text-muted text-truncate'>
-                            {{ ev.feed_name }} · {{ ev.prefix }}-NNN
+                            {{ ev.delivery === 'broadcast' ? 'Broadcast' : ev.feed_name }} · {{ ev.prefix }}-NNN
                         </div>
                     </div>
                     <div class='text-end ms-2 flex-shrink-0 d-flex gap-1'>
@@ -299,7 +361,7 @@ import {
     listEvents, createEvent, setEventStatus, deleteEvent, listIncidents,
 } from '../lib/events-client.ts';
 import type { DispatcherEvent } from '../lib/events-client.ts';
-import { removeIncidentMarker } from '../lib/map-marker.ts';
+import { withdrawIncident, coreEventsAvailable } from '../lib/field-delivery.ts';
 import { dispatcherStore as store, loadLastEventId } from '../lib/dispatcher-store.ts';
 import ReportView from './ReportView.vue';
 
@@ -343,6 +405,16 @@ const FEED_MODES = [
     { key: 'existing', label: 'Existing feed' },
 ] as const;
 type FeedMode = typeof FEED_MODES[number]['key'];
+
+// How incidents reach field units: a DataSync feed (field users subscribe), or a broadcast
+// to one channel as CloudTAK Core Events (appear automatically; one way). See field-delivery.ts.
+const DELIVERY_MODES = [
+    { key: 'datasync',  label: 'DataSync feed'        },
+    { key: 'broadcast', label: 'Broadcast to channel' },
+] as const;
+type DeliveryMode = typeof DELIVERY_MODES[number]['key'];
+const delivery           = ref<DeliveryMode>('datasync');
+const broadcastAvailable = ref<boolean | null>(null);  // null = not checked yet
 
 const channels        = ref<string[]>([]);
 const loadingChannels = ref(false);
@@ -478,9 +550,11 @@ function openCreate() {
     createError.value = '';
     selectedChannel.value = '';
     feedMode.value = 'create';
+    delivery.value = 'datasync';
     newFeedName.value = '';
     feedNameDirty = false;
     view.value = 'create';
+    coreEventsAvailable().then((ok) => { broadcastAvailable.value = ok; });
     loadingChannels.value = true;
     getUserChannels()
         .then(c => { channels.value = c; })
@@ -490,6 +564,29 @@ function openCreate() {
 
 async function submitCreate() {
     if (!form.name.trim()) return;
+
+    // Broadcast: no feed — the Event is shared with one channel.
+    if (delivery.value === 'broadcast') {
+        if (!selectedChannel.value) return;
+        saving.value = true; createError.value = '';
+        try {
+            const ev = await createEvent({
+                name:     form.name.trim(),
+                prefix:   (form.prefix || derivePrefix(form.name) || 'INC').toUpperCase(),
+                delivery: 'broadcast',
+                channel:  selectedChannel.value,
+            });
+            store.events = [ev, ...store.events];
+            view.value = 'list';
+            await open(ev);
+        } catch (e) {
+            createError.value = e instanceof Error ? e.message : String(e);
+        } finally {
+            saving.value = false;
+        }
+        return;
+    }
+
     if (feedMode.value === 'create' && !selectedChannel.value) return;
     if (feedMode.value === 'existing' && !selectedFeed.value) return;
     saving.value = true; createError.value = '';
@@ -551,19 +648,21 @@ async function open(ev: DispatcherEvent) {
     // Subscribe-on-open: feed-driven access means anyone who can open the event may
     // subscribe to its feed — so do it for them and markers just work, creator or not.
     // Best-effort; the event bar's warning + Recheck remains the fallback.
-    await subscribeToFeed(ev.feed_guid, ev.feed_name);
+    // Broadcast Events have no feed to subscribe to.
+    if (ev.delivery !== 'broadcast') await subscribeToFeed(ev.feed_guid, ev.feed_name);
     store.activeEvent = ev;
     emit('opened', ev);
 }
 
-// Remove every marker this Event dropped into its feed (records stay server-side).
+// Take every incident of this Event off field devices (records stay server-side):
+// DataSync markers are removed; broadcast Core Events are ended within about a minute.
 async function clearEventMarkers(ev: DispatcherEvent) {
     let incidents;
     try { incidents = await listIncidents(ev.id); }
     catch { return; }
     for (const inc of incidents) {
         try {
-            await removeIncidentMarker(mapStore, {
+            await withdrawIncident(mapStore, {
                 uid:        inc.id,
                 number:     inc.number,
                 name:       inc.type ?? '',
@@ -575,6 +674,10 @@ async function clearEventMarkers(ev: DispatcherEvent) {
                 dispatcher: inc.dispatcher ?? '',
                 details:    inc.details ?? '',
                 feedGuid:   ev.feed_guid,
+                delivery:    ev.delivery,
+                channel:     ev.channel,
+                coreEventId: inc.core_event_id,
+                closedAt:    inc.closed_at,
             });
         } catch { /* best-effort */ }
     }

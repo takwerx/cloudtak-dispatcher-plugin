@@ -232,7 +232,9 @@ ${agency?.name ? `<div class='agency'>${esc(agency.name)}</div>` : ''}
 <div class='sub'>
     ${agency?.id ? `Agency ID: ${esc(agency.id)}<br>` : ''}
     Period: ${esc(fmt(range.start))} to ${esc(fmt(range.end))}<br>
-    DataSync feed: ${esc(event.feed_name)} · Incident series: ${esc(event.prefix)}-NNN<br>
+    ${event.delivery === 'broadcast'
+        ? `Delivery: broadcast to channel ${esc(event.channel ?? '')}`
+        : `DataSync feed: ${esc(event.feed_name)}`} · Incident series: ${esc(event.prefix)}-NNN<br>
     Generated ${esc(fmt(new Date()))} by ${esc(generatedBy || 'Dispatcher')}
 </div>
 </div>

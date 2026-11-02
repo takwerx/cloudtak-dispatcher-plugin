@@ -31,6 +31,9 @@ interface EventRow {
     id: string;
     name: string;
     prefix: string;
+    // 'datasync' (default): incidents are markers in feed_guid. 'broadcast': incidents are
+    // CloudTAK Core Events shared with `channel`; feed_guid / feed_name are '' (no feed).
+    delivery: 'datasync' | 'broadcast';
     feed_guid: string;
     feed_name: string;
     channel: string | null;
@@ -56,6 +59,8 @@ interface IncidentRow {
     callers?: unknown;
     caller_name?: string | null;
     caller_phone?: string | null;
+    // Broadcast Events: the CloudTAK Core Event that carries this incident to the field.
+    core_event_id: string | null;
     status: string;
     assigned: unknown;
     notes: unknown;
@@ -240,7 +245,7 @@ async function editCallers(
             UPDATE dispatcher_incidents SET callers = ${JSON.stringify(next)}::jsonb
             WHERE id = ${incidentid}
             RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                      report_number, callers, status, assigned, notes, created_at, closed_at
+                      report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
         `) as unknown as IncidentRow[];
         return mapIncident(rows[0]);
     });
@@ -299,18 +304,29 @@ async function userFeeds(config: ConfigStateless, email: string): Promise<Map<st
 
 async function eventById(config: ConfigStateless, eventid: string): Promise<EventRow | null> {
     const rows = await query<EventRow>(config, sql`
-        SELECT id, name, prefix, feed_guid, feed_name, channel, status, seq, created_at, created_by
+        SELECT id, name, prefix, delivery, feed_guid, feed_name, channel, status, seq, created_at, created_by
         FROM dispatcher_events WHERE id = ${eventid}
     `);
     return rows[0] ?? null;
 }
 
 // Load the event and 403/404 unless the caller's TAK view includes its feed.
+// A broadcast Event has no feed, so visibility follows its channel: you can see it iff
+// you are a member of that channel (the same audience its Core Events are shared with).
+async function canSeeEvent(config: ConfigStateless, email: string, ev: EventRow): Promise<boolean> {
+    if (ev.delivery === 'broadcast') {
+        return !!ev.channel && (await userChannels(config, email)).has(ev.channel);
+    }
+    return (await userFeeds(config, email)).has(ev.feed_guid);
+}
+
 async function requireEventAccess(config: ConfigStateless, email: string, eventid: string): Promise<EventRow> {
     const ev = await eventById(config, eventid);
     if (!ev) throw new Err(404, null, 'Event not found');
-    if (!(await userFeeds(config, email)).has(ev.feed_guid)) {
-        throw new Err(403, null, 'No access to this event\'s DataSync feed');
+    if (!(await canSeeEvent(config, email, ev))) {
+        throw new Err(403, null, ev.delivery === 'broadcast'
+            ? 'No access to this event\'s channel'
+            : 'No access to this event\'s DataSync feed');
     }
     return ev;
 }
@@ -399,6 +415,14 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 END IF;
             END $$
         `);
+        // Delivery mode — existing Events keep DataSync. Broadcast Events store '' as their
+        // feed, so feed_guid / feed_name stay NOT NULL and older code paths keep working.
+        await config.pg.execute(sql`
+            ALTER TABLE dispatcher_events ADD COLUMN IF NOT EXISTS delivery TEXT NOT NULL DEFAULT 'datasync'
+        `);
+        await config.pg.execute(sql`
+            ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS core_event_id TEXT
+        `);
     } catch (err) {
         console.error('[dispatcher] table bootstrap failed', err);
     }
@@ -467,18 +491,24 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
-            if (req.query.fresh) feedCache.delete(user.email);
+            if (req.query.fresh) { feedCache.delete(user.email); channelCache.delete(user.email); }
             const feeds = await userFeeds(config, user.email);
+            const channels = await userChannels(config, user.email);
             const events = await query<EventRow>(config, sql`
-                SELECT id, name, prefix, feed_guid, feed_name, channel, status, seq, created_at, created_by
+                SELECT id, name, prefix, delivery, feed_guid, feed_name, channel, status, seq, created_at, created_by
                 FROM dispatcher_events ORDER BY created_at DESC
             `);
             res.json({
                 events: events
-                    .filter(e => feeds.has(e.feed_guid))
+                    .filter(e => (e.delivery === 'broadcast'
+                        ? !!e.channel && channels.has(e.channel)
+                        : feeds.has(e.feed_guid)))
                     // feed_channels = the feed's LIVE channels (badges render from this;
-                    // stored channel label is only a fallback for older responses).
-                    .map(e => ({ ...e, feed_channels: feeds.get(e.feed_guid) ?? [] })),
+                    // stored channel label is only a fallback for older responses). A
+                    // broadcast Event's audience is its one channel.
+                    .map(e => ({ ...e, feed_channels: e.delivery === 'broadcast'
+                        ? [e.channel as string]
+                        : feeds.get(e.feed_guid) ?? [] })),
             });
         } catch (err) {
             Err.respond(err, res);
@@ -488,12 +518,14 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     await schema.post('/dispatcher/events', {
         name: 'Create Event',
         group: 'Dispatcher',
-        description: 'Create a dispatcher event tied to a DataSync feed',
+        description: 'Create a dispatcher event tied to a DataSync feed, or broadcast to a channel',
         body: Type.Object({
             name: Type.String(),
             prefix: Type.String(),
-            feed_guid: Type.String(),
-            feed_name: Type.String(),
+            // 'datasync' (default) needs feed_guid + feed_name; 'broadcast' needs channel.
+            delivery: Type.Optional(Type.Union([Type.Literal('datasync'), Type.Literal('broadcast')])),
+            feed_guid: Type.Optional(Type.String()),
+            feed_name: Type.Optional(Type.String()),
             channel: Type.Optional(Type.String()),
         }),
         res: Type.Any(),
@@ -504,12 +536,21 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             if (channel && !(await userChannels(config, user.email)).has(channel)) {
                 throw new Err(403, null, `You are not a member of channel "${channel}"`);
             }
+            const delivery = req.body.delivery ?? 'datasync';
+            const feedGuid = delivery === 'broadcast' ? '' : (req.body.feed_guid ?? '').trim();
+            const feedName = delivery === 'broadcast' ? '' : (req.body.feed_name ?? '').trim();
+            if (delivery === 'broadcast' && !channel) {
+                throw new Err(400, null, 'A broadcast event needs a channel to broadcast to');
+            }
+            if (delivery === 'datasync' && (!feedGuid || !feedName)) {
+                throw new Err(400, null, 'A DataSync event needs a feed');
+            }
             const id = randomUUID();
             const prefix = (req.body.prefix || 'INC').replace(/[^A-Z0-9-]/gi, '').toUpperCase().slice(0, 12) || 'INC';
             const events = await query<EventRow>(config, sql`
-                INSERT INTO dispatcher_events (id, name, prefix, feed_guid, feed_name, channel, created_by)
-                VALUES (${id}, ${req.body.name}, ${prefix}, ${req.body.feed_guid}, ${req.body.feed_name}, ${channel}, ${user.email})
-                RETURNING id, name, prefix, feed_guid, feed_name, channel, status, seq, created_at, created_by
+                INSERT INTO dispatcher_events (id, name, prefix, delivery, feed_guid, feed_name, channel, created_by)
+                VALUES (${id}, ${req.body.name}, ${prefix}, ${delivery}, ${feedGuid}, ${feedName}, ${channel}, ${user.email})
+                RETURNING id, name, prefix, delivery, feed_guid, feed_name, channel, status, seq, created_at, created_by
             `);
             res.json({ event: events[0] });
         } catch (err) {
@@ -534,6 +575,11 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             const nextChannel = req.body.channel !== undefined
                 ? ((req.body.channel || '').trim() || null)
                 : ev.channel;
+            // Its incidents' Core Events are already shared with this channel; moving the
+            // Event would leave them broadcasting to the old one.
+            if (ev.delivery === 'broadcast' && nextChannel !== ev.channel) {
+                throw new Err(400, null, 'A broadcast event\'s channel can\'t be changed');
+            }
             if (nextChannel && nextChannel !== ev.channel
                 && !(await userChannels(config, user.email)).has(nextChannel)) {
                 throw new Err(403, null, `You are not a member of channel "${nextChannel}"`);
@@ -542,7 +588,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 UPDATE dispatcher_events
                 SET status = ${req.body.status ?? ev.status}, channel = ${nextChannel}
                 WHERE id = ${req.params.eventid}
-                RETURNING id, name, prefix, feed_guid, feed_name, channel, status, seq, created_at, created_by
+                RETURNING id, name, prefix, delivery, feed_guid, feed_name, channel, status, seq, created_at, created_by
             `);
             res.json({ event: events[0] });
         } catch (err) {
@@ -581,7 +627,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             await requireEventAccess(config, user.email, req.params.eventid);
             const incidents = await query<IncidentRow>(config, sql`
                 SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
-                       report_number, callers, status, assigned, notes, created_at, closed_at
+                       report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
                 FROM dispatcher_incidents WHERE event_id = ${req.params.eventid}
                 ORDER BY created_at ASC
             `);
@@ -641,7 +687,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                      ${JSON.stringify(callers)}::jsonb,
                      ${JSON.stringify(seedNotes)}::jsonb)
                 RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                          report_number, callers, status, assigned, notes, created_at, closed_at
+                          report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
             `);
             res.json({ incident: mapIncident(incidents[0]) });
         } catch (err) {
@@ -662,6 +708,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             dispatcher: Type.Optional(Type.String()),
             details: Type.Optional(Type.String()),
             report_number: Type.Optional(Type.String()),
+            core_event_id: Type.Optional(Type.String()),
             status: Type.Optional(Type.Union([Type.Literal('active'), Type.Literal('closed')])),
             assigned: Type.Optional(Type.Array(Type.Any())),
             notes: Type.Optional(Type.Array(Type.Any())),
@@ -674,7 +721,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             // Read-modify-write: merge the patch over the current row, then write all columns.
             const current = await query<IncidentRow>(config, sql`
                 SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
-                       report_number, callers, status, assigned, notes, created_at, closed_at
+                       report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
                 FROM dispatcher_incidents WHERE id = ${req.params.incidentid}
             `);
             if (!current.length) throw new Err(404, null, 'Incident not found');
@@ -708,6 +755,11 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 }];
             }
 
+            // Core Event link: undefined = leave as is; '' = clear.
+            const coreEventId = b.core_event_id !== undefined
+                ? ((b.core_event_id || '').trim() || null)
+                : cur.core_event_id;
+
             // Closing stamps closed_at; reopening clears it.
             const closedAt = next.status === 'closed'
                 ? (cur.closed_at ?? new Date().toISOString())
@@ -722,13 +774,14 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                     dispatcher = ${next.dispatcher},
                     details    = ${next.details},
                     report_number = ${reportNumber},
+                    core_event_id = ${coreEventId},
                     status     = ${next.status},
                     assigned   = ${JSON.stringify(next.assigned)}::jsonb,
                     notes      = ${JSON.stringify(next.notes)}::jsonb,
                     closed_at  = ${closedAt}
                 WHERE id = ${req.params.incidentid}
                 RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                          report_number, callers, status, assigned, notes, created_at, closed_at
+                          report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
             `);
             res.json({ incident: mapIncident(incidents[0]) });
         } catch (err) {

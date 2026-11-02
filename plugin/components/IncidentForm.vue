@@ -283,6 +283,7 @@ import type { GeocodeSuggestion, MissionRef } from '../lib/takcad-client.ts';
 import type { IncidentRef, IncidentTypeRef } from '../lib/takcad-types.ts';
 import { STATUS_ACTIVE } from '../lib/takcad-types.ts';
 import { dropIncidentMarker, postMissionCallLog, postFeedChat } from '../lib/map-marker.ts';
+import { showIncident } from '../lib/field-delivery.ts';
 import { createIncident, getDispatcherSettings } from '../lib/events-client.ts';
 import type { DispatcherIncident } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
@@ -497,10 +498,11 @@ async function submitStandalone(address: string) {
             caller_phone:  form.callerPhone.trim()  || undefined,
         });
 
-        // CoT marker + DataSync log/chat (best-effort; the record already exists server-side).
+        // CoT marker (DataSync) or Core Event (broadcast) + DataSync log/chat (best-effort;
+        // the record already exists server-side). Broadcast Events have no feed log or chat.
         const markerErrors: string[] = [];
         try {
-            await dropIncidentMarker(mapStore, {
+            await showIncident(mapStore, {
                 uid:        incident.id,
                 number:     incident.number,
                 name:       incident.type ?? form.incidentType,
@@ -513,9 +515,14 @@ async function submitStandalone(address: string) {
                 details:    form.details,
                 callers:    dispatcherStore.callerOnMarkers ? (incident.callers ?? []) : [],
                 feedGuid:   event.feed_guid,
+                delivery:    event.delivery,
+                channel:     event.channel,
+                coreEventId: incident.core_event_id,
             });
         } catch (e) {
-            markerErrors.push(`Marker failed — subscribe to the "${event.feed_name}" DataSync feed in CloudTAK first`);
+            markerErrors.push(event.delivery === 'broadcast'
+                ? `Broadcast failed — ${e instanceof Error ? e.message : String(e)}`
+                : `Marker failed — subscribe to the "${event.feed_name}" DataSync feed in CloudTAK first`);
             console.warn('[dispatcher] marker drop failed', e);
         }
         try {
