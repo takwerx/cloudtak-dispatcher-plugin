@@ -673,8 +673,8 @@
                             class='small py-1 border-bottom'
                             data-test='caller-row'
                         >
-                            <div class='d-flex flex-wrap align-items-center gap-1'>
-                                <span class='text-muted'>{{ callTime(c.time) }}</span>
+                            <div class='d-flex gap-1'>
+                                <span class='text-muted text-nowrap'>{{ callTime(c.time) }}</span>
                                 <span class='flex-grow-1 text-break'>
                                     {{ c.name || '' }}
                                     <a
@@ -683,6 +683,14 @@
                                     >{{ c.phone }}</a>
                                     <template v-else>{{ c.phone || '' }}</template>
                                 </span>
+                            </div>
+                            <div
+                                v-if='c.note'
+                                class='text-muted fst-italic'
+                            >
+                                {{ c.note }}
+                            </div>
+                            <div class='d-flex align-items-center justify-content-end gap-2'>
                                 <span
                                     v-if='c.primary'
                                     class='badge bg-primary text-white'
@@ -712,12 +720,6 @@
                                 >
                                     ✕
                                 </button>
-                            </div>
-                            <div
-                                v-if='c.note'
-                                class='text-muted fst-italic'
-                            >
-                                {{ c.note }}
                             </div>
                         </div>
                         <div
