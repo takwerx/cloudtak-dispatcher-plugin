@@ -673,9 +673,9 @@
                             class='small py-1 border-bottom'
                             data-test='caller-row'
                         >
-                            <div class='d-flex align-items-center gap-1'>
+                            <div class='d-flex flex-wrap align-items-center gap-1'>
                                 <span class='text-muted'>{{ callTime(c.time) }}</span>
-                                <span class='flex-grow-1 text-truncate'>
+                                <span class='flex-grow-1 text-break'>
                                     {{ c.name || '' }}
                                     <a
                                         v-if='c.phone && slDialable(c.phone)'
