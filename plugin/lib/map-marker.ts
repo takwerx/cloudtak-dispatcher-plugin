@@ -3,6 +3,10 @@ import { normalize_geojson } from '@tak-ps/node-cot/normalize_geojson';
 import type { useMapStore } from '../../../src/stores/map.ts';
 import SubscriptionChat from '../../../src/base/subscription-chat.ts';
 import ProfileConfig from '../../../src/base/profile.ts';
+import { dialablePhone, callerRemark, markerContact } from './marker-contact.ts';
+
+// Re-exported so the components keep importing these from here.
+export { dialablePhone, callerRemark };
 
 type MapStore = ReturnType<typeof useMapStore>;
 
@@ -20,22 +24,6 @@ export interface MarkerIncident {
     callerName?:  string;  // omitted/blank when the caller is off the marker
     callerPhone?: string;
     feedGuid?:   string;  // DataSync mission GUID to route the marker into
-}
-
-// Dial-friendly form of a phone number for <contact phone>: digits with an optional leading
-// '+'. Anything after an extension marker (x / ext / #) is dropped, since it would otherwise
-// be dialed as part of the number. Returns '' when there is nothing dialable.
-export function dialablePhone(raw: string | null | undefined): string {
-    const head = String(raw ?? '').split(/\s*(?:ext\.?|x|#)/i)[0].trim();
-    const digits = head.replace(/\D/g, '');
-    if (!digits) return '';
-    return (head.startsWith('+') ? '+' : '') + digits;
-}
-
-// "Caller: <name> · <phone>", leaving out whichever is blank; '' when both are.
-export function callerRemark(name?: string | null, phone?: string | null): string {
-    const bits = [String(name ?? '').trim(), String(phone ?? '').trim()].filter(Boolean);
-    return bits.length ? `Caller: ${bits.join(' · ')}` : '';
 }
 
 // Build the remarks string for a CoT incident marker.
@@ -95,14 +83,9 @@ export async function dropIncidentMarker(mapStore: MapStore, incident: MarkerInc
     norm.properties.how  = 'h-g-i-g-o';
     norm.properties.icon = INCIDENT_ICON;
     // normalize_geojson drops `contact`, so restore it: field clients (ATAK/iTAK/TAK Aware)
-    // can offer a call action from <contact phone>. Always set it: CloudTAK merges an update
-    // into the stored marker key by key and cannot remove one, so leaving `contact` out would
-    // keep the old phone on the marker after the phone is cleared or Caller Details is turned
-    // off. A contact without a phone replaces the old one.
-    const dial = dialablePhone(incident.callerPhone);
-    norm.properties.contact = dial
-        ? { callsign: norm.properties.callsign, phone: dial }
-        : { callsign: norm.properties.callsign };
+    // can offer a call action from <contact phone>. Always set (see markerContact): an update
+    // cannot remove a key from the stored marker.
+    norm.properties.contact = markerContact(norm.properties.callsign, incident.callerPhone);
     const withOrigin = incident.feedGuid
         ? { ...norm, origin: { mode: 'Mission', mode_id: incident.feedGuid } }
         : norm;
