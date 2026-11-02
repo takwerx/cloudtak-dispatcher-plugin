@@ -5,6 +5,7 @@ name: PR checks
 #   bash .github/ci/static_checks.sh      (needs shellcheck and PyYAML)
 #   CI_TOOLS=<folder with typescript and vue installed> node .github/ci/syntax_ts_vue.mjs
 #   node --test plugin/test/*.test.ts
+#   node --import ./.github/ci/tests/register.mjs --test .github/ci/tests/dispatcher.test.mjs   (node 24)
 on:
   pull_request:
     branches: [dev, main]
@@ -67,10 +68,25 @@ jobs:
           node-version: '24'
       - run: node --test plugin/test/*.test.ts
 
+  # Logic tests for the plugin's lib code (broadcast delivery, close/reopen, feed guards; ops #410).
+  # Node 24 runs the .ts files directly; CloudTAK's own modules are swapped for stubs in
+  # .github/ci/tests/stubs, so no CloudTAK checkout and no npm install are needed.
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: node --import ./.github/ci/tests/register.mjs --test .github/ci/tests/dispatcher.test.mjs
+
   # One stable name to require in branch protection. A failed or cancelled job fails it.
   checks-ok:
     if: always()
-    needs: [static, syntax, unit]
+    needs: [static, syntax, unit, tests]
     runs-on: ubuntu-24.04
     steps:
       - env:
