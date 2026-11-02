@@ -184,11 +184,30 @@ test('buildRemarks joins type, start, dispatcher and details, skipping blanks', 
 
 test('broadcast + caller details: the Core Event remarks carry the caller, and clearing it removes it', async () => {
     await fd.showIncident(mapStore(), incident({ uid: 'b-caller', coreEventId: 'core-5',
-        callerName: 'Pat Doe', callerPhone: '+1 555 010 2999' }))
+        callers: [{ name: 'Pat Doe', phone: '+1 555 010 2999', primary: true }] }))
     const withCaller = writes().find(c => c.method === 'PATCH' && c.url === '/api/core/event/core-5')
     assert.match(withCaller.body.remarks, /\| Caller: Pat Doe · \+1 555 010 2999 \|/)
     globalThis.__calls = []
-    await fd.showIncident(mapStore(), incident({ uid: 'b-caller', coreEventId: 'core-5', callerName: '', callerPhone: '' }))
+    await fd.showIncident(mapStore(), incident({ uid: 'b-caller', coreEventId: 'core-5', callers: [] }))
     const cleared = writes().find(c => c.method === 'PATCH' && c.url === '/api/core/event/core-5')
     assert.ok(!/Caller/.test(cleared.body.remarks), 'a cleared caller (or Caller Details off) leaves no caller in the remarks')
+})
+
+test('broadcast + two callers: the Core Event remarks carry both, primary first, on create and on update', async () => {
+    const callers = [
+        { name: 'Sam Lee', phone: '555 010 3000', note: 'neighbour', primary: false },
+        { name: 'Pat Doe', phone: '+1 555 010 2999', primary: true },
+    ]
+    const expected = /\| Callers: Pat Doe · \+1 555 010 2999 \(primary\); Sam Lee · 555 010 3000 — neighbour \|/
+    await fd.showIncident(mapStore(), incident({ uid: 'b-two', callers }))
+    const post = writes().find(c => c.method === 'POST' && c.url === '/api/core/event')
+    assert.match(post.body.remarks, expected, 'create carries both callers, primary first')
+    globalThis.__calls = []
+    await fd.showIncident(mapStore(), incident({ uid: 'b-two', coreEventId: 'core-9', callers }))
+    const patch = writes().find(c => c.method === 'PATCH' && c.url === '/api/core/event/core-9')
+    assert.match(patch.body.remarks, expected, 'an update carries both callers too')
+    globalThis.__calls = []
+    await fd.showIncident(mapStore(), incident({ uid: 'b-two', coreEventId: 'core-9', callers: callers.slice(0, 1) }))
+    const one = writes().find(c => c.method === 'PATCH' && c.url === '/api/core/event/core-9')
+    assert.ok(!/Pat Doe/.test(one.body.remarks) && /Caller: Sam Lee/.test(one.body.remarks), 'removing the primary leaves the other caller only')
 })
