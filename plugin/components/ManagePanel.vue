@@ -128,6 +128,75 @@
 
             <hr class='my-1'>
 
+            <!-- CJIS reminder line on every standalone incident. CloudTAK system admin only. -->
+            <div>
+                <div class='small text-muted fw-semibold text-uppercase mb-1 d-flex align-items-center gap-2'>
+                    CJIS Reminder
+                    <span
+                        class='badge bg-secondary text-white fw-normal'
+                        title='Only a CloudTAK system admin can change this'
+                    >CloudTAK admin only</span>
+                </div>
+                <div class='card border'>
+                    <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
+                        <div class='form-check form-switch mb-0'>
+                            <input
+                                id='cjisReminderEnabled'
+                                v-model='cjisEnabled'
+                                class='form-check-input'
+                                type='checkbox'
+                                data-test='cjis-enabled'
+                                :disabled='!isAdmin || savingCjis'
+                                @change='saveCjisEnabled'
+                            >
+                            <label
+                                class='form-check-label'
+                                for='cjisReminderEnabled'
+                            >Show the reminder on every incident</label>
+                        </div>
+                        <label class='mb-0 text-muted'>Reminder text
+                            <input
+                                v-model='cjisText'
+                                type='text'
+                                maxlength='300'
+                                class='form-control form-control-sm border'
+                                data-test='cjis-text'
+                                :disabled='!isAdmin || savingCjis'
+                                :placeholder='CJIS_REMINDER_DEFAULT_TEXT'
+                                @keyup.enter='saveCjisText'
+                            >
+                        </label>
+                        <div class='d-flex align-items-center gap-2'>
+                            <button
+                                class='btn btn-sm btn-outline-secondary'
+                                type='button'
+                                data-test='cjis-save'
+                                :disabled='!isAdmin || savingCjis'
+                                @click='saveCjisText'
+                            >
+                                <span
+                                    v-if='savingCjis'
+                                    class='spinner-border spinner-border-sm me-1'
+                                />{{ cjisSaved ? 'Saved ✓' : 'Save text' }}
+                            </button>
+                            <span class='text-muted small'>Blank resets to the default wording.</span>
+                        </div>
+                        <div class='text-muted small'>
+                            One line at the top of every standalone incident, for every dispatcher on this
+                            CloudTAK. Only the CloudTAK system admin account can turn it off or change the wording.
+                        </div>
+                        <div
+                            v-if='cjisError'
+                            class='text-danger small'
+                        >
+                            {{ cjisError }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <hr class='my-1'>
+
             <!-- Custom call types -->
             <div>
                 <div class='small text-muted fw-semibold text-uppercase mb-1'>
@@ -197,6 +266,7 @@ import { ref, reactive, onMounted } from 'vue';
 import { getDispatcherSettings, putDispatcherSetting } from '../lib/events-client.ts';
 import type { AgencySettings } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
+import { CJIS_REMINDER_DEFAULT_TEXT, cjisReminderFrom, isSystemAdmin } from '../lib/cjis-reminder.ts';
 
 const emit = defineEmits<{
     (e: 'close'):  void;
@@ -266,6 +336,48 @@ async function saveCallerOnMarkers() {
     }
 }
 
+// ── CJIS reminder (deployment-shared; default on; CloudTAK system admin only) ──
+// The controls are disabled for everyone else; the server refuses the write with a 403 anyway.
+const isAdmin     = ref(false);
+const cjisEnabled = ref(true);
+const cjisText    = ref('');
+const savingCjis  = ref(false);
+const cjisSaved   = ref(false);
+const cjisError   = ref('');
+
+async function saveCjisEnabled() {
+    savingCjis.value = true;
+    cjisError.value = '';
+    const want = cjisEnabled.value;
+    try {
+        await putDispatcherSetting('cjis_reminder_enabled', want);
+        dispatcherStore.cjisReminder = { ...dispatcherStore.cjisReminder, enabled: want };
+    } catch (e) {
+        cjisEnabled.value = !want;
+        cjisError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        savingCjis.value = false;
+    }
+}
+
+async function saveCjisText() {
+    savingCjis.value = true;
+    cjisError.value = '';
+    const text = cjisText.value.trim();
+    try {
+        // The server stores the default when the text is blank; mirror that locally.
+        await putDispatcherSetting('cjis_reminder_text', text);
+        cjisText.value = text || CJIS_REMINDER_DEFAULT_TEXT;
+        dispatcherStore.cjisReminder = { ...dispatcherStore.cjisReminder, text: cjisText.value };
+        cjisSaved.value = true;
+        setTimeout(() => { cjisSaved.value = false; }, 2000);
+    } catch (e) {
+        cjisError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        savingCjis.value = false;
+    }
+}
+
 // ── Agency header (moved here from ReportView; reports read it at export time) ──
 const agency       = reactive<AgencySettings>({ name: '', id: '', logo: null });
 const savingAgency = ref(false);
@@ -313,10 +425,15 @@ function onLogoFile(ev: Event) {
 }
 
 onMounted(async () => {
+    isSystemAdmin().then((admin) => { isAdmin.value = admin; });
     try {
         const s = await getDispatcherSettings();
         callerOnMarkers.value = s.caller_on_markers !== false;
         dispatcherStore.callerOnMarkers = callerOnMarkers.value;
+        const cjis = cjisReminderFrom(s);
+        cjisEnabled.value = cjis.enabled;
+        cjisText.value    = cjis.text;
+        dispatcherStore.cjisReminder = cjis;
         const list = s.incident_types;
         if (Array.isArray(list)) {
             customTypes.value = list.filter((t): t is string => typeof t === 'string');

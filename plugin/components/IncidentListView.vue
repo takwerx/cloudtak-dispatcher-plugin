@@ -576,6 +576,15 @@
                     >{{ BOARD_LABEL[boardState(slDetail.assigned)] }}</span>
                 </div>
                 <div class='flex-grow-1 overflow-auto p-3 d-flex flex-column gap-3'>
+                    <!-- CJIS reminder: one shared line, on by default, Manage → CJIS Reminder (admin only) -->
+                    <div
+                        v-if='dispatcherStore.cjisReminder.enabled'
+                        class='small text-warning border border-warning rounded px-2 py-1'
+                        role='note'
+                        data-test='cjis-reminder'
+                    >
+                        {{ dispatcherStore.cjisReminder.text }}
+                    </div>
                     <div class='card border'>
                         <div class='card-body py-2 px-3 small d-flex flex-column gap-1'>
                             <div class='row g-1'>
@@ -1135,7 +1144,8 @@ import type { TakContact } from '../lib/contacts-client.ts';
 import type { IncidentMetadata, IncidentRef, VehicleRef, PersonRef, IncidentTypeRef, PersonCallsign } from '../lib/takcad-types.ts';
 import { isActive, formatAddress, formatTime, STATUS_CANCELLED } from '../lib/takcad-types.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
-import { listIncidents, patchIncident, getCallerOnMarkers, addCaller, updateCaller, removeCaller, assignUnits, setUnitStatus, removeUnit } from '../lib/events-client.ts';
+import { listIncidents, patchIncident, getDispatcherSettings, addCaller, updateCaller, removeCaller, assignUnits, setUnitStatus, removeUnit } from '../lib/events-client.ts';
+import { cjisReminderFrom } from '../lib/cjis-reminder.ts';
 import type { DispatcherIncident, AssignedContact, IncidentCaller } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
 import { BOARD_LABEL, boardState, respondingLine, unitStatus, unitTimesLine } from '../lib/unit-status.ts';
@@ -1924,11 +1934,14 @@ function startTakcadPoll() {
     pollTimer = setInterval(() => { loadList(); refreshDetail(); }, 15_000);
 }
 
-// The Manage-panel toggle is shared across dispatchers, so re-read it when the board starts
-// and when an incident is opened (cheap) rather than on every poll (the settings blob can
-// carry the agency logo).
+// The Manage-panel settings (caller details on markers, CJIS reminder) are shared across
+// dispatchers, so re-read them when the board starts and when an incident is opened (cheap)
+// rather than on every poll (the settings blob can carry the agency logo).
 function slRefreshCallerSetting() {
-    getCallerOnMarkers().then((on) => { dispatcherStore.callerOnMarkers = on; }).catch(() => { /* keep last */ });
+    getDispatcherSettings().then((s) => {
+        dispatcherStore.callerOnMarkers = s.caller_on_markers !== false;
+        dispatcherStore.cjisReminder = cjisReminderFrom(s);
+    }).catch(() => { /* keep last */ });
 }
 
 // Standalone: 15s poll of the open Event's incidents so multiple dispatchers converge.
