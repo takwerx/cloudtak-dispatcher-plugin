@@ -129,6 +129,39 @@ function closeNote(disposition: string, note: string | null): string {
 }
 // </disposition-pure>
 
+// ── CJIS reminder ───────────────────────────────────────────────────────────────
+// A one-line reminder shown at the top of every standalone incident (default on) telling the
+// dispatcher not to paste CJIS data into the Dispatcher. Both settings are shared per CloudTAK and
+// may only be changed by a CloudTAK system admin (the account CloudTAK creates on first launch);
+// every signed-in user still reads them, so the line shows for everyone. Pure (no database) so
+// plugin/test/cjis-server.test.ts can run it.
+// <cjis-pure>
+const CJIS_REMINDER_DEFAULT_TEXT = 'Information derived from CJIS sources must not be entered into incident records.';
+const CJIS_REMINDER_TEXT_MAX = 300;
+const CJIS_ADMIN_KEYS = new Set(['cjis_reminder_enabled', 'cjis_reminder_text']);
+
+// True for the settings keys only a system admin may write.
+function isAdminOnlySetting(key: string): boolean {
+    return CJIS_ADMIN_KEYS.has(key);
+}
+
+// Value a client may store under one of the CJIS keys: the switch must be a boolean; the text is
+// trimmed, capped, and an empty text falls back to the default so the line can never be blank.
+function normCjisSetting(key: string, value: unknown): unknown {
+    if (key === 'cjis_reminder_enabled') {
+        if (typeof value !== 'boolean') throw new Err(400, null, 'cjis_reminder_enabled must be true or false');
+        return value;
+    }
+    if (key === 'cjis_reminder_text') {
+        if (value !== null && value !== undefined && typeof value !== 'string') throw new Err(400, null, 'cjis_reminder_text must be text');
+        const t = String(value ?? '').trim();
+        if (t.length > CJIS_REMINDER_TEXT_MAX) throw new Err(400, null, `Reminder text is too long (${CJIS_REMINDER_TEXT_MAX} characters max)`);
+        return t || CJIS_REMINDER_DEFAULT_TEXT;
+    }
+    return value;
+}
+// </cjis-pure>
+
 // ── Callers ─────────────────────────────────────────────────────────────────────
 // An incident keeps a list of callers (several calls about one crash, each with the time of the
 // call). Exactly one is the PRIMARY caller: the first one added unless a dispatcher picks another.
@@ -638,8 +671,16 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
-            await Auth.is_auth(config, req);
-            const encoded = JSON.stringify(req.body.value ?? null);
+            let value: unknown = req.body.value;
+            if (isAdminOnlySetting(req.params.key)) {
+                // Auth.as_user re-reads the profile for session tokens, so this is the live flag.
+                const user = await Auth.as_user(config, req);
+                if (!user.is_admin()) throw new Err(403, null, 'Only a CloudTAK system admin can change this setting');
+                value = normCjisSetting(req.params.key, value);
+            } else {
+                await Auth.is_auth(config, req);
+            }
+            const encoded = JSON.stringify(value ?? null);
             // Settings carry small blobs (agency logo as a downscaled data URI) — cap the
             // row so a raw upload can't bloat the gis DB.
             if (encoded.length > 400_000) throw new Err(400, null, 'Setting too large (400KB max)');

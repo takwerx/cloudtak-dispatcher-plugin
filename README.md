@@ -44,6 +44,13 @@ it is sent, so changing the list needs no server change. The disposition is writ
 shown on the closed incident's card and detail, in the report and CSV, and on the `INCIDENT CLOSED` feed-log
 line. Reopening clears it (the note stays); closing again asks again. There is no editing it in place.
 
+### CJIS reminder (standalone)
+
+Every standalone incident opens with a one-line **CJIS reminder** ("Information derived from CJIS sources
+must not be entered into incident records.", default on). **Manage → CJIS Reminder** turns it off or changes
+the wording for the whole CloudTAK; only the CloudTAK system admin account (the one CloudTAK creates on
+first launch) can change it, and the server refuses the change for anyone else.
+
 ### Delivery to field units (standalone)
 
 Each Event chooses how its incidents reach field devices when it is created:
