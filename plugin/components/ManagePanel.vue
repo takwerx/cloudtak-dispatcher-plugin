@@ -197,10 +197,14 @@
 
             <hr class='my-1'>
 
-            <!-- Custom call types -->
+            <!-- Custom call types. CloudTAK system admin only. -->
             <div>
-                <div class='small text-muted fw-semibold text-uppercase mb-1'>
+                <div class='small text-muted fw-semibold text-uppercase mb-1 d-flex align-items-center gap-2'>
                     Custom Call Types
+                    <span
+                        class='badge bg-secondary text-white fw-normal'
+                        title='Only a CloudTAK system admin can change this'
+                    >CloudTAK admin only</span>
                 </div>
                 <div class='card border'>
                     <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
@@ -212,6 +216,7 @@
                             >
                                 {{ t }}
                                 <button
+                                    v-if='isAdmin'
                                     class='btn btn-link p-0 text-white text-decoration-none'
                                     style='font-size:10px;line-height:1'
                                     type='button'
@@ -232,12 +237,14 @@
                                 type='text'
                                 class='form-control form-control-sm border flex-grow-1'
                                 placeholder='Add call type…'
+                                data-test='call-type-input'
+                                :disabled='!isAdmin || savingTypes'
                                 @keyup.enter='addCustomType'
                             >
                             <button
                                 class='btn btn-sm btn-outline-secondary'
                                 type='button'
-                                :disabled='!newTypeName.trim() || savingTypes'
+                                :disabled='!isAdmin || !newTypeName.trim() || savingTypes'
                                 @click='addCustomType'
                             >
                                 Add
@@ -251,7 +258,8 @@
                         </div>
                         <div class='text-muted small'>
                             Added to the type dropdown for every dispatcher on this CloudTAK.
-                            Built-in types can't be removed.
+                            Built-in types can't be removed. Only the CloudTAK system admin account
+                            can add or remove call types.
                         </div>
                     </div>
                 </div>
@@ -273,7 +281,11 @@ const emit = defineEmits<{
     (e: 'report'): void;
 }>();
 
-// ── Custom call types (deployment-shared, merged over defaults in IncidentForm) ──
+// CloudTAK system admin (profile flag). Gates the CJIS reminder and the custom call types; the
+// server refuses those writes for anyone else anyway.
+const isAdmin = ref(false);
+
+// ── Custom call types (deployment-shared, merged over defaults in IncidentForm; admin only) ──
 const customTypes     = ref<string[]>([]);
 const newTypeName     = ref('');
 const savingTypes     = ref(false);
@@ -281,7 +293,7 @@ const typeEditorError = ref('');
 
 async function addCustomType() {
     const name = newTypeName.value.trim();
-    if (!name) return;
+    if (!name || !isAdmin.value) return;
     typeEditorError.value = '';
     if (customTypes.value.some(t => t.toLowerCase() === name.toLowerCase())) {
         typeEditorError.value = 'That call type already exists';
@@ -337,8 +349,6 @@ async function saveCallerOnMarkers() {
 }
 
 // ── CJIS reminder (deployment-shared; default on; CloudTAK system admin only) ──
-// The controls are disabled for everyone else; the server refuses the write with a 403 anyway.
-const isAdmin     = ref(false);
 const cjisEnabled = ref(true);
 const cjisText    = ref('');
 const savingCjis  = ref(false);

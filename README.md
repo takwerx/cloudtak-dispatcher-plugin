@@ -49,7 +49,8 @@ line. Reopening clears it (the note stays); closing again asks again. There is n
 Every standalone incident opens with a one-line **CJIS reminder** ("Information derived from CJIS sources
 must not be entered into incident records.", default on). **Manage → CJIS Reminder** turns it off or changes
 the wording for the whole CloudTAK; only the CloudTAK system admin account (the one CloudTAK creates on
-first launch) can change it, and the server refuses the change for anyone else.
+first launch) can change it, and the server refuses the change for anyone else. **Manage → Custom Call
+Types** is locked to the same admin account.
 
 ### Delivery to field units (standalone)
 
