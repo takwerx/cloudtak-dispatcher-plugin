@@ -534,7 +534,8 @@
                             </div>
                             <div class='small text-muted'>
                                 {{ inc.type }} · {{ shortTime(inc.created_at) }}<template v-if='inc.report_number'>
-                                    · Rpt {{ inc.report_number }}</template>
+                                    · Rpt {{ inc.report_number }}</template><template v-if='inc.disposition'>
+                                    · {{ dispositionLabel(inc) }}</template>
                             </div>
                             <div
                                 v-if='inc.caller_name || inc.caller_phone'
@@ -647,6 +648,14 @@
                                         </button>
                                     </template>
                                 </div>
+                                <template v-if='slDetail.status === "closed"'>
+                                    <div class='col-4 text-muted'>
+                                        Disposition
+                                    </div>
+                                    <div class='col-8'>
+                                        {{ dispositionLabel(slDetail) || '—' }}
+                                    </div>
+                                </template>
                                 <template v-if='slDetail.details'>
                                     <div class='col-4 text-muted'>
                                         Details
@@ -985,6 +994,70 @@
                     >
                         {{ slDetailError }}
                     </div>
+                    <!-- Close chooser: how did the call end? Pick a disposition (it highlights); Other
+                         enables the text box beside it; Close Incident lights up once the pick is complete.
+                         The server refuses a close without a disposition. -->
+                    <div
+                        v-if='slClosing && slDetail.status === "active"'
+                        class='card border border-warning'
+                    >
+                        <div class='card-body py-2 px-3 small d-flex flex-column gap-2'>
+                            <div class='d-flex align-items-center'>
+                                <span class='fw-semibold'>Disposition</span>
+                                <button
+                                    class='btn btn-link btn-sm p-0 ms-auto text-decoration-none'
+                                    :disabled='slSaving'
+                                    @click='slCancelClose'
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                            <div class='d-flex flex-wrap gap-1'>
+                                <button
+                                    v-for='d in DISPOSITIONS'
+                                    :key='d'
+                                    class='btn btn-sm'
+                                    :class='slDisposition === d ? "btn-warning" : "btn-outline-warning"'
+                                    :disabled='slSaving'
+                                    @click='slPickDisposition(d)'
+                                >
+                                    {{ d }}
+                                </button>
+                            </div>
+                            <div class='d-flex gap-1'>
+                                <button
+                                    class='btn btn-sm text-nowrap'
+                                    :class='slDisposition === DISPOSITION_OTHER ? "btn-warning" : "btn-outline-warning"'
+                                    :disabled='slSaving'
+                                    @click='slPickDisposition(DISPOSITION_OTHER)'
+                                >
+                                    {{ DISPOSITION_OTHER }}
+                                </button>
+                                <input
+                                    ref='slOtherInput'
+                                    v-model='slOtherNote'
+                                    type='text'
+                                    :maxlength='DISPOSITION_NOTE_MAX'
+                                    class='form-control form-control-sm border'
+                                    :class='slDisposition === DISPOSITION_OTHER ? "border-warning" : ""'
+                                    :disabled='slSaving || slDisposition !== DISPOSITION_OTHER'
+                                    placeholder='Enter disposition'
+                                    @keydown.enter='slCanClose && slCloseIncident(slDetail, slDisposition, slOtherNote)'
+                                    @keydown.esc='slCancelClose'
+                                >
+                            </div>
+                            <div class='d-flex'>
+                                <button
+                                    class='btn btn-sm ms-auto'
+                                    :class='slCanClose ? "btn-warning" : "btn-outline-secondary"'
+                                    :disabled='slSaving || !slCanClose'
+                                    @click='slCloseIncident(slDetail, slDisposition, slOtherNote)'
+                                >
+                                    Close Incident
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                     <div class='d-flex gap-2 mt-2'>
                         <button
                             class='btn btn-sm btn-outline-secondary'
@@ -993,15 +1066,15 @@
                             Show on Map
                         </button>
                         <button
-                            v-if='slDetail.status === "active"'
+                            v-if='slDetail.status === "active" && !slClosing'
                             class='btn btn-sm btn-warning ms-auto'
                             :disabled='slSaving'
-                            @click='slCloseIncident(slDetail)'
+                            @click='slClosing = true'
                         >
                             Close Incident
                         </button>
                         <button
-                            v-else
+                            v-else-if='slDetail.status === "closed"'
                             class='btn btn-sm btn-outline-warning ms-auto'
                             :disabled='slSaving'
                             @click='slReopenIncident(slDetail)'
@@ -1044,7 +1117,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { IconUsers } from '@tabler/icons-vue';
 import { useMapStore } from '../../../src/stores/map.ts';
 import IncidentForm from './IncidentForm.vue';
@@ -1066,6 +1139,7 @@ import { listIncidents, patchIncident, getCallerOnMarkers, addCaller, updateCall
 import type { DispatcherIncident, AssignedContact, IncidentCaller } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
 import { BOARD_LABEL, boardState, respondingLine, unitStatus, unitTimesLine } from '../lib/unit-status.ts';
+import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, dispositionLabel } from '../lib/dispositions.ts';
 
 const props = defineProps<{
     serverMode:    'detecting' | 'takcad' | 'standalone';
@@ -1337,6 +1411,15 @@ const slDetail          = ref<DispatcherIncident | null>(null);
 const slNoteInput       = ref('');
 const slReportEditing   = ref(false);
 const slReportInput     = ref('');
+// Close chooser: open after the first press of Close Incident. The dispatcher picks a disposition
+// (highlighted), types the Other text when that is the pick, then presses Close Incident.
+const slClosing         = ref(false);
+const slDisposition     = ref<string | null>(null);
+const slOtherNote       = ref('');
+const slOtherInput      = ref<HTMLInputElement | null>(null);
+// Close Incident lights up once the pick is complete: a preset, or Other with its text.
+const slCanClose = computed(() =>
+    !!slDisposition.value && (slDisposition.value !== DISPOSITION_OTHER || slOtherNote.value.trim().length > 0));
 // Caller form: null = closed, 'new' = adding a caller, otherwise the id of the caller being edited.
 const slCallerForm      = ref<string | null>(null);
 const slCallerName      = ref('');
@@ -1505,6 +1588,9 @@ async function slOpenDetail(id: string) {
     slContactSearch.value = '';
     slDetailError.value = '';
     slReportEditing.value = false;
+    slClosing.value = false;
+    slDisposition.value = null;
+    slOtherNote.value = '';
     slCallerForm.value = null;
     slRefreshCallerSetting();
     showContactPicker.value = false;
@@ -1737,12 +1823,34 @@ async function slAddNote(inc: DispatcherIncident) {
     }
 }
 
-async function slCloseIncident(inc: DispatcherIncident) {
+function slPickDisposition(d: string) {
+    slDisposition.value = d;
+    // Other: the text box beside it takes the cursor so the dispatcher can type at once.
+    if (d === DISPOSITION_OTHER) nextTick(() => slOtherInput.value?.focus());
+}
+
+function slCancelClose() {
+    slClosing.value = false;
+    slDisposition.value = null;
+    slOtherNote.value = '';
+}
+
+// disposition: one of DISPOSITIONS, or DISPOSITION_OTHER with `note` (the text typed beside it).
+async function slCloseIncident(inc: DispatcherIncident, disposition: string | null, note?: string) {
+    if (!disposition) return;
     slSaving.value = true; slDetailError.value = '';
     try {
         const stillOn = (inc.assigned ?? []).filter(u => unitStatus(u) !== 'cleared');
-        const updated = await patchIncident(inc.id, { status: 'closed' });
+        // The server stores the disposition, writes the "Closed: …" note and clears every unit
+        // still on the incident (stamped with the close time).
+        const trimmed = (note ?? '').trim();
+        const updated = await patchIncident(inc.id, {
+            status: 'closed',
+            disposition,
+            ...(trimmed ? { disposition_note: trimmed } : {}),
+        });
         slApplyIncident(updated);
+        slCancelClose();
 
         // DataSync: remove the marker (record stays server-side). Broadcast: mark it CLOSED;
         // it drops off field devices 60 minutes after closing.
@@ -1762,7 +1870,7 @@ async function slCloseIncident(inc: DispatcherIncident) {
                     try { await postMissionLog(feed.feed_name, `CLEARED: ${updated.number} → ${u.callsign}`); }
                     catch { /* best-effort */ }
                 }
-                await postMissionLog(feed.feed_name, `INCIDENT CLOSED: ${updated.number} | ${updated.type ?? ''} | Closed ${hhmm} | ${durMin} min`);
+                await postMissionLog(feed.feed_name, `INCIDENT CLOSED: ${updated.number} | ${updated.type ?? ''} | Closed ${hhmm} | ${durMin} min | ${dispositionLabel(updated)}`);
             } catch { /* best-effort */ }
         }
         slView.value = 'list';

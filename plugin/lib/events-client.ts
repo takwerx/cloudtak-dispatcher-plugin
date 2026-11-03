@@ -65,6 +65,10 @@ export interface DispatcherIncident {
     notes: IncidentNote[];
     created_at: string;
     closed_at: string | null;
+    // How the incident ended, chosen when it was closed (plugin/lib/dispositions.ts); null while
+    // active, and on incidents closed before dispositions existed. The note only comes with 'Other'.
+    disposition: string | null;
+    disposition_note: string | null;
 }
 
 export interface IncidentCaller {
@@ -100,9 +104,11 @@ export interface CreateIncidentBody {
 }
 
 // report_number: send '' to clear. Callers are changed with addCaller / updateCaller / removeCaller.
+// Closing (status: 'closed') needs a disposition (disposition_note only with 'Other'); reopening
+// clears the disposition. Both are ignored on any other patch.
 export type IncidentPatch = Partial<Pick<DispatcherIncident,
     'type' | 'address' | 'lat' | 'lon' | 'dispatcher' | 'details' | 'status' | 'notes'>>
-    & { report_number?: string; core_event_id?: string };
+    & { report_number?: string; core_event_id?: string; disposition?: string; disposition_note?: string };
 
 // For addCaller / updateCaller. updateCaller: undefined = leave as is, '' = clear.
 // time: ISO date of the call (default now). primary: true makes this caller the primary.
