@@ -523,6 +523,11 @@
                                     class='badge small'
                                     :class='inc.status === "active" ? "bg-success text-white" : "bg-secondary text-white"'
                                 >{{ inc.status }}</span>
+                                <span
+                                    v-if='inc.status === "active"'
+                                    class='badge small'
+                                    :class='slBoardClass(inc)'
+                                >{{ BOARD_LABEL[boardState(inc.assigned)] }}</span>
                             </div>
                             <div class='small text-muted text-truncate'>
                                 {{ inc.address || `${(inc.lat ?? 0).toFixed(5)}, ${(inc.lon ?? 0).toFixed(5)}` }}
@@ -563,6 +568,11 @@
                         class='badge'
                         :class='slDetail.status === "active" ? "bg-success text-white" : "bg-secondary text-white"'
                     >{{ slDetail.status }}</span>
+                    <span
+                        v-if='slDetail.status === "active"'
+                        class='badge'
+                        :class='slBoardClass(slDetail)'
+                    >{{ BOARD_LABEL[boardState(slDetail.assigned)] }}</span>
                 </div>
                 <div class='flex-grow-1 overflow-auto p-3 d-flex flex-column gap-3'>
                     <div class='card border'>
@@ -835,16 +845,46 @@
                         <div
                             v-for='c in slDetail.assigned'
                             :key='c.uid'
-                            class='d-flex align-items-center gap-2 small py-1 border-bottom'
+                            class='small py-1 border-bottom'
                         >
-                            <span class='flex-grow-1'>{{ c.callsign }}</span>
-                            <button
-                                v-if='slDetail.status === "active"'
-                                class='btn btn-link btn-sm p-0 text-danger text-decoration-none'
-                                @click='slUnassignContact(slDetail, c.uid)'
-                            >
-                                ✕
-                            </button>
+                            <div class='d-flex align-items-center gap-2'>
+                                <span
+                                    class='fw-semibold'
+                                    :class='unitStatus(c) === "cleared" ? "text-muted text-decoration-line-through" : ""'
+                                >{{ c.callsign }}</span>
+                                <span
+                                    class='badge'
+                                    :class='slUnitBadge(c)'
+                                >{{ slUnitLabel(c) }}</span>
+                                <span class='flex-grow-1' />
+                                <button
+                                    v-if='slDetail.status === "active" && unitStatus(c) === "assigned"'
+                                    class='btn btn-sm btn-outline-warning py-0'
+                                    :disabled='slSaving'
+                                    @click='slSetUnitStatus(slDetail, c, "on_scene")'
+                                >
+                                    On Scene
+                                </button>
+                                <button
+                                    v-if='slDetail.status === "active" && unitStatus(c) !== "cleared"'
+                                    class='btn btn-sm btn-outline-secondary py-0'
+                                    :disabled='slSaving'
+                                    @click='slSetUnitStatus(slDetail, c, "cleared")'
+                                >
+                                    Clear
+                                </button>
+                                <button
+                                    v-if='slDetail.status === "active"'
+                                    class='btn btn-link btn-sm p-0 text-danger text-decoration-none'
+                                    title='Assigned by mistake: remove from the record'
+                                    @click='slUnassignContact(slDetail, c.uid)'
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                            <div class='text-muted'>
+                                {{ unitTimesLine(c, shortTime) }}
+                            </div>
                         </div>
                         <div
                             v-if='!slDetail.assigned.length'
@@ -1022,9 +1062,10 @@ import type { TakContact } from '../lib/contacts-client.ts';
 import type { IncidentMetadata, IncidentRef, VehicleRef, PersonRef, IncidentTypeRef, PersonCallsign } from '../lib/takcad-types.ts';
 import { isActive, formatAddress, formatTime, STATUS_CANCELLED } from '../lib/takcad-types.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
-import { listIncidents, patchIncident, getCallerOnMarkers, addCaller, updateCaller, removeCaller } from '../lib/events-client.ts';
+import { listIncidents, patchIncident, getCallerOnMarkers, addCaller, updateCaller, removeCaller, assignUnits, setUnitStatus, removeUnit } from '../lib/events-client.ts';
 import type { DispatcherIncident, AssignedContact, IncidentCaller } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
+import { BOARD_LABEL, boardState, respondingLine, unitStatus, unitTimesLine } from '../lib/unit-status.ts';
 
 const props = defineProps<{
     serverMode:    'detecting' | 'takcad' | 'standalone';
@@ -1354,20 +1395,16 @@ async function slAssignSelected(inc: DispatcherIncident) {
     if (!chosen.length) return;
 
     // Use the freshest incident state (the passed `inc` can be a stale snapshot), and assign
-    // ALL selected in ONE patch — the server replaces assigned wholesale, so looping per
-    // contact off a stale base would keep only the last one.
+    // ALL selected in ONE call.
     const cur = dispatcherStore.incidents.find(i => i.id === inc.id) ?? inc;
     const existing = cur.assigned ?? [];
     const toAdd = chosen.filter(c => !existing.some(a => a.uid === c.uid));
     if (!toAdd.length) return;
 
-    const now = new Date().toISOString();
-    const assigned: AssignedContact[] = [...existing, ...toAdd.map(c => ({ uid: c.uid, callsign: c.callsign }))];
-    const notes = [...(cur.notes ?? []), ...toAdd.map(c => ({ text: `${c.callsign} was assigned`, time: now }))];
-
     slDetailError.value = '';
     try {
-        const updated = await patchIncident(inc.id, { assigned, notes });
+        // The server stamps the time and writes the "assigned" notes.
+        const updated = await assignUnits(inc.id, toAdd.map(c => ({ uid: c.uid, callsign: c.callsign })));
         slApplyIncident(updated);
 
         // One GeoChat per newly-assigned responder
@@ -1414,10 +1451,9 @@ watch(slActiveIncidents, n => {
 // Build the marker payload for an incident, folding responders + notes into the remarks
 // details (same presentation as before, now sourced from server fields).
 function slMarkerFor(inc: DispatcherIncident, extraDetail = '') {
-    const responders = (inc.assigned ?? []).map(c => c.callsign).join(', ');
     const details = [
         inc.details ?? '',
-        responders ? `Responding: ${responders}` : '',
+        respondingLine(inc.assigned),
         ...(inc.notes ?? []).map(n => n.text),
         extraDetail,
     ].filter(Boolean).join('\n');
@@ -1478,13 +1514,11 @@ async function slOpenDetail(id: string) {
 
 async function slAssignContact(inc: DispatcherIncident, contact: TakContact) {
     if ((inc.assigned ?? []).some(c => c.uid === contact.uid)) return;
-    const assigned: AssignedContact[] = [...(inc.assigned ?? []), { uid: contact.uid, callsign: contact.callsign }];
-    const notes = [...(inc.notes ?? []), { text: `${contact.callsign} was assigned`, time: new Date().toISOString() }];
     slContactSearch.value = '';
     slDetailError.value = '';
 
     try {
-        const updated = await patchIncident(inc.id, { assigned, notes });
+        const updated = await assignUnits(inc.id, [{ uid: contact.uid, callsign: contact.callsign }]);
         slApplyIncident(updated);
 
         // GeoChat assignment message
@@ -1614,11 +1648,10 @@ async function slRemoveCaller(inc: DispatcherIncident, c: IncidentCaller) {
 
 async function slUnassignContact(inc: DispatcherIncident, uid: string) {
     const contact = (inc.assigned ?? []).find(c => c.uid === uid);
-    const assigned = (inc.assigned ?? []).filter(c => c.uid !== uid);
     slDetailError.value = '';
 
     try {
-        const updated = await patchIncident(inc.id, { assigned });
+        const updated = await removeUnit(inc.id, uid);
         slApplyIncident(updated);
 
         const feed = dispatcherStore.activeEvent;
@@ -1632,6 +1665,44 @@ async function slUnassignContact(inc: DispatcherIncident, uid: string) {
     } catch (e) {
         slDetailError.value = e instanceof Error ? e.message : String(e);
     }
+}
+
+// On Scene / Clear buttons. The server stamps the time; nothing goes to the unit (it just radioed dispatch).
+async function slSetUnitStatus(inc: DispatcherIncident, unit: AssignedContact, to: 'on_scene' | 'cleared') {
+    if (slSaving.value) return;
+    slSaving.value = true; slDetailError.value = '';
+    try {
+        const updated = await setUnitStatus(inc.id, unit.uid, to);
+        slApplyIncident(updated);
+
+        try { await showIncident(mapStore, slMarkerFor(updated)); }
+        catch { /* best-effort */ }
+
+        const feed = dispatcherStore.activeEvent;
+        if (feed) {
+            try { await postMissionLog(feed.feed_name, `${to === 'on_scene' ? 'ON SCENE' : 'CLEARED'}: ${updated.number} → ${unit.callsign}`); }
+            catch { /* best-effort */ }
+        }
+    } catch (e) {
+        slDetailError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        slSaving.value = false;
+    }
+}
+
+function slUnitLabel(u: AssignedContact): string {
+    const s = unitStatus(u);
+    return s === 'on_scene' ? 'On Scene' : s === 'cleared' ? 'Cleared' : 'Assigned';
+}
+
+function slUnitBadge(u: AssignedContact): string {
+    const s = unitStatus(u);
+    return s === 'on_scene' ? 'bg-warning text-dark' : s === 'cleared' ? 'bg-secondary text-white' : 'bg-info text-dark';
+}
+
+function slBoardClass(inc: DispatcherIncident): string {
+    const b = boardState(inc.assigned);
+    return b === 'on_scene' ? 'bg-warning text-dark' : b === 'dispatched' ? 'bg-info text-dark' : 'bg-light text-dark border';
 }
 
 async function slAddNote(inc: DispatcherIncident) {
@@ -1657,7 +1728,7 @@ async function slAddNote(inc: DispatcherIncident) {
         }
 
         // Push the update to every assigned responder as a direct GeoChat
-        for (const c of (updated.assigned ?? [])) {
+        for (const c of (updated.assigned ?? []).filter(u => unitStatus(u) !== 'cleared')) {
             try { await sendUpdateMessage(mapStore, c, { name: `${updated.number} ${updated.type ?? ''}` }, text); }
             catch (e) { console.warn('[dispatcher] update message failed', e); }
         }
@@ -1669,6 +1740,7 @@ async function slAddNote(inc: DispatcherIncident) {
 async function slCloseIncident(inc: DispatcherIncident) {
     slSaving.value = true; slDetailError.value = '';
     try {
+        const stillOn = (inc.assigned ?? []).filter(u => unitStatus(u) !== 'cleared');
         const updated = await patchIncident(inc.id, { status: 'closed' });
         slApplyIncident(updated);
 
@@ -1685,6 +1757,11 @@ async function slCloseIncident(inc: DispatcherIncident) {
                 const startMs = new Date(updated.created_at).getTime();
                 const durMin = Math.round((closedAt.getTime() - startMs) / 60000);
                 const hhmm = `${String(closedAt.getHours()).padStart(2, '0')}:${String(closedAt.getMinutes()).padStart(2, '0')}`;
+                // Closing cleared every unit still on the incident (the server stamps the close time).
+                for (const u of stillOn) {
+                    try { await postMissionLog(feed.feed_name, `CLEARED: ${updated.number} → ${u.callsign}`); }
+                    catch { /* best-effort */ }
+                }
                 await postMissionLog(feed.feed_name, `INCIDENT CLOSED: ${updated.number} | ${updated.type ?? ''} | Closed ${hhmm} | ${durMin} min`);
             } catch { /* best-effort */ }
         }
