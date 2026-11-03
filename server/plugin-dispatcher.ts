@@ -133,16 +133,17 @@ function closeNote(disposition: string, note: string | null): string {
 // A one-line reminder shown at the top of every standalone incident (default on) telling the
 // dispatcher not to paste CJIS data into the Dispatcher. Both settings are shared per CloudTAK and
 // may only be changed by a CloudTAK system admin (the account CloudTAK creates on first launch);
-// every signed-in user still reads them, so the line shows for everyone. Pure (no database) so
-// plugin/test/cjis-server.test.ts can run it.
+// every signed-in user still reads them, so the line shows for everyone. The custom call type list
+// (incident_types) is admin-only the same way. Pure (no database) so plugin/test/cjis-server.test.ts
+// can run it.
 // <cjis-pure>
 const CJIS_REMINDER_DEFAULT_TEXT = 'Information derived from CJIS sources must not be entered into incident records.';
 const CJIS_REMINDER_TEXT_MAX = 300;
-const CJIS_ADMIN_KEYS = new Set(['cjis_reminder_enabled', 'cjis_reminder_text']);
+const ADMIN_ONLY_KEYS = new Set(['cjis_reminder_enabled', 'cjis_reminder_text', 'incident_types']);
 
 // True for the settings keys only a system admin may write.
 function isAdminOnlySetting(key: string): boolean {
-    return CJIS_ADMIN_KEYS.has(key);
+    return ADMIN_ONLY_KEYS.has(key);
 }
 
 // Value a client may store under one of the CJIS keys: the switch must be a boolean; the text is

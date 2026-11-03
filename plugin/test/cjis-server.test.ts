@@ -40,10 +40,11 @@ test('server and plugin agree on the default wording and the length cap', () => 
     assert.match(s.CJIS_REMINDER_DEFAULT_TEXT, /CJIS/);
 });
 
-test('only the two CJIS keys are admin-only; every other setting is unchanged', () => {
+test('the two CJIS keys and the custom call types are admin-only; every other setting is unchanged', () => {
     assert.equal(s.isAdminOnlySetting('cjis_reminder_enabled'), true);
     assert.equal(s.isAdminOnlySetting('cjis_reminder_text'), true);
-    for (const k of ['caller_on_markers', 'incident_types', 'agency', 'cjis', '']) {
+    assert.equal(s.isAdminOnlySetting('incident_types'), true);
+    for (const k of ['caller_on_markers', 'agency', 'cjis', 'incident_type', '']) {
         assert.equal(s.isAdminOnlySetting(k), false, k);
     }
 });
@@ -64,8 +65,9 @@ test('the text is trimmed, a blank text stores the default, and too long is refu
     refuses(() => s.normCjisSetting('cjis_reminder_text', 42), 400);
 });
 
-test('other keys pass through normCjisSetting untouched', () => {
+test('other keys, including the call type list, pass through normCjisSetting untouched', () => {
     assert.deepEqual(s.normCjisSetting('agency', { name: 'x' }), { name: 'x' });
+    assert.deepEqual(s.normCjisSetting('incident_types', ['Brush Fire']), ['Brush Fire']);
 });
 
 test('plugin: no settings, an empty map, or an older server all mean on with the default text', () => {
