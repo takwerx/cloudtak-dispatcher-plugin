@@ -55,7 +55,7 @@ jobs:
           CI_TOOLS: ${{ runner.temp }}/ci-tools
 
   # Unit tests that need no CloudTAK checkout (plugin/test/*.test.ts), run with plain node.
-  # Proof tests for the callers list and the marker's caller phone (ops #403).
+  # Proof tests for the callers list and the marker's caller phone (ops #403), and for unit status.
   unit:
     runs-on: ubuntu-24.04
     timeout-minutes: 5

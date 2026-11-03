@@ -26,9 +26,19 @@ export interface DispatcherEvent {
     created_by: string | null;
 }
 
+// A unit on an incident: Assigned → On Scene → Cleared, each stamped by the server when the
+// dispatcher pressed the button. Cleared units stay on the incident (the record of who worked
+// it); a unit assigned by mistake is removed with removeUnit(). Entries written before unit
+// status existed come back as 'assigned' with no times.
+export type UnitStatus = 'assigned' | 'onscene' | 'cleared';
+
 export interface AssignedContact {
     uid: string;
     callsign: string;
+    status: UnitStatus;
+    assigned_at: string | null;
+    onscene_at: string | null;
+    cleared_at: string | null;
 }
 
 export interface IncidentNote {
@@ -93,9 +103,10 @@ export interface CreateIncidentBody {
     caller_phone?: string;
 }
 
-// report_number: send '' to clear. Callers are changed with addCaller / updateCaller / removeCaller.
+// report_number: send '' to clear. Callers are changed with addCaller / updateCaller / removeCaller;
+// units with assignUnits / setUnitStatus / removeUnit. Closing (status: 'closed') clears every unit.
 export type IncidentPatch = Partial<Pick<DispatcherIncident,
-    'type' | 'address' | 'lat' | 'lon' | 'dispatcher' | 'details' | 'status' | 'assigned' | 'notes'>>
+    'type' | 'address' | 'lat' | 'lon' | 'dispatcher' | 'details' | 'status' | 'notes'>>
     & { report_number?: string; core_event_id?: string };
 
 // For addCaller / updateCaller. updateCaller: undefined = leave as is, '' = clear.
@@ -175,6 +186,33 @@ export async function updateCaller(incidentId: string, callerId: string, body: C
 
 export async function removeCaller(incidentId: string, callerId: string): Promise<DispatcherIncident> {
     const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/callers/${encodeURIComponent(callerId)}`, {
+        method: 'DELETE',
+    }) as { incident: DispatcherIncident };
+    return r.incident;
+}
+
+// ── Assigned units (the server applies each change under a row lock and logs it as a note) ──
+
+export async function assignUnits(incidentId: string, units: { uid: string; callsign: string }[]): Promise<DispatcherIncident> {
+    const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/units`, {
+        method: 'POST',
+        body: { units },
+    }) as { incident: DispatcherIncident };
+    return r.incident;
+}
+
+// 'onscene' from Assigned; 'cleared' from Assigned or On Scene.
+export async function setUnitStatus(incidentId: string, uid: string, status: 'onscene' | 'cleared'): Promise<DispatcherIncident> {
+    const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/units/${encodeURIComponent(uid)}`, {
+        method: 'PATCH',
+        body: { status },
+    }) as { incident: DispatcherIncident };
+    return r.incident;
+}
+
+// A unit assigned by mistake: off the record entirely.
+export async function removeUnit(incidentId: string, uid: string): Promise<DispatcherIncident> {
+    const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/units/${encodeURIComponent(uid)}`, {
         method: 'DELETE',
     }) as { incident: DispatcherIncident };
     return r.incident;

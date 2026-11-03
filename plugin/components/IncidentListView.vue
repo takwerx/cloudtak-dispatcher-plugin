@@ -523,6 +523,12 @@
                                     class='badge small'
                                     :class='inc.status === "active" ? "bg-success text-white" : "bg-secondary text-white"'
                                 >{{ inc.status }}</span>
+                                <!-- Unassigned / Dispatched / On Scene, from the units (active only) -->
+                                <span
+                                    v-if='inc.status === "active"'
+                                    class='badge small'
+                                    :class='stageBadge(incidentStage(inc.assigned))'
+                                >{{ STAGE_LABEL[incidentStage(inc.assigned)] }}</span>
                             </div>
                             <div class='small text-muted text-truncate'>
                                 {{ inc.address || `${(inc.lat ?? 0).toFixed(5)}, ${(inc.lon ?? 0).toFixed(5)}` }}
@@ -832,19 +838,60 @@
                         <div class='small text-muted mb-1 fw-semibold'>
                             Assigned Units
                         </div>
+                        <!-- One row per unit: Assigned → On Scene → Cleared, one button per step.
+                             Cleared units stay (greyed) so the record shows who worked the call.
+                             ✕ removes a unit assigned by mistake. -->
                         <div
                             v-for='c in slDetail.assigned'
                             :key='c.uid'
                             class='d-flex align-items-center gap-2 small py-1 border-bottom'
+                            :class='{ "text-muted": unitStatus(c) === "cleared" }'
                         >
-                            <span class='flex-grow-1'>{{ c.callsign }}</span>
-                            <button
-                                v-if='slDetail.status === "active"'
-                                class='btn btn-link btn-sm p-0 text-danger text-decoration-none'
-                                @click='slUnassignContact(slDetail, c.uid)'
-                            >
-                                ✕
-                            </button>
+                            <div class='flex-grow-1 overflow-hidden'>
+                                <div class='d-flex align-items-center gap-2'>
+                                    <span
+                                        class='text-truncate'
+                                        :class='{ "text-decoration-line-through": unitStatus(c) === "cleared" }'
+                                    >{{ c.callsign }}</span>
+                                    <span
+                                        class='badge'
+                                        :class='unitBadge(unitStatus(c))'
+                                    >{{ UNIT_STATUS_LABEL[unitStatus(c)] }}</span>
+                                </div>
+                                <div
+                                    v-if='unitTimeline(c, shortTime)'
+                                    class='text-muted'
+                                    style='font-size:11px'
+                                >
+                                    {{ unitTimeline(c, shortTime) }}
+                                </div>
+                            </div>
+                            <template v-if='slDetail.status === "active" && unitStatus(c) !== "cleared"'>
+                                <button
+                                    v-if='unitStatus(c) === "assigned"'
+                                    class='btn btn-sm btn-warning py-0'
+                                    :disabled='slUnitBusy'
+                                    @click='slSetUnitStatus(slDetail, c, "onscene")'
+                                >
+                                    On Scene
+                                </button>
+                                <button
+                                    class='btn btn-sm btn-outline-secondary py-0'
+                                    :disabled='slUnitBusy'
+                                    @click='slSetUnitStatus(slDetail, c, "cleared")'
+                                >
+                                    Clear
+                                </button>
+                                <button
+                                    v-if='unitStatus(c) === "assigned"'
+                                    class='btn btn-link btn-sm p-0 text-danger text-decoration-none'
+                                    title='Remove (assigned in error)'
+                                    :disabled='slUnitBusy'
+                                    @click='slUnassignContact(slDetail, c.uid)'
+                                >
+                                    ✕
+                                </button>
+                            </template>
                         </div>
                         <div
                             v-if='!slDetail.assigned.length'
@@ -1022,8 +1069,10 @@ import type { TakContact } from '../lib/contacts-client.ts';
 import type { IncidentMetadata, IncidentRef, VehicleRef, PersonRef, IncidentTypeRef, PersonCallsign } from '../lib/takcad-types.ts';
 import { isActive, formatAddress, formatTime, STATUS_CANCELLED } from '../lib/takcad-types.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
-import { listIncidents, patchIncident, getCallerOnMarkers, addCaller, updateCaller, removeCaller } from '../lib/events-client.ts';
-import type { DispatcherIncident, AssignedContact, IncidentCaller } from '../lib/events-client.ts';
+import { listIncidents, patchIncident, getCallerOnMarkers, addCaller, updateCaller, removeCaller, assignUnits, setUnitStatus, removeUnit } from '../lib/events-client.ts';
+import type { DispatcherIncident, AssignedContact, IncidentCaller, UnitStatus } from '../lib/events-client.ts';
+import { incidentStage, unitStatus, unitTimeline, respondingRemark, STAGE_LABEL, UNIT_STATUS_LABEL } from '../lib/units.ts';
+import type { IncidentStage } from '../lib/units.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
 
 const props = defineProps<{
@@ -1310,20 +1359,63 @@ const loadingContacts   = ref(false);
 const showContactPicker = ref(false);
 const pickerSelected    = ref<string[]>([]);
 
+// Units on the incident that are not cleared (a cleared unit can be sent again).
+const slLiveUnitUids = computed(() =>
+    new Set((slDetail.value?.assigned ?? []).filter(c => unitStatus(c) !== 'cleared').map(c => c.uid))
+);
+
 const filteredContacts = computed(() => {
     const q = slContactSearch.value.toLowerCase();
-    const assigned = new Set((slDetail.value?.assigned ?? []).map(c => c.uid));
+    const assigned = slLiveUnitUids.value;
     return allContacts.value.filter(c =>
         !assigned.has(c.uid) &&
         (!q || c.callsign.toLowerCase().includes(q))
     );
 });
 
-// Contacts not yet assigned — the multi-select picker's candidate list.
+// Contacts not on the incident (or cleared from it) — the multi-select picker's candidate list.
 const assignablePickerContacts = computed(() => {
-    const assigned = new Set((slDetail.value?.assigned ?? []).map(c => c.uid));
+    const assigned = slLiveUnitUids.value;
     return allContacts.value.filter(c => !assigned.has(c.uid));
 });
+
+const slUnitBusy = ref(false);
+
+function stageBadge(stage: IncidentStage): string {
+    if (stage === 'onscene')    return 'bg-warning text-dark';
+    if (stage === 'dispatched') return 'bg-primary text-white';
+    return 'bg-danger text-white';
+}
+
+function unitBadge(status: UnitStatus): string {
+    if (status === 'onscene') return 'bg-warning text-dark';
+    if (status === 'cleared') return 'bg-secondary text-white';
+    return 'bg-primary text-white';
+}
+
+// One button press: On Scene or Clear. The server stamps the time and writes the note; the
+// marker remarks and the feed log follow. No message to the unit: it told dispatch by radio.
+async function slSetUnitStatus(inc: DispatcherIncident, unit: AssignedContact, status: 'onscene' | 'cleared') {
+    slUnitBusy.value = true; slDetailError.value = '';
+    try {
+        const updated = await setUnitStatus(inc.id, unit.uid, status);
+        slApplyIncident(updated);
+
+        try { await showIncident(mapStore, slMarkerFor(updated)); }
+        catch { /* best-effort */ }
+
+        const feed = dispatcherStore.activeEvent;
+        if (feed) {
+            const line = status === 'onscene' ? 'ON SCENE' : 'CLEARED';
+            try { await postMissionLog(feed.feed_name, `${line}: ${updated.number} → ${unit.callsign}`); }
+            catch { /* best-effort */ }
+        }
+    } catch (e) {
+        slDetailError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        slUnitBusy.value = false;
+    }
+}
 
 // Refetch the live contacts list (keeps the previous list on failure). Called whenever
 // the dispatcher opens an incident or the picker, so users who connected after the panel
@@ -1353,21 +1445,16 @@ async function slAssignSelected(inc: DispatcherIncident) {
     showContactPicker.value = false;
     if (!chosen.length) return;
 
-    // Use the freshest incident state (the passed `inc` can be a stale snapshot), and assign
-    // ALL selected in ONE patch — the server replaces assigned wholesale, so looping per
-    // contact off a stale base would keep only the last one.
+    // Use the freshest incident state (the passed `inc` can be a stale snapshot) to skip units
+    // already on the call; the server adds ALL selected under one row lock and writes the notes.
     const cur = dispatcherStore.incidents.find(i => i.id === inc.id) ?? inc;
-    const existing = cur.assigned ?? [];
-    const toAdd = chosen.filter(c => !existing.some(a => a.uid === c.uid));
+    const live = new Set((cur.assigned ?? []).filter(a => unitStatus(a) !== 'cleared').map(a => a.uid));
+    const toAdd = chosen.filter(c => !live.has(c.uid));
     if (!toAdd.length) return;
-
-    const now = new Date().toISOString();
-    const assigned: AssignedContact[] = [...existing, ...toAdd.map(c => ({ uid: c.uid, callsign: c.callsign }))];
-    const notes = [...(cur.notes ?? []), ...toAdd.map(c => ({ text: `${c.callsign} was assigned`, time: now }))];
 
     slDetailError.value = '';
     try {
-        const updated = await patchIncident(inc.id, { assigned, notes });
+        const updated = await assignUnits(inc.id, toAdd.map(c => ({ uid: c.uid, callsign: c.callsign })));
         slApplyIncident(updated);
 
         // One GeoChat per newly-assigned responder
@@ -1414,10 +1501,9 @@ watch(slActiveIncidents, n => {
 // Build the marker payload for an incident, folding responders + notes into the remarks
 // details (same presentation as before, now sourced from server fields).
 function slMarkerFor(inc: DispatcherIncident, extraDetail = '') {
-    const responders = (inc.assigned ?? []).map(c => c.callsign).join(', ');
     const details = [
         inc.details ?? '',
-        responders ? `Responding: ${responders}` : '',
+        respondingRemark(inc.assigned),
         ...(inc.notes ?? []).map(n => n.text),
         extraDetail,
     ].filter(Boolean).join('\n');
@@ -1477,14 +1563,13 @@ async function slOpenDetail(id: string) {
 }
 
 async function slAssignContact(inc: DispatcherIncident, contact: TakContact) {
-    if ((inc.assigned ?? []).some(c => c.uid === contact.uid)) return;
-    const assigned: AssignedContact[] = [...(inc.assigned ?? []), { uid: contact.uid, callsign: contact.callsign }];
-    const notes = [...(inc.notes ?? []), { text: `${contact.callsign} was assigned`, time: new Date().toISOString() }];
+    if ((inc.assigned ?? []).some(c => c.uid === contact.uid && unitStatus(c) !== 'cleared')) return;
     slContactSearch.value = '';
     slDetailError.value = '';
 
     try {
-        const updated = await patchIncident(inc.id, { assigned, notes });
+        // The server adds the unit under a row lock, stamps assigned_at and writes the note.
+        const updated = await assignUnits(inc.id, [{ uid: contact.uid, callsign: contact.callsign }]);
         slApplyIncident(updated);
 
         // GeoChat assignment message
@@ -1612,13 +1697,13 @@ async function slRemoveCaller(inc: DispatcherIncident, c: IncidentCaller) {
     await slCallerChange(() => removeCaller(inc.id, c.id));
 }
 
+// Remove a unit assigned by mistake (the ✕). It leaves the record; the server writes the note.
 async function slUnassignContact(inc: DispatcherIncident, uid: string) {
     const contact = (inc.assigned ?? []).find(c => c.uid === uid);
-    const assigned = (inc.assigned ?? []).filter(c => c.uid !== uid);
-    slDetailError.value = '';
+    slUnitBusy.value = true; slDetailError.value = '';
 
     try {
-        const updated = await patchIncident(inc.id, { assigned });
+        const updated = await removeUnit(inc.id, uid);
         slApplyIncident(updated);
 
         const feed = dispatcherStore.activeEvent;
@@ -1631,6 +1716,8 @@ async function slUnassignContact(inc: DispatcherIncident, uid: string) {
         catch { /* best-effort */ }
     } catch (e) {
         slDetailError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        slUnitBusy.value = false;
     }
 }
 
@@ -1669,6 +1756,7 @@ async function slAddNote(inc: DispatcherIncident) {
 async function slCloseIncident(inc: DispatcherIncident) {
     slSaving.value = true; slDetailError.value = '';
     try {
+        // The server also clears every unit still on the incident (stamped with the close time).
         const updated = await patchIncident(inc.id, { status: 'closed' });
         slApplyIncident(updated);
 

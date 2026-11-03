@@ -212,6 +212,122 @@ function firstCaller(nameIn: string | undefined, phoneIn: string | undefined): C
 }
 // </callers-pure>
 
+// ── Assigned units ────────────────────────────────────────────────────────────
+// A unit on an incident is Assigned, then On Scene, then Cleared: three states, one button
+// each, every change stamped with the server's time when the dispatcher pressed it. Units talk
+// to dispatch by radio; the dispatcher makes every edit, so nothing here comes from the field.
+// Cleared units stay on the incident so the record shows who worked it. Remove (the ✕) is for
+// a unit assigned by mistake and takes it off the record. Every change is written to the notes
+// log by the server, so the history survives whatever the browser had on screen. The logic is
+// pure (no database) so plugin/test/units-server.test.ts can run it.
+// <units-pure>
+type UnitStatus = 'assigned' | 'onscene' | 'cleared';
+
+interface UnitEntry {
+    uid: string;
+    callsign: string;
+    status: UnitStatus;
+    assigned_at: string | null;
+    onscene_at: string | null;
+    cleared_at: string | null;
+}
+
+const UNIT_STATUSES: UnitStatus[] = ['assigned', 'onscene', 'cleared'];
+const UNITS_MAX = 100;
+
+function isUnitStatus(v: unknown): v is UnitStatus {
+    return typeof v === 'string' && (UNIT_STATUSES as string[]).includes(v);
+}
+
+function unitTime(v: unknown): string | null {
+    return typeof v === 'string' && !Number.isNaN(new Date(v).getTime()) ? v : null;
+}
+
+// Normalize a stored list. An entry from before unit status existed ({ uid, callsign }) reads as
+// Assigned with no times. One entry per uid (the last one wins).
+function normalizeUnits(v: unknown): UnitEntry[] {
+    const byUid = new Map<string, UnitEntry>();
+    for (const c of asArray(v)) {
+        if (!c || typeof c !== 'object') continue;
+        const r = c as Record<string, unknown>;
+        if (typeof r.uid !== 'string' || !r.uid) continue;
+        byUid.delete(r.uid);
+        byUid.set(r.uid, {
+            uid: r.uid,
+            callsign: typeof r.callsign === 'string' && r.callsign ? r.callsign : r.uid,
+            status: isUnitStatus(r.status) ? r.status : 'assigned',
+            assigned_at: unitTime(r.assigned_at),
+            onscene_at: unitTime(r.onscene_at),
+            cleared_at: unitTime(r.cleared_at),
+        });
+    }
+    return [...byUid.values()];
+}
+
+// Assign units. A unit already on the incident and not cleared is left alone; a cleared unit
+// is sent again (its times start over; the notes log keeps the earlier ones).
+function assignUnitsTo(list: UnitEntry[], units: { uid: string; callsign: string }[], now: string): { list: UnitEntry[]; added: UnitEntry[] } {
+    const next = [...list];
+    const added: UnitEntry[] = [];
+    for (const u of units) {
+        const uid = (u.uid ?? '').trim();
+        const callsign = (u.callsign ?? '').trim();
+        if (!uid || !callsign) throw new Err(400, null, 'A unit needs a uid and a callsign');
+        if (callsign.length > 64) throw new Err(400, null, 'Unit callsign is too long (64 characters max)');
+        const i = next.findIndex(c => c.uid === uid);
+        if (i !== -1 && next[i].status !== 'cleared') continue;
+        const entry: UnitEntry = { uid, callsign, status: 'assigned', assigned_at: now, onscene_at: null, cleared_at: null };
+        if (i !== -1) next[i] = entry;
+        else next.push(entry);
+        added.push(entry);
+    }
+    if (next.length > UNITS_MAX) throw new Err(400, null, `An incident can have at most ${UNITS_MAX} units`);
+    return { list: next, added };
+}
+
+// One button press: Assigned → On Scene, or Assigned / On Scene → Cleared. Nothing else.
+function setUnitStatusIn(list: UnitEntry[], uid: string, status: 'onscene' | 'cleared', now: string): { list: UnitEntry[]; unit: UnitEntry } {
+    const cur = list.find(c => c.uid === uid);
+    if (!cur) throw new Err(404, null, 'Unit is not assigned to this incident');
+    if (cur.status === 'cleared') throw new Err(400, null, `${cur.callsign} has already cleared; assign the unit again to send it back`);
+    if (status === 'onscene' && cur.status === 'onscene') throw new Err(400, null, `${cur.callsign} is already on scene`);
+    const unit: UnitEntry = status === 'onscene'
+        ? { ...cur, status: 'onscene', onscene_at: now }
+        : { ...cur, status: 'cleared', cleared_at: now };
+    return { list: list.map(c => (c.uid === uid ? unit : c)), unit };
+}
+
+// Remove a unit assigned by mistake. It leaves the record entirely.
+function removeUnitFrom(list: UnitEntry[], uid: string): { list: UnitEntry[]; unit: UnitEntry } {
+    const unit = list.find(c => c.uid === uid);
+    if (!unit) throw new Err(404, null, 'Unit is not assigned to this incident');
+    return { list: list.filter(c => c.uid !== uid), unit };
+}
+
+// Closing the incident clears every unit still on it, stamped with the close time.
+function clearAllUnits(list: UnitEntry[], now: string): { list: UnitEntry[]; cleared: UnitEntry[] } {
+    const cleared: UnitEntry[] = [];
+    const next = list.map((c) => {
+        if (c.status === 'cleared') return c;
+        const unit: UnitEntry = { ...c, status: 'cleared', cleared_at: now };
+        cleared.push(unit);
+        return unit;
+    });
+    return { list: next, cleared };
+}
+
+// The notes-log line for a unit change.
+function unitNote(unit: UnitEntry, change: 'assigned' | 'onscene' | 'cleared' | 'removed' | 'closed'): string {
+    switch (change) {
+        case 'assigned': return `${unit.callsign} assigned`;
+        case 'onscene':  return `${unit.callsign} on scene`;
+        case 'cleared':  return `${unit.callsign} cleared`;
+        case 'removed':  return `${unit.callsign} removed (assigned in error)`;
+        case 'closed':   return `${unit.callsign} cleared (incident closed)`;
+    }
+}
+// </units-pure>
+
 // Normalize an incident row's jsonb fields to arrays before sending it to the client, and
 // derive caller_name / caller_phone from the primary caller.
 function mapIncident(row: IncidentRow): IncidentRow {
@@ -219,7 +335,7 @@ function mapIncident(row: IncidentRow): IncidentRow {
     const primary = callers.find(c => c.primary);
     return {
         ...row,
-        assigned: asArray(row.assigned),
+        assigned: normalizeUnits(row.assigned),
         notes: asArray(row.notes),
         callers,
         caller_name: primary?.name ?? null,
@@ -243,6 +359,34 @@ async function editCallers(
         const next = normalizeCallers(edit(normalizeCallers(locked[0].callers)));
         const rows = await tx.execute(sql`
             UPDATE dispatcher_incidents SET callers = ${JSON.stringify(next)}::jsonb
+            WHERE id = ${incidentid}
+            RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
+                      report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
+        `) as unknown as IncidentRow[];
+        return mapIncident(rows[0]);
+    });
+}
+
+// Lock the incident row, apply `edit` to its unit list, append the notes it produced and write
+// both back in one transaction, so two dispatchers pressing buttons at the same moment can't
+// overwrite each other. The incident PATCH never writes `assigned`.
+async function editUnits(
+    config: ConfigStateless,
+    incidentid: string,
+    edit: (list: UnitEntry[], now: string) => { list: UnitEntry[]; notes: string[] },
+): Promise<IncidentRow> {
+    return await config.pg.transaction(async (tx) => {
+        const locked = await tx.execute(sql`
+            SELECT assigned, notes FROM dispatcher_incidents WHERE id = ${incidentid} FOR UPDATE
+        `) as unknown as { assigned: unknown; notes: unknown }[];
+        if (!locked.length) throw new Err(404, null, 'Incident not found');
+        const now = new Date().toISOString();
+        const result = edit(normalizeUnits(locked[0].assigned), now);
+        const notes = [...asArray(locked[0].notes), ...result.notes.map(text => ({ text, time: now }))];
+        const rows = await tx.execute(sql`
+            UPDATE dispatcher_incidents SET
+                assigned = ${JSON.stringify(result.list)}::jsonb,
+                notes    = ${JSON.stringify(notes)}::jsonb
             WHERE id = ${incidentid}
             RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
                       report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
@@ -331,7 +475,7 @@ async function requireEventAccess(config: ConfigStateless, email: string, eventi
     return ev;
 }
 
-// Access check for the caller routes: the incident's Event feed must be visible to the user.
+// Access check for the caller and unit routes: the incident's Event feed must be visible to the user.
 async function requireIncidentAccess(config: ConfigStateless, email: string, incidentid: string): Promise<void> {
     const rows = await query<{ event_id: string }>(config, sql`
         SELECT event_id FROM dispatcher_incidents WHERE id = ${incidentid}
@@ -698,7 +842,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     await schema.patch('/dispatcher/incidents/:incidentid', {
         name: 'Update Incident',
         group: 'Dispatcher',
-        description: 'Update an incident (assign / note / close / reopen)',
+        description: 'Update an incident (note / close / reopen). Units are changed with the /units routes.',
         params: Type.Object({ incidentid: Type.String() }),
         body: Type.Object({
             type: Type.Optional(Type.String()),
@@ -710,7 +854,6 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             report_number: Type.Optional(Type.String()),
             core_event_id: Type.Optional(Type.String()),
             status: Type.Optional(Type.Union([Type.Literal('active'), Type.Literal('closed')])),
-            assigned: Type.Optional(Type.Array(Type.Any())),
             notes: Type.Optional(Type.Array(Type.Any())),
         }),
         res: Type.Any(),
@@ -737,7 +880,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 dispatcher: b.dispatcher ?? cur.dispatcher,
                 details: b.details ?? cur.details,
                 status: b.status ?? cur.status,
-                assigned: b.assigned ?? asArray(cur.assigned),
+                assigned: normalizeUnits(cur.assigned),
                 notes: b.notes ?? asArray(cur.notes),
             };
             // Report number: undefined = leave as is; '' = clear. A change is logged as a
@@ -764,6 +907,15 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             const closedAt = next.status === 'closed'
                 ? (cur.closed_at ?? new Date().toISOString())
                 : null;
+
+            // Closing clears every unit still on the incident, stamped with the close time, so
+            // no unit is left Assigned or On Scene on a closed incident. Reopening leaves them
+            // cleared; the dispatcher assigns again if a unit goes back.
+            if (next.status === 'closed' && cur.status !== 'closed') {
+                const { list, cleared } = clearAllUnits(next.assigned, closedAt as string);
+                next.assigned = list;
+                next.notes = [...next.notes, ...cleared.map(u => ({ text: unitNote(u, 'closed'), time: closedAt }))];
+            }
 
             const incidents = await query<IncidentRow>(config, sql`
                 UPDATE dispatcher_incidents SET
@@ -852,6 +1004,76 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             const user = await Auth.as_user(config, req);
             await requireIncidentAccess(config, user.email, req.params.incidentid);
             const incident = await editCallers(config, req.params.incidentid, list => removeCallerFrom(list, req.params.callerid));
+            res.json({ incident });
+        } catch (err) {
+            Err.respond(err, res);
+        }
+    });
+
+    // ── Assigned units ──────────────────────────────────────────────────────────
+    // Each change goes through editUnits (row lock + one UPDATE) and is logged as a note with
+    // the server's time. Assigned → On Scene → Cleared; Remove is for a mistaken assignment.
+
+    await schema.post('/dispatcher/incidents/:incidentid/units', {
+        name: 'Assign Units',
+        group: 'Dispatcher',
+        description: 'Assign one or more units to an incident (a cleared unit is sent again)',
+        params: Type.Object({ incidentid: Type.String() }),
+        body: Type.Object({
+            units: Type.Array(Type.Object({ uid: Type.String(), callsign: Type.String() }), { minItems: 1, maxItems: 50 }),
+        }),
+        res: Type.Any(),
+    }, async (req, res) => {
+        try {
+            const user = await Auth.as_user(config, req);
+            await requireIncidentAccess(config, user.email, req.params.incidentid);
+            const incident = await editUnits(config, req.params.incidentid, (list, now) => {
+                const { list: next, added } = assignUnitsTo(list, req.body.units, now);
+                return { list: next, notes: added.map(u => unitNote(u, 'assigned')) };
+            });
+            res.json({ incident });
+        } catch (err) {
+            Err.respond(err, res);
+        }
+    });
+
+    await schema.patch('/dispatcher/incidents/:incidentid/units/:uid', {
+        name: 'Set Unit Status',
+        group: 'Dispatcher',
+        description: 'Mark a unit On Scene (from Assigned) or Cleared (from Assigned or On Scene)',
+        params: Type.Object({ incidentid: Type.String(), uid: Type.String() }),
+        body: Type.Object({
+            status: Type.Union([Type.Literal('onscene'), Type.Literal('cleared')]),
+        }),
+        res: Type.Any(),
+    }, async (req, res) => {
+        try {
+            const user = await Auth.as_user(config, req);
+            await requireIncidentAccess(config, user.email, req.params.incidentid);
+            const incident = await editUnits(config, req.params.incidentid, (list, now) => {
+                const { list: next, unit } = setUnitStatusIn(list, req.params.uid, req.body.status, now);
+                return { list: next, notes: [unitNote(unit, req.body.status)] };
+            });
+            res.json({ incident });
+        } catch (err) {
+            Err.respond(err, res);
+        }
+    });
+
+    await schema.delete('/dispatcher/incidents/:incidentid/units/:uid', {
+        name: 'Remove Unit',
+        group: 'Dispatcher',
+        description: 'Take a unit assigned by mistake off the incident record',
+        params: Type.Object({ incidentid: Type.String(), uid: Type.String() }),
+        res: Type.Any(),
+    }, async (req, res) => {
+        try {
+            const user = await Auth.as_user(config, req);
+            await requireIncidentAccess(config, user.email, req.params.incidentid);
+            const incident = await editUnits(config, req.params.incidentid, (list) => {
+                const { list: next, unit } = removeUnitFrom(list, req.params.uid);
+                return { list: next, notes: [unitNote(unit, 'removed')] };
+            });
             res.json({ incident });
         } catch (err) {
             Err.respond(err, res);

@@ -1,4 +1,5 @@
 import type { DispatcherEvent, DispatcherIncident, AgencySettings, IncidentCaller } from './events-client.ts';
+import { unitLine, firstOnScene } from './units.ts';
 
 // After-action report for a standalone Event: stats + generated narrative + exports.
 // Everything is computed client-side from the incident list the server already returns
@@ -168,7 +169,9 @@ export function buildReportHtml(
         .join('');
 
     const log = incidents.map((i) => {
-        const assigned = (i.assigned ?? []).map(c => esc(c.callsign)).join(', ') || '—';
+        // One line per unit with its assigned / on scene / cleared times; a removed unit is not on the record.
+        const assigned = (i.assigned ?? []).map(c => esc(unitLine(c, iso => fmt(new Date(iso))))).join('<br>') || '—';
+        const onScene = firstOnScene(i.assigned);
         const notes = (i.notes ?? [])
             .map(n => `<div class='note'><span class='when'>${esc(fmt(new Date(n.time)))}</span> ${esc(n.text)}</div>`)
             .join('') || `<div class='note muted'>No notes</div>`;
@@ -184,6 +187,7 @@ export function buildReportHtml(
                 <tr><td>Location</td><td>${esc(i.address || `${(i.lat ?? 0).toFixed(5)}, ${(i.lon ?? 0).toFixed(5)}`)}</td></tr>
                 <tr><td>Dispatcher</td><td>${esc(i.dispatcher || '—')}</td></tr>
                 ${i.report_number ? `<tr><td>Report #</td><td>${esc(i.report_number)}</td></tr>` : ''}
+                ${onScene ? `<tr><td>On scene</td><td>${esc(fmt(new Date(onScene.time)))} (${esc(onScene.callsign)})</td></tr>` : ''}
                 ${(i.callers ?? []).length ? `<tr><td>${i.callers.length > 1 ? 'Callers' : 'Caller'}</td><td>${i.callers.map(c => esc(callerLine(c, fmt(new Date(c.time))))).join('<br>')}</td></tr>` : ''}
                 <tr><td>Units</td><td>${assigned}</td></tr>
             </table>
@@ -284,7 +288,7 @@ function csvCell(v: string | number | null | undefined): string {
 
 export function buildCsv(incidents: DispatcherIncident[]): string {
     const header = [
-        'number', 'report_number', 'caller_name', 'caller_phone', 'callers', 'type', 'status', 'created_at', 'closed_at', 'address',
+        'number', 'report_number', 'caller_name', 'caller_phone', 'callers', 'type', 'status', 'created_at', 'first_on_scene', 'closed_at', 'address',
         'lat', 'lon', 'dispatcher', 'assigned_units', 'details', 'notes',
     ].join(',');
     const rows = incidents.map(i => [
@@ -296,12 +300,13 @@ export function buildCsv(incidents: DispatcherIncident[]): string {
         csvCell(i.type),
         csvCell(i.status),
         csvCell(i.created_at),
+        csvCell(firstOnScene(i.assigned)?.time ?? null),
         csvCell(i.closed_at),
         csvCell(i.address),
         csvCell(i.lat),
         csvCell(i.lon),
         csvCell(i.dispatcher),
-        csvCell((i.assigned ?? []).map(c => c.callsign).join('; ')),
+        csvCell((i.assigned ?? []).map(c => unitLine(c, iso => iso)).join('; ')),
         csvCell(i.details),
         csvCell((i.notes ?? []).map(n => `[${n.time}] ${n.text}`).join(' | ')),
     ].join(','));
