@@ -62,6 +62,7 @@ interface IncidentRow {
     // Broadcast Events: the CloudTAK Core Event that carries this incident to the field.
     core_event_id: string | null;
     status: string;
+    // The units on the incident (see <units-pure>): each has a status and the server's times.
     assigned: unknown;
     notes: unknown;
     created_at: string;
@@ -212,6 +213,117 @@ function firstCaller(nameIn: string | undefined, phoneIn: string | undefined): C
 }
 // </callers-pure>
 
+// ── Units ───────────────────────────────────────────────────────────────────────
+// Each unit on an incident is Assigned, then On Scene, then Cleared, with the time of each step.
+// Only the dispatcher presses the buttons, and the SERVER stamps the time, so a browser can't
+// back-date one. A Cleared unit stays on the incident (the record shows who worked the call);
+// the ✕ (removeUnitFrom) is for a unit assigned by mistake and drops it from the record.
+// Older rows hold { uid, callsign } only: they read as Assigned with no time.
+// The list logic below is pure (no database) so plugin/test/units-server.test.ts can run it.
+// <units-pure>
+type UnitStatus = 'assigned' | 'on_scene' | 'cleared';
+
+interface UnitEntry {
+    uid: string;
+    callsign: string;
+    status: UnitStatus;
+    assigned_at: string | null;
+    on_scene_at: string | null;
+    cleared_at: string | null;
+}
+
+interface UnitNote { text: string; time: string }
+
+const UNITS_MAX = 100;
+
+function unitTime(v: unknown): string | null {
+    return typeof v === 'string' && !Number.isNaN(new Date(v).getTime()) ? v : null;
+}
+
+// Normalize a stored list: drop junk and duplicates, give old { uid, callsign } rows a status.
+function normalizeUnits(v: unknown): UnitEntry[] {
+    const seen = new Set<string>();
+    const out: UnitEntry[] = [];
+    for (const u of asArray(v)) {
+        if (!u || typeof u !== 'object') continue;
+        const r = u as Record<string, unknown>;
+        if (typeof r.uid !== 'string' || !r.uid || seen.has(r.uid)) continue;
+        seen.add(r.uid);
+        const status: UnitStatus = r.status === 'on_scene' || r.status === 'cleared' ? r.status : 'assigned';
+        out.push({
+            uid: r.uid,
+            callsign: typeof r.callsign === 'string' ? r.callsign : r.uid,
+            status,
+            assigned_at: unitTime(r.assigned_at),
+            on_scene_at: unitTime(r.on_scene_at),
+            cleared_at: unitTime(r.cleared_at),
+        });
+    }
+    return out;
+}
+
+// Assign units (skips any already on the incident). Returns the new list and the notes to log.
+function assignUnitsTo(list: UnitEntry[], add: { uid?: string; callsign?: string }[], now: string): { list: UnitEntry[]; notes: UnitNote[] } {
+    const next = [...list];
+    const notes: UnitNote[] = [];
+    for (const a of add) {
+        const uid = (a.uid ?? '').trim();
+        const callsign = (a.callsign ?? '').trim();
+        if (!uid || !callsign) throw new Err(400, null, 'A unit needs a uid and a callsign');
+        if (callsign.length > 64) throw new Err(400, null, 'Unit callsign is too long (64 characters max)');
+        if (next.some(u => u.uid === uid)) continue;
+        if (next.length >= UNITS_MAX) throw new Err(400, null, `An incident can have at most ${UNITS_MAX} units`);
+        next.push({ uid, callsign, status: 'assigned', assigned_at: now, on_scene_at: null, cleared_at: null });
+        notes.push({ text: `${callsign} assigned`, time: now });
+    }
+    return { list: next, notes };
+}
+
+// Move one unit forward: Assigned -> On Scene -> Cleared. Never backwards, never twice.
+// A unit that clears without ever being marked On Scene keeps no on-scene time.
+function advanceUnit(list: UnitEntry[], uid: string, to: 'on_scene' | 'cleared', now: string): { list: UnitEntry[]; notes: UnitNote[] } {
+    const unit = list.find(u => u.uid === uid);
+    if (!unit) throw new Err(404, null, 'Unit not found on this incident');
+    if (unit.status === 'cleared') throw new Err(400, null, `${unit.callsign} is already cleared`);
+    if (to === 'on_scene' && unit.status !== 'assigned') throw new Err(400, null, `${unit.callsign} is already on scene`);
+    const stamped: UnitEntry = to === 'on_scene'
+        ? { ...unit, status: 'on_scene', on_scene_at: now }
+        : { ...unit, status: 'cleared', cleared_at: now };
+    return {
+        list: list.map(u => (u.uid === uid ? stamped : u)),
+        notes: [{ text: `${unit.callsign} ${to === 'on_scene' ? 'on scene' : 'cleared'}`, time: now }],
+    };
+}
+
+// The ✕: the unit was assigned by mistake, so it leaves the record (no note).
+function removeUnitFrom(list: UnitEntry[], uid: string): UnitEntry[] {
+    if (!list.some(u => u.uid === uid)) throw new Err(404, null, 'Unit not found on this incident');
+    return list.filter(u => u.uid !== uid);
+}
+
+// Closing an incident clears every unit still on it, stamped with the close time.
+function clearAllUnits(list: UnitEntry[], now: string): { list: UnitEntry[]; notes: UnitNote[] } {
+    const notes: UnitNote[] = [];
+    const next = list.map((u) => {
+        if (u.status === 'cleared') return u;
+        notes.push({ text: `${u.callsign} cleared`, time: now });
+        return { ...u, status: 'cleared' as const, cleared_at: now };
+    });
+    return { list: next, notes };
+}
+
+// A client that still sends the whole list (older plugin builds): keep what the server already
+// knows about each unit, stamp any new one as Assigned now, drop the ones that are gone. Status
+// and times in the request are never read, so they can't be forged.
+function mergeAssignedFrom(current: UnitEntry[], sent: unknown, now: string): UnitEntry[] {
+    const wanted = asArray(sent)
+        .filter((u): u is Record<string, unknown> => !!u && typeof u === 'object' && typeof (u as { uid?: unknown }).uid === 'string')
+        .map(u => ({ uid: String(u.uid), callsign: typeof u.callsign === 'string' ? u.callsign : String(u.uid) }));
+    const kept = current.filter(u => wanted.some(w => w.uid === u.uid));
+    return assignUnitsTo(kept, wanted, now).list;
+}
+// </units-pure>
+
 // Normalize an incident row's jsonb fields to arrays before sending it to the client, and
 // derive caller_name / caller_phone from the primary caller.
 function mapIncident(row: IncidentRow): IncidentRow {
@@ -219,7 +331,7 @@ function mapIncident(row: IncidentRow): IncidentRow {
     const primary = callers.find(c => c.primary);
     return {
         ...row,
-        assigned: asArray(row.assigned),
+        assigned: normalizeUnits(row.assigned),
         notes: asArray(row.notes),
         callers,
         caller_name: primary?.name ?? null,
@@ -243,6 +355,34 @@ async function editCallers(
         const next = normalizeCallers(edit(normalizeCallers(locked[0].callers)));
         const rows = await tx.execute(sql`
             UPDATE dispatcher_incidents SET callers = ${JSON.stringify(next)}::jsonb
+            WHERE id = ${incidentid}
+            RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
+                      report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
+        `) as unknown as IncidentRow[];
+        return mapIncident(rows[0]);
+    });
+}
+
+// Lock the incident row, apply `edit` to its units (and the notes it returns) and write both back in
+// one transaction, so two dispatchers pressing buttons at the same moment can't overwrite each
+// other and the note and the time always agree. Units can't change on a closed incident.
+async function editUnits(
+    config: ConfigStateless,
+    incidentid: string,
+    edit: (list: UnitEntry[], now: string) => { list: UnitEntry[]; notes: UnitNote[] },
+): Promise<IncidentRow> {
+    return await config.pg.transaction(async (tx) => {
+        const locked = await tx.execute(sql`
+            SELECT assigned, notes, status FROM dispatcher_incidents WHERE id = ${incidentid} FOR UPDATE
+        `) as unknown as { assigned: unknown; notes: unknown; status: string }[];
+        if (!locked.length) throw new Err(404, null, 'Incident not found');
+        if (locked[0].status !== 'active') throw new Err(400, null, 'This incident is closed. Reopen it to change its units.');
+        const now = new Date().toISOString();
+        const out = edit(normalizeUnits(locked[0].assigned), now);
+        const notes = [...asArray(locked[0].notes), ...out.notes];
+        const rows = await tx.execute(sql`
+            UPDATE dispatcher_incidents
+            SET assigned = ${JSON.stringify(out.list)}::jsonb, notes = ${JSON.stringify(notes)}::jsonb
             WHERE id = ${incidentid}
             RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
                       report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
@@ -717,73 +857,147 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            // Checked before the lock: it asks TAK Server, which must not be waited on with the row held.
+            await requireIncidentAccess(config, user.email, req.params.incidentid);
 
-            // Read-modify-write: merge the patch over the current row, then write all columns.
-            const current = await query<IncidentRow>(config, sql`
-                SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
-                       report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
-                FROM dispatcher_incidents WHERE id = ${req.params.incidentid}
-            `);
-            if (!current.length) throw new Err(404, null, 'Incident not found');
-            const cur = current[0];
-            await requireEventAccess(config, user.email, cur.event_id);
-            const b = req.body;
+            // Read-modify-write under a row lock: merge the patch over the current row, then write
+            // all columns. The lock keeps a unit button pressed at the same moment from being lost.
+            const incident = await config.pg.transaction(async (tx) => {
+                const current = await tx.execute(sql`
+                    SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
+                           report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
+                    FROM dispatcher_incidents WHERE id = ${req.params.incidentid} FOR UPDATE
+                `) as unknown as IncidentRow[];
+                if (!current.length) throw new Err(404, null, 'Incident not found');
+                const cur = current[0];
+                const b = req.body;
+                const now = new Date().toISOString();
 
-            const next = {
-                type: b.type ?? cur.type,
-                address: b.address ?? cur.address,
-                lat: b.lat ?? cur.lat,
-                lon: b.lon ?? cur.lon,
-                dispatcher: b.dispatcher ?? cur.dispatcher,
-                details: b.details ?? cur.details,
-                status: b.status ?? cur.status,
-                assigned: b.assigned ?? asArray(cur.assigned),
-                notes: b.notes ?? asArray(cur.notes),
-            };
-            // Report number: undefined = leave as is; '' = clear. A change is logged as a
-            // timestamped note here on the server, so the history survives even though the
-            // column itself only holds the current value.
-            const reportNumber = b.report_number !== undefined
-                ? normReportNumber(b.report_number)
-                : cur.report_number;
-            if (reportNumber !== cur.report_number) {
-                next.notes = [...next.notes, {
-                    text: reportNumber
-                        ? (cur.report_number ? `Report number changed: ${cur.report_number} → ${reportNumber}` : `Report number: ${reportNumber}`)
-                        : `Report number cleared (was ${cur.report_number})`,
-                    time: new Date().toISOString(),
-                }];
-            }
+                const next = {
+                    type: b.type ?? cur.type,
+                    address: b.address ?? cur.address,
+                    lat: b.lat ?? cur.lat,
+                    lon: b.lon ?? cur.lon,
+                    dispatcher: b.dispatcher ?? cur.dispatcher,
+                    details: b.details ?? cur.details,
+                    status: b.status ?? cur.status,
+                    assigned: b.assigned !== undefined
+                        ? mergeAssignedFrom(normalizeUnits(cur.assigned), b.assigned, now)
+                        : normalizeUnits(cur.assigned),
+                    notes: b.notes ?? asArray(cur.notes),
+                };
+                // Report number: undefined = leave as is; '' = clear. A change is logged as a
+                // timestamped note here on the server, so the history survives even though the
+                // column itself only holds the current value.
+                const reportNumber = b.report_number !== undefined
+                    ? normReportNumber(b.report_number)
+                    : cur.report_number;
+                if (reportNumber !== cur.report_number) {
+                    next.notes = [...next.notes, {
+                        text: reportNumber
+                            ? (cur.report_number ? `Report number changed: ${cur.report_number} → ${reportNumber}` : `Report number: ${reportNumber}`)
+                            : `Report number cleared (was ${cur.report_number})`,
+                        time: now,
+                    }];
+                }
 
-            // Core Event link: undefined = leave as is; '' = clear.
-            const coreEventId = b.core_event_id !== undefined
-                ? ((b.core_event_id || '').trim() || null)
-                : cur.core_event_id;
+                // Core Event link: undefined = leave as is; '' = clear.
+                const coreEventId = b.core_event_id !== undefined
+                    ? ((b.core_event_id || '').trim() || null)
+                    : cur.core_event_id;
 
-            // Closing stamps closed_at; reopening clears it.
-            const closedAt = next.status === 'closed'
-                ? (cur.closed_at ?? new Date().toISOString())
-                : null;
+                // Closing stamps closed_at and clears every unit still on the incident with that
+                // same time; reopening clears closed_at (cleared units stay cleared).
+                const closing = next.status === 'closed' && cur.status !== 'closed';
+                const closedAt = next.status === 'closed'
+                    ? (cur.closed_at ?? now)
+                    : null;
+                if (closing) {
+                    const cleared = clearAllUnits(next.assigned, closedAt as string);
+                    next.assigned = cleared.list;
+                    next.notes = [...next.notes, ...cleared.notes];
+                }
 
-            const incidents = await query<IncidentRow>(config, sql`
-                UPDATE dispatcher_incidents SET
-                    type       = ${next.type},
-                    address    = ${next.address},
-                    lat        = ${next.lat},
-                    lon        = ${next.lon},
-                    dispatcher = ${next.dispatcher},
-                    details    = ${next.details},
-                    report_number = ${reportNumber},
-                    core_event_id = ${coreEventId},
-                    status     = ${next.status},
-                    assigned   = ${JSON.stringify(next.assigned)}::jsonb,
-                    notes      = ${JSON.stringify(next.notes)}::jsonb,
-                    closed_at  = ${closedAt}
-                WHERE id = ${req.params.incidentid}
-                RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                          report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
-            `);
-            res.json({ incident: mapIncident(incidents[0]) });
+                const incidents = await tx.execute(sql`
+                    UPDATE dispatcher_incidents SET
+                        type       = ${next.type},
+                        address    = ${next.address},
+                        lat        = ${next.lat},
+                        lon        = ${next.lon},
+                        dispatcher = ${next.dispatcher},
+                        details    = ${next.details},
+                        report_number = ${reportNumber},
+                        core_event_id = ${coreEventId},
+                        status     = ${next.status},
+                        assigned   = ${JSON.stringify(next.assigned)}::jsonb,
+                        notes      = ${JSON.stringify(next.notes)}::jsonb,
+                        closed_at  = ${closedAt}
+                    WHERE id = ${req.params.incidentid}
+                    RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
+                              report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
+                `) as unknown as IncidentRow[];
+                return mapIncident(incidents[0]);
+            });
+            res.json({ incident });
+        } catch (err) {
+            Err.respond(err, res);
+        }
+    });
+
+    // ── Units ───────────────────────────────────────────────────────────────────
+    // Assigned -> On Scene -> Cleared. Each press goes through editUnits (row lock, server time,
+    // and the note written in the same step). The browser never sends a time.
+
+    await schema.post('/dispatcher/incidents/:incidentid/units', {
+        name: 'Assign Units',
+        group: 'Dispatcher',
+        description: 'Assign one or more units to an incident (each starts as Assigned, stamped now)',
+        params: Type.Object({ incidentid: Type.String() }),
+        body: Type.Object({
+            units: Type.Array(Type.Object({ uid: Type.String(), callsign: Type.String() })),
+        }),
+        res: Type.Any(),
+    }, async (req, res) => {
+        try {
+            const user = await Auth.as_user(config, req);
+            await requireIncidentAccess(config, user.email, req.params.incidentid);
+            const incident = await editUnits(config, req.params.incidentid, (list, now) => assignUnitsTo(list, req.body.units, now));
+            res.json({ incident });
+        } catch (err) {
+            Err.respond(err, res);
+        }
+    });
+
+    await schema.patch('/dispatcher/incidents/:incidentid/units/:uid', {
+        name: 'Update Unit Status',
+        group: 'Dispatcher',
+        description: 'Mark a unit On Scene or Cleared (the server stamps the time)',
+        params: Type.Object({ incidentid: Type.String(), uid: Type.String() }),
+        body: Type.Object({ status: Type.Union([Type.Literal('on_scene'), Type.Literal('cleared')]) }),
+        res: Type.Any(),
+    }, async (req, res) => {
+        try {
+            const user = await Auth.as_user(config, req);
+            await requireIncidentAccess(config, user.email, req.params.incidentid);
+            const incident = await editUnits(config, req.params.incidentid, (list, now) => advanceUnit(list, req.params.uid, req.body.status, now));
+            res.json({ incident });
+        } catch (err) {
+            Err.respond(err, res);
+        }
+    });
+
+    await schema.delete('/dispatcher/incidents/:incidentid/units/:uid', {
+        name: 'Remove Unit',
+        group: 'Dispatcher',
+        description: 'Take a unit off the incident record (for a unit assigned by mistake)',
+        params: Type.Object({ incidentid: Type.String(), uid: Type.String() }),
+        res: Type.Any(),
+    }, async (req, res) => {
+        try {
+            const user = await Auth.as_user(config, req);
+            await requireIncidentAccess(config, user.email, req.params.incidentid);
+            const incident = await editUnits(config, req.params.incidentid, list => ({ list: removeUnitFrom(list, req.params.uid), notes: [] }));
+            res.json({ incident });
         } catch (err) {
             Err.respond(err, res);
         }

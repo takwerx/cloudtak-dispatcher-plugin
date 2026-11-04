@@ -23,6 +23,18 @@ offer a call. **Manage → Caller Details** turns that off for the whole CloudTA
 no caller name, phone or note reaches a field device. Every caller is included in the after-action report
 and CSV. A database from the earlier single-caller version moves its caller into the list on start.
 
+### Unit status (standalone)
+
+Each unit on an incident is **Assigned**, then **On Scene**, then **Cleared**. The dispatcher presses the
+button (**On Scene**, **Clear**) when the unit radios in, and the server stamps the time, so nothing comes
+from the field. A cleared unit stays on the incident, greyed, with its three times; the **✕** is for a unit
+assigned by mistake and removes it from the record. The board shows **Unassigned**, **Dispatched** or
+**On Scene** next to each active incident. Closing an incident clears every unit still on it with the close
+time. The marker remarks read `Responding: E12 (on scene), M4` (cleared units drop off), the feed log gets
+`ON SCENE:` and `CLEARED:` lines, every change is a note on the incident, and the report and CSV list each unit
+with its times plus the incident's first on-scene time. Units assigned before this version show as Assigned
+with no times.
+
 ### Delivery to field units (standalone)
 
 Each Event chooses how its incidents reach field devices when it is created:

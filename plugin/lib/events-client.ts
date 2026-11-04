@@ -29,6 +29,12 @@ export interface DispatcherEvent {
 export interface AssignedContact {
     uid: string;
     callsign: string;
+    // Assigned -> On Scene -> Cleared. The server stamps each time when the dispatcher presses the
+    // button. Rows from before this existed have no status (read as Assigned) and no times.
+    status?: 'assigned' | 'on_scene' | 'cleared';
+    assigned_at?: string | null;
+    on_scene_at?: string | null;
+    cleared_at?: string | null;
 }
 
 export interface IncidentNote {
@@ -95,7 +101,7 @@ export interface CreateIncidentBody {
 
 // report_number: send '' to clear. Callers are changed with addCaller / updateCaller / removeCaller.
 export type IncidentPatch = Partial<Pick<DispatcherIncident,
-    'type' | 'address' | 'lat' | 'lon' | 'dispatcher' | 'details' | 'status' | 'assigned' | 'notes'>>
+    'type' | 'address' | 'lat' | 'lon' | 'dispatcher' | 'details' | 'status' | 'notes'>>
     & { report_number?: string; core_event_id?: string };
 
 // For addCaller / updateCaller. updateCaller: undefined = leave as is, '' = clear.
@@ -175,6 +181,32 @@ export async function updateCaller(incidentId: string, callerId: string, body: C
 
 export async function removeCaller(incidentId: string, callerId: string): Promise<DispatcherIncident> {
     const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/callers/${encodeURIComponent(callerId)}`, {
+        method: 'DELETE',
+    }) as { incident: DispatcherIncident };
+    return r.incident;
+}
+
+// ── Units (the server stamps every time and writes the note) ─────────────────────
+
+export async function assignUnits(incidentId: string, units: { uid: string; callsign: string }[]): Promise<DispatcherIncident> {
+    const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/units`, {
+        method: 'POST',
+        body: { units },
+    }) as { incident: DispatcherIncident };
+    return r.incident;
+}
+
+export async function setUnitStatus(incidentId: string, uid: string, status: 'on_scene' | 'cleared'): Promise<DispatcherIncident> {
+    const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/units/${encodeURIComponent(uid)}`, {
+        method: 'PATCH',
+        body: { status },
+    }) as { incident: DispatcherIncident };
+    return r.incident;
+}
+
+// The ✕: a unit assigned by mistake leaves the record.
+export async function removeUnit(incidentId: string, uid: string): Promise<DispatcherIncident> {
+    const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/units/${encodeURIComponent(uid)}`, {
         method: 'DELETE',
     }) as { incident: DispatcherIncident };
     return r.incident;
