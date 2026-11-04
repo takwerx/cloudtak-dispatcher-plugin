@@ -46,7 +46,12 @@ VALUES
      '[{"uid":"ANDROID-e12","callsign":"E12"},{"uid":"ANDROID-m4","callsign":"M4"}]'::jsonb,
      '[{"time":"2026-10-30T15:00:00.000Z","text":"Incident opened"}]'::jsonb),
     ('inc-2', 'ev-old', 'OLD-002', 'Fire', '2 Oak Ave', 39.2, -105.3, 'Disp B', NULL, NULL,
-     '[]'::jsonb, '[]'::jsonb);
+     '[]'::jsonb, '[]'::jsonb),
+    -- v1.3.0 on CloudTAK stores the lists it writes as a JSON string holding the list (seen on a real
+    -- 13.119.0 box, ops #468); the plugin's readers unwrap it.
+    ('inc-3', 'ev-old', 'OLD-003', 'Traffic', '3 Elm Rd', 39.3, -105.4, NULL, 'Two cars', NULL,
+     to_jsonb('[{"uid":"ANDROID-x1","callsign":"X1"}]'::text),
+     to_jsonb('[{"time":"2026-10-30T16:00:00.000Z","text":"Tow requested"}]'::text));
 
 UPDATE dispatcher_incidents SET status = 'closed', closed_at = now() WHERE id = 'inc-2';
 

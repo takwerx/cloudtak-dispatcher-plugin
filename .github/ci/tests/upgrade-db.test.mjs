@@ -43,7 +43,7 @@ const listEvents = routeSql("schema.get('/dispatcher/events',");
 test('the v1.3.0 database loads into a clean Postgres', () => {
     psql('DROP TABLE IF EXISTS dispatcher_incidents, dispatcher_events, dispatcher_settings CASCADE;');
     psql(fixture);
-    assert.equal(one('SELECT count(*) FROM dispatcher_incidents'), '2');
+    assert.equal(one('SELECT count(*) FROM dispatcher_incidents'), '3');
 });
 
 test('the schema bootstrap runs on the old database, and again on the next start', () => {
@@ -53,8 +53,9 @@ test('the schema bootstrap runs on the old database, and again on the next start
 
 test('old incidents still load with the current query, new columns empty, nothing lost', () => {
     const rows = psql(`SELECT row_to_json(t) FROM (${listIncidents}) t;`).split('\n').map(l => JSON.parse(l));
-    assert.equal(rows.length, 2);
-    const [a, b] = rows;
+    assert.equal(rows.length, 3);
+    // The fixture rows share one created_at, so pick them by number, not position.
+    const [a, b, c] = ['OLD-001', 'OLD-002', 'OLD-003'].map(n => rows.find(r => r.number === n));
     assert.equal(a.number, 'OLD-001');
     assert.equal(a.report_number, 'R-77');
     assert.equal(a.details, 'Fall, conscious');
@@ -67,6 +68,10 @@ test('old incidents still load with the current query, new columns empty, nothin
     assert.equal(b.status, 'closed');
     assert.ok(b.closed_at);
     assert.equal(b.disposition, null);
+    // A list stored as a JSON string comes back as that string, intact, for the readers to unwrap.
+    assert.deepEqual(JSON.parse(c.assigned).map(u => u.callsign), ['X1']);
+    assert.equal(JSON.parse(c.notes)[0].text, 'Tow requested');
+    assert.deepEqual(c.callers, []);
 });
 
 test('the old event stays a DataSync event with its feed and counter', () => {
@@ -90,7 +95,7 @@ test('rollback: v1.3.0 queries still read and write the updated tables', () => {
     const incidents = psql(`SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
                                    report_number, status, assigned, notes, created_at, closed_at
                             FROM dispatcher_incidents WHERE event_id = 'ev-old' ORDER BY created_at ASC;`);
-    assert.equal(incidents.split('\n').length, 2);
+    assert.equal(incidents.split('\n').length, 3);
     const events = psql(`SELECT id, name, prefix, feed_guid, feed_name, channel, status, seq, created_at, created_by
                          FROM dispatcher_events ORDER BY created_at DESC;`);
     assert.equal(events.split('\n').length, 1);
@@ -104,5 +109,5 @@ test('rollback: v1.3.0 queries still read and write the updated tables', () => {
     assert.equal(one("SELECT callers::text FROM dispatcher_incidents WHERE id = 'inc-rb'"), '[]');
     // And updating to this version again after the rollback is still fine.
     runBootstrap();
-    assert.equal(one('SELECT count(*) FROM dispatcher_incidents'), '3');
+    assert.equal(one('SELECT count(*) FROM dispatcher_incidents'), '4');
 });
