@@ -66,3 +66,16 @@ export function closedMarkerEndMs(closedAtMs: number, minutes: number, nowMs = D
 export function shouldWithdraw(endingMs: number | null, nowMs = Date.now()): boolean {
     return endingMs === null || endingMs > nowMs + WITHDRAW_MS;
 }
+
+/**
+ * When a Core Event, as CloudTAK returned it, is set to end (ms since epoch), or null when it has
+ * no usable `ended`. The withdraw guard reads this rather than recomputing from today's window:
+ * an admin may have changed the window since the incident was closed, and the stored time is the
+ * one devices go by.
+ */
+export function endedMsFrom(coreEvent: unknown): number | null {
+    const v = (coreEvent as { ended?: unknown } | null | undefined)?.ended;
+    if (typeof v !== 'string' || !v) return null;
+    const ms = Date.parse(v);
+    return Number.isFinite(ms) ? ms : null;
+}
