@@ -1,5 +1,6 @@
 import type { DispatcherEvent, DispatcherIncident, AgencySettings, IncidentCaller, AssignedContact } from './events-client.ts';
 import { firstOnScene, unitStatus, unitTimesLine } from './unit-status.ts';
+import { dispositionLabel } from './dispositions.ts';
 
 // After-action report for a standalone Event: stats + generated narrative + exports.
 // Everything is computed client-side from the incident list the server already returns
@@ -183,6 +184,7 @@ export function buildReportHtml(
             <table class='meta'>
                 <tr><td>Opened</td><td>${esc(fmt(new Date(i.created_at)))}</td></tr>
                 ${i.closed_at ? `<tr><td>Closed</td><td>${esc(fmt(new Date(i.closed_at)))}</td></tr>` : ''}
+                ${i.disposition ? `<tr><td>Disposition</td><td>${esc(dispositionLabel(i))}</td></tr>` : ''}
                 <tr><td>Location</td><td>${esc(i.address || `${(i.lat ?? 0).toFixed(5)}, ${(i.lon ?? 0).toFixed(5)}`)}</td></tr>
                 <tr><td>Dispatcher</td><td>${esc(i.dispatcher || '—')}</td></tr>
                 ${i.report_number ? `<tr><td>Report #</td><td>${esc(i.report_number)}</td></tr>` : ''}
@@ -295,7 +297,7 @@ function csvCell(v: string | number | null | undefined): string {
 
 export function buildCsv(incidents: DispatcherIncident[]): string {
     const header = [
-        'number', 'report_number', 'caller_name', 'caller_phone', 'callers', 'type', 'status', 'created_at', 'closed_at', 'address',
+        'number', 'report_number', 'caller_name', 'caller_phone', 'callers', 'type', 'status', 'created_at', 'closed_at', 'disposition', 'disposition_note', 'address',
         'lat', 'lon', 'dispatcher', 'assigned_units', 'details', 'notes', 'first_on_scene', 'unit_times',
     ].join(',');
     const rows = incidents.map(i => [
@@ -308,6 +310,8 @@ export function buildCsv(incidents: DispatcherIncident[]): string {
         csvCell(i.status),
         csvCell(i.created_at),
         csvCell(i.closed_at),
+        csvCell(i.disposition),
+        csvCell(i.disposition_note),
         csvCell(i.address),
         csvCell(i.lat),
         csvCell(i.lon),

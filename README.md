@@ -35,6 +35,23 @@ time. The marker remarks read `Responding: E12 (on scene), M4` (cleared units dr
 with its times plus the incident's first on-scene time. Units assigned before this version show as Assigned
 with no times.
 
+### Disposition on close (standalone)
+
+Closing an incident asks for a **disposition**, how the call ended: pick a preset (**Cleared - No Report**,
+**Report**, **Unfounded**, **Warning**, **Gone on Arrival**, **Canceled**) or **Other** and type it in the box
+beside it, then press **Close Incident**. The list is `plugin/lib/dispositions.ts`; the server stores the text
+it is sent, so changing the list needs no server change. The disposition is written as a `Closed: …` note,
+shown on the closed incident's card and detail, in the report and CSV, and on the `INCIDENT CLOSED` feed-log
+line. Reopening clears it (the note stays); closing again asks again. There is no editing it in place.
+
+### CJIS reminder (standalone)
+
+Every standalone incident opens with a one-line **CJIS reminder** ("Information derived from CJIS sources
+must not be entered into incident records.", default on). **Manage → CJIS Reminder** turns it off or changes
+the wording for the whole CloudTAK; only the CloudTAK system admin account (the one CloudTAK creates on
+first launch) can change it, and the server refuses the change for anyone else. **Manage → Custom Call
+Types** is locked to the same admin account.
+
 ### Delivery to field units (standalone)
 
 Each Event chooses how its incidents reach field devices when it is created:

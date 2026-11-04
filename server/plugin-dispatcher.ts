@@ -67,6 +67,9 @@ interface IncidentRow {
     notes: unknown;
     created_at: string;
     closed_at: string | null;
+    // How the incident ended, set when it is closed (see <disposition-pure>); NULL while active.
+    disposition: string | null;
+    disposition_note: string | null;
 }
 
 // drizzle's execute() returns the driver RowList; cast to the row shape we SELECTed.
@@ -98,6 +101,67 @@ function normReportNumber(v: string | undefined): string | null {
     if (t.length > REPORT_NUMBER_MAX) throw new Err(400, null, `Report number is too long (${REPORT_NUMBER_MAX} characters max)`);
     return t || null;
 }
+
+// ── Disposition ─────────────────────────────────────────────────────────────────
+// How an incident ended. The dispatcher picks it when closing: one of the plugin's presets
+// (plugin/lib/dispositions.ts) or "Other" with the text typed beside it. The server does not keep
+// the preset list; it stores the text it is sent, so the list can change without a server change.
+// A note only goes with "Other". Pure (no database) so plugin/test/disposition-server.test.ts can run it.
+// <disposition-pure>
+const DISPOSITION_MAX = 40;
+const DISPOSITION_NOTE_MAX = 80;
+const DISPOSITION_OTHER = 'Other';
+
+function normDisposition(disposition: string | undefined, note: string | undefined): { disposition: string; disposition_note: string | null } {
+    const d = (disposition ?? '').trim();
+    if (!d) throw new Err(400, null, 'Pick a disposition to close the incident');
+    if (d.length > DISPOSITION_MAX) throw new Err(400, null, `Disposition is too long (${DISPOSITION_MAX} characters max)`);
+    const n = (note ?? '').trim();
+    if (n.length > DISPOSITION_NOTE_MAX) throw new Err(400, null, `Disposition note is too long (${DISPOSITION_NOTE_MAX} characters max)`);
+    if (d !== DISPOSITION_OTHER) return { disposition: d, disposition_note: null };
+    if (!n) throw new Err(400, null, 'A disposition note is required with "Other"');
+    return { disposition: d, disposition_note: n };
+}
+
+// "Closed: Unfounded" / "Closed: Other — lost contact with caller", the note written at close.
+function closeNote(disposition: string, note: string | null): string {
+    return `Closed: ${note ? `${disposition} — ${note}` : disposition}`;
+}
+// </disposition-pure>
+
+// ── CJIS reminder ───────────────────────────────────────────────────────────────
+// A one-line reminder shown at the top of every standalone incident (default on) telling the
+// dispatcher not to paste CJIS data into the Dispatcher. Both settings are shared per CloudTAK and
+// may only be changed by a CloudTAK system admin (the account CloudTAK creates on first launch);
+// every signed-in user still reads them, so the line shows for everyone. The custom call type list
+// (incident_types) is admin-only the same way. Pure (no database) so plugin/test/cjis-server.test.ts
+// can run it.
+// <cjis-pure>
+const CJIS_REMINDER_DEFAULT_TEXT = 'Information derived from CJIS sources must not be entered into incident records.';
+const CJIS_REMINDER_TEXT_MAX = 300;
+const ADMIN_ONLY_KEYS = new Set(['cjis_reminder_enabled', 'cjis_reminder_text', 'incident_types']);
+
+// True for the settings keys only a system admin may write.
+function isAdminOnlySetting(key: string): boolean {
+    return ADMIN_ONLY_KEYS.has(key);
+}
+
+// Value a client may store under one of the CJIS keys: the switch must be a boolean; the text is
+// trimmed, capped, and an empty text falls back to the default so the line can never be blank.
+function normCjisSetting(key: string, value: unknown): unknown {
+    if (key === 'cjis_reminder_enabled') {
+        if (typeof value !== 'boolean') throw new Err(400, null, 'cjis_reminder_enabled must be true or false');
+        return value;
+    }
+    if (key === 'cjis_reminder_text') {
+        if (value !== null && value !== undefined && typeof value !== 'string') throw new Err(400, null, 'cjis_reminder_text must be text');
+        const t = String(value ?? '').trim();
+        if (t.length > CJIS_REMINDER_TEXT_MAX) throw new Err(400, null, `Reminder text is too long (${CJIS_REMINDER_TEXT_MAX} characters max)`);
+        return t || CJIS_REMINDER_DEFAULT_TEXT;
+    }
+    return value;
+}
+// </cjis-pure>
 
 // ── Callers ─────────────────────────────────────────────────────────────────────
 // An incident keeps a list of callers (several calls about one crash, each with the time of the
@@ -357,7 +421,7 @@ async function editCallers(
             UPDATE dispatcher_incidents SET callers = ${JSON.stringify(next)}::jsonb
             WHERE id = ${incidentid}
             RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                      report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
+                      report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note
         `) as unknown as IncidentRow[];
         return mapIncident(rows[0]);
     });
@@ -385,7 +449,7 @@ async function editUnits(
             SET assigned = ${JSON.stringify(out.list)}::jsonb, notes = ${JSON.stringify(notes)}::jsonb
             WHERE id = ${incidentid}
             RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                      report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
+                      report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note
         `) as unknown as IncidentRow[];
         return mapIncident(rows[0]);
     });
@@ -563,6 +627,14 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         await config.pg.execute(sql`
             ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS core_event_id TEXT
         `);
+        // Disposition (standalone mode): how the incident ended, chosen when it is closed.
+        // Nullable, so incidents closed before this stay as they are.
+        await config.pg.execute(sql`
+            ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS disposition TEXT
+        `);
+        await config.pg.execute(sql`
+            ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS disposition_note TEXT
+        `);
     } catch (err) {
         console.error('[dispatcher] table bootstrap failed', err);
     }
@@ -600,8 +672,16 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
-            await Auth.is_auth(config, req);
-            const encoded = JSON.stringify(req.body.value ?? null);
+            let value: unknown = req.body.value;
+            if (isAdminOnlySetting(req.params.key)) {
+                // Auth.as_user re-reads the profile for session tokens, so this is the live flag.
+                const user = await Auth.as_user(config, req);
+                if (!user.is_admin()) throw new Err(403, null, 'Only a CloudTAK system admin can change this setting');
+                value = normCjisSetting(req.params.key, value);
+            } else {
+                await Auth.is_auth(config, req);
+            }
+            const encoded = JSON.stringify(value ?? null);
             // Settings carry small blobs (agency logo as a downscaled data URI) — cap the
             // row so a raw upload can't bloat the gis DB.
             if (encoded.length > 400_000) throw new Err(400, null, 'Setting too large (400KB max)');
@@ -767,7 +847,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             await requireEventAccess(config, user.email, req.params.eventid);
             const incidents = await query<IncidentRow>(config, sql`
                 SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
-                       report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
+                       report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note
                 FROM dispatcher_incidents WHERE event_id = ${req.params.eventid}
                 ORDER BY created_at ASC
             `);
@@ -827,7 +907,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                      ${JSON.stringify(callers)}::jsonb,
                      ${JSON.stringify(seedNotes)}::jsonb)
                 RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                          report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
+                          report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note
             `);
             res.json({ incident: mapIncident(incidents[0]) });
         } catch (err) {
@@ -850,6 +930,9 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             report_number: Type.Optional(Type.String()),
             core_event_id: Type.Optional(Type.String()),
             status: Type.Optional(Type.Union([Type.Literal('active'), Type.Literal('closed')])),
+            // Read only when status goes active → closed (required then); see <disposition-pure>.
+            disposition: Type.Optional(Type.String()),
+            disposition_note: Type.Optional(Type.String()),
             assigned: Type.Optional(Type.Array(Type.Any())),
             notes: Type.Optional(Type.Array(Type.Any())),
         }),
@@ -865,7 +948,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             const incident = await config.pg.transaction(async (tx) => {
                 const current = await tx.execute(sql`
                     SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
-                           report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
+                           report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note
                     FROM dispatcher_incidents WHERE id = ${req.params.incidentid} FOR UPDATE
                 `) as unknown as IncidentRow[];
                 if (!current.length) throw new Err(404, null, 'Incident not found');
@@ -912,6 +995,21 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 const closedAt = next.status === 'closed'
                     ? (cur.closed_at ?? now)
                     : null;
+                // Closing needs a disposition (how the call ended) and writes it as a note; the
+                // columns hold the current value. Reopening clears the columns, the note stays in the
+                // log, and closing again asks again. A closed incident keeps its disposition through
+                // other patches (a note, a report number), and it cannot be edited without reopening.
+                let disposition = cur.disposition;
+                let dispositionNote = cur.disposition_note;
+                if (closing) {
+                    const d = normDisposition(b.disposition, b.disposition_note);
+                    disposition = d.disposition;
+                    dispositionNote = d.disposition_note;
+                    next.notes = [...next.notes, { text: closeNote(disposition, dispositionNote), time: closedAt }];
+                } else if (next.status === 'active') {
+                    disposition = null;
+                    dispositionNote = null;
+                }
                 if (closing) {
                     const cleared = clearAllUnits(next.assigned, closedAt as string);
                     next.assigned = cleared.list;
@@ -931,10 +1029,12 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                         status     = ${next.status},
                         assigned   = ${JSON.stringify(next.assigned)}::jsonb,
                         notes      = ${JSON.stringify(next.notes)}::jsonb,
-                        closed_at  = ${closedAt}
+                        closed_at  = ${closedAt},
+                        disposition = ${disposition},
+                        disposition_note = ${dispositionNote}
                     WHERE id = ${req.params.incidentid}
                     RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                              report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at
+                              report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note
                 `) as unknown as IncidentRow[];
                 return mapIncident(incidents[0]);
             });
