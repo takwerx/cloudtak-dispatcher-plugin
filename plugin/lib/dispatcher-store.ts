@@ -1,5 +1,7 @@
 import { reactive } from 'vue';
 import type { DispatcherEvent, DispatcherIncident } from './events-client.ts';
+import type { CjisReminder } from './cjis-reminder.ts';
+import { CJIS_REMINDER_DEFAULT_TEXT } from './cjis-reminder.ts';
 
 export type ServerMode = 'detecting' | 'takcad' | 'standalone';
 
@@ -15,6 +17,10 @@ interface DispatcherState {
     events:         DispatcherEvent[];
     activeEvent:    DispatcherEvent | null;
     incidents:      DispatcherIncident[];
+    // Shared 'Caller details on map markers' setting (Manage panel); markers read it synchronously.
+    callerOnMarkers: boolean;
+    // Shared CJIS reminder line on every standalone incident (Manage panel; admin-only to change).
+    cjisReminder:   CjisReminder;
 }
 
 export const dispatcherStore = reactive<DispatcherState>({
@@ -25,6 +31,8 @@ export const dispatcherStore = reactive<DispatcherState>({
     events:         [],
     activeEvent:    null,
     incidents:      [],
+    callerOnMarkers: true,
+    cjisReminder:   { enabled: true, text: CJIS_REMINDER_DEFAULT_TEXT },
 });
 
 // The board itself is now server-backed (CloudTAK Postgres via the dispatcher route), so it

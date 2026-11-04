@@ -4,6 +4,8 @@ A dispatcher plugin for [CloudTAK](https://github.com/dfpc-coe/CloudTAK) — cre
 incidents on the map, organize them under named **Events**, assign responders, and notify them
 via mission chat and direct GeoChat.
 
+**Current version: 1.4.0.** What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+
 ## Modes
 
 The plugin auto-detects its environment on load:
@@ -14,6 +16,56 @@ The plugin auto-detects its environment on load:
   persist through close (and can be reopened); they are removed only when the Event is nuked.
 - **TAK-CAD** — if the TAK-CAD TAK Server plugin is detected, the full CAD UI (Vehicles,
   Personnel, incident types/roles) lights up on top of the standalone capabilities.
+
+Standalone incidents keep a list of **callers** (name, phone, optional note, time of call). The New
+Incident form records the first caller; add more, edit them, or pick the **primary** caller from the
+incident at any time, active or closed. Every caller is listed in the incident marker's remarks, and a
+dialable copy of the primary caller's number goes in the marker's `<contact phone>` so field clients can
+offer a call. **Manage → Caller Details** turns that off for the whole CloudTAK (default on): with it off,
+no caller name, phone or note reaches a field device. Every caller is included in the after-action report
+and CSV. A database from the earlier single-caller version moves its caller into the list on start.
+
+### Unit status (standalone)
+
+Each unit on an incident is **Assigned**, then **On Scene**, then **Cleared**. The dispatcher presses the
+button (**On Scene**, **Clear**) when the unit radios in, and the server stamps the time, so nothing comes
+from the field. A cleared unit stays on the incident, greyed, with its three times; the **✕** is for a unit
+assigned by mistake and removes it from the record. The board shows **Unassigned**, **Dispatched** or
+**On Scene** next to each active incident. Closing an incident clears every unit still on it with the close
+time. The marker remarks read `Responding: E12 (on scene), M4` (cleared units drop off), the feed log gets
+`ON SCENE:` and `CLEARED:` lines, every change is a note on the incident, and the report and CSV list each unit
+with its times plus the incident's first on-scene time. Units assigned before this version show as Assigned
+with no times.
+
+### Disposition on close (standalone)
+
+Closing an incident asks for a **disposition**, how the call ended: pick a preset (**Cleared - No Report**,
+**Report**, **Unfounded**, **Warning**, **Gone on Arrival**, **Canceled**) or **Other** and type it in the box
+beside it, then press **Close Incident**. The list is `plugin/lib/dispositions.ts`; the server stores the text
+it is sent, so changing the list needs no server change. The disposition is written as a `Closed: …` note,
+shown on the closed incident's card and detail, in the report and CSV, and on the `INCIDENT CLOSED` feed-log
+line. Reopening clears it (the note stays); closing again asks again. There is no editing it in place.
+
+### CJIS reminder (standalone)
+
+Every standalone incident opens with a one-line **CJIS reminder** ("Information derived from CJIS sources
+must not be entered into incident records.", default on). **Manage → CJIS Reminder** turns it off or changes
+the wording for the whole CloudTAK; only the CloudTAK system admin account (the one CloudTAK creates on
+first launch) can change it, and the server refuses the change for anyone else. **Manage → Custom Call
+Types** is locked to the same admin account.
+
+### Delivery to field units (standalone)
+
+Each Event chooses how its incidents reach field devices when it is created:
+
+- **DataSync feed** (default) — each incident is a marker in the Event's DataSync feed. Field
+  users subscribe to the feed to see it, and can use the feed's log and chat.
+- **Broadcast to channel** — each incident is a CloudTAK **Core Event** shared with one channel.
+  The CloudTAK server sends it to everyone in that channel and re-sends it every 10 seconds, so
+  it appears on every device in the channel with nothing to subscribe to, including devices that
+  connect later. It is one way (field users can't edit it), and a closed incident is marked
+  `CLOSED` and drops off devices 60 minutes after closing. Needs a CloudTAK with Core Events and
+  its Admin Connection connected. The incidents also appear in CloudTAK's own Core Events list.
 
 ## Layout
 

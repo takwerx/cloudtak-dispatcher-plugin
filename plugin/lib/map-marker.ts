@@ -3,6 +3,11 @@ import { normalize_geojson } from '@tak-ps/node-cot/normalize_geojson';
 import type { useMapStore } from '../../../src/stores/map.ts';
 import SubscriptionChat from '../../../src/base/subscription-chat.ts';
 import ProfileConfig from '../../../src/base/profile.ts';
+import { dialablePhone, callersRemark, markerContactFor } from './marker-contact.ts';
+import type { MarkerCaller } from './marker-contact.ts';
+
+// Re-exported so the components keep importing these from here.
+export { dialablePhone, callersRemark };
 
 type MapStore = ReturnType<typeof useMapStore>;
 
@@ -17,17 +22,24 @@ export interface MarkerIncident {
     time:        string;
     dispatcher:  string;
     details:     string;
+    callers?:    MarkerCaller[];  // empty/omitted when Caller Details is off: nothing about callers goes out
     feedGuid?:   string;  // DataSync mission GUID to route the marker into
+    // Broadcast Events only (see field-delivery.ts):
+    delivery?:    'datasync' | 'broadcast';
+    channel?:     string | null;  // channel the Core Event is shared with
+    coreEventId?: string | null;  // existing Core Event for this incident, if any
+    closedAt?:    string | null;  // set when closed: the Core Event ends 60 min later
 }
 
-// Build the remarks string for a CoT incident marker.
-function buildRemarks(incident: MarkerIncident): string {
+// Build the remarks string for a CoT incident marker (also used for broadcast Core Events).
+export function buildRemarks(incident: MarkerIncident): string {
     const t = new Date(incident.time);
     const hhmm = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
     const parts = [
         incident.type,
         `Start: ${hhmm}`,
         incident.dispatcher ? `Dispatcher: ${incident.dispatcher}` : '',
+        callersRemark(incident.callers),
         incident.details    ? incident.details                       : '',
     ].filter(Boolean);
     return parts.join(' | ');
@@ -45,7 +57,7 @@ function buildRemarks(incident: MarkerIncident): string {
 // folder), so CloudTAK can't resolve the foldered key and shows a fallback locally — the field
 // responders see the correct icon, the CloudTAK dispatcher view shows a generic marker. Fix:
 // re-upload the foldered iconset into CloudTAK so its store matches the field devices.
-const INCIDENT_ICON = 'db450cbe-2fec-47fb-bd2b-ba2db89b035e:Incident Management/incident';
+export const INCIDENT_ICON = 'db450cbe-2fec-47fb-bd2b-ba2db89b035e:Incident Management/incident';
 
 // Drop or update an incident marker via CloudTAK's worker DB — the same supported,
 // fork-free mechanism the ping plugin and CloudTAK's own draw tools use.
@@ -75,6 +87,10 @@ export async function dropIncidentMarker(mapStore: MapStore, incident: MarkerInc
     norm.properties.type = 'a-n-G';
     norm.properties.how  = 'h-g-i-g-o';
     norm.properties.icon = INCIDENT_ICON;
+    // normalize_geojson drops `contact`, so restore it: field clients (ATAK/iTAK/TAK Aware)
+    // can offer a call action from <contact phone>. Always set (see markerContact): an update
+    // cannot remove a key from the stored marker.
+    norm.properties.contact = markerContactFor(norm.properties.callsign, incident.callers);
     const withOrigin = incident.feedGuid
         ? { ...norm, origin: { mode: 'Mission', mode_id: incident.feedGuid } }
         : norm;
@@ -98,6 +114,7 @@ export async function postMissionCallLog(
     missionName: string,
     incident: { uid: string; number: string; name: string; type: string; address: string; time: string }
 ): Promise<void> {
+    if (!missionName) return;  // broadcast Events have no feed, so no feed log
     const t = new Date(incident.time);
     const hhmm = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
     const content = `CALL FOR SERVICE: ${incident.number} | ${incident.name} | ${incident.type}${incident.address ? ' | ' + incident.address : ''} | ${hhmm}`;
@@ -116,6 +133,7 @@ export async function postFeedChat(
     feed: { guid: string; name: string },
     message: string
 ): Promise<void> {
+    if (!feed.guid || !feed.name) return;  // broadcast Events have no feed, so no feed chat
     const username = (await ProfileConfig.get('username'))?.value;
     const callsign = (await ProfileConfig.get('tak_callsign'))?.value;
     const sender = {

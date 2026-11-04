@@ -523,13 +523,26 @@
                                     class='badge small'
                                     :class='inc.status === "active" ? "bg-success text-white" : "bg-secondary text-white"'
                                 >{{ inc.status }}</span>
+                                <span
+                                    v-if='inc.status === "active"'
+                                    class='badge small'
+                                    :class='slBoardClass(inc)'
+                                >{{ BOARD_LABEL[boardState(inc.assigned)] }}</span>
                             </div>
                             <div class='small text-muted text-truncate'>
                                 {{ inc.address || `${(inc.lat ?? 0).toFixed(5)}, ${(inc.lon ?? 0).toFixed(5)}` }}
                             </div>
                             <div class='small text-muted'>
                                 {{ inc.type }} · {{ shortTime(inc.created_at) }}<template v-if='inc.report_number'>
-                                    · Rpt {{ inc.report_number }}</template>
+                                    · Rpt {{ inc.report_number }}</template><template v-if='inc.disposition'>
+                                    · {{ dispositionLabel(inc) }}</template>
+                            </div>
+                            <div
+                                v-if='inc.caller_name || inc.caller_phone'
+                                class='small text-muted text-truncate'
+                            >
+                                Caller: {{ [inc.caller_name, inc.caller_phone].filter(Boolean).join(' · ') }}<template v-if='(inc.callers ?? []).length > 1'>
+                                    (+{{ inc.callers.length - 1 }} more)</template>
                             </div>
                             <div
                                 v-if='slLatestNoteText(inc)'
@@ -556,8 +569,22 @@
                         class='badge'
                         :class='slDetail.status === "active" ? "bg-success text-white" : "bg-secondary text-white"'
                     >{{ slDetail.status }}</span>
+                    <span
+                        v-if='slDetail.status === "active"'
+                        class='badge'
+                        :class='slBoardClass(slDetail)'
+                    >{{ BOARD_LABEL[boardState(slDetail.assigned)] }}</span>
                 </div>
                 <div class='flex-grow-1 overflow-auto p-3 d-flex flex-column gap-3'>
+                    <!-- CJIS reminder: one shared line, on by default, Manage → CJIS Reminder (admin only) -->
+                    <div
+                        v-if='dispatcherStore.cjisReminder.enabled'
+                        class='small text-warning border border-warning rounded px-2 py-1'
+                        role='note'
+                        data-test='cjis-reminder'
+                    >
+                        {{ dispatcherStore.cjisReminder.text }}
+                    </div>
                     <div class='card border'>
                         <div class='card-body py-2 px-3 small d-flex flex-column gap-1'>
                             <div class='row g-1'>
@@ -630,6 +657,14 @@
                                         </button>
                                     </template>
                                 </div>
+                                <template v-if='slDetail.status === "closed"'>
+                                    <div class='col-4 text-muted'>
+                                        Disposition
+                                    </div>
+                                    <div class='col-8'>
+                                        {{ dispositionLabel(slDetail) || '—' }}
+                                    </div>
+                                </template>
                                 <template v-if='slDetail.details'>
                                     <div class='col-4 text-muted'>
                                         Details
@@ -644,6 +679,145 @@
                             </div>
                         </div>
                     </div>
+                    <!-- Callers: every call about this incident, in the order received. The primary
+                         caller's number is the marker's tap-to-call number. Editable on active or closed incidents. -->
+                    <div class='border-top pt-2 mt-2'>
+                        <div class='d-flex align-items-center mb-1'>
+                            <div class='small text-muted flex-grow-1'>
+                                Callers
+                            </div>
+                            <button
+                                v-if='slCallerForm === null'
+                                class='btn btn-link btn-sm p-0 text-decoration-none'
+                                data-test='add-caller'
+                                @click='slStartAddCaller()'
+                            >
+                                + Add caller
+                            </button>
+                        </div>
+                        <div
+                            v-for='c in (slDetail.callers ?? [])'
+                            :key='c.id'
+                            class='small py-1 border-bottom'
+                            data-test='caller-row'
+                        >
+                            <div class='d-flex gap-1'>
+                                <span class='text-muted text-nowrap'>{{ callTime(c.time) }}</span>
+                                <span class='flex-grow-1 text-break'>
+                                    {{ c.name || '' }}
+                                    <a
+                                        v-if='c.phone && slDialable(c.phone)'
+                                        :href='`tel:${slDialable(c.phone)}`'
+                                    >{{ c.phone }}</a>
+                                    <template v-else>{{ c.phone || '' }}</template>
+                                </span>
+                            </div>
+                            <div
+                                v-if='c.note'
+                                class='text-muted fst-italic'
+                            >
+                                {{ c.note }}
+                            </div>
+                            <div class='d-flex align-items-center justify-content-end gap-2'>
+                                <span
+                                    v-if='c.primary'
+                                    class='badge bg-primary text-white'
+                                    title='Its number is the tap-to-call number on the incident marker'
+                                >Primary</span>
+                                <button
+                                    v-else
+                                    class='btn btn-link btn-sm p-0 text-decoration-none'
+                                    :disabled='slSaving'
+                                    title='Use this number for tap-to-call on the marker'
+                                    @click='slMakePrimary(slDetail, c)'
+                                >
+                                    Make primary
+                                </button>
+                                <button
+                                    class='btn btn-link btn-sm p-0 text-decoration-none'
+                                    :disabled='slSaving'
+                                    @click='slStartEditCaller(c)'
+                                >
+                                    Edit
+                                </button>
+                                <button
+                                    class='btn btn-link btn-sm p-0 text-danger text-decoration-none'
+                                    :disabled='slSaving'
+                                    title='Remove caller'
+                                    @click='slRemoveCaller(slDetail, c)'
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        </div>
+                        <div
+                            v-if='!(slDetail.callers ?? []).length && slCallerForm === null'
+                            class='text-muted small py-1'
+                        >
+                            No callers recorded
+                        </div>
+
+                        <!-- Add / edit one caller -->
+                        <div
+                            v-if='slCallerForm !== null'
+                            class='d-flex flex-column gap-1 mt-2'
+                        >
+                            <div class='small text-muted'>
+                                {{ slCallerForm === 'new' ? 'Add caller' : 'Edit caller' }}
+                            </div>
+                            <input
+                                v-model='slCallerName'
+                                type='text'
+                                maxlength='120'
+                                class='form-control form-control-sm border'
+                                placeholder='Caller name'
+                                @keydown.esc='slCallerForm = null'
+                            >
+                            <input
+                                v-model='slCallerPhone'
+                                type='tel'
+                                maxlength='40'
+                                class='form-control form-control-sm border'
+                                placeholder='Phone number'
+                                @keydown.esc='slCallerForm = null'
+                            >
+                            <input
+                                v-model='slCallerNote'
+                                type='text'
+                                maxlength='200'
+                                class='form-control form-control-sm border'
+                                placeholder='Note (optional), e.g. reports smoke from rear'
+                                @keydown.esc='slCallerForm = null'
+                            >
+                            <label class='small text-muted mb-0'>
+                                Time of call
+                                <input
+                                    v-model='slCallerTime'
+                                    type='datetime-local'
+                                    class='form-control form-control-sm border'
+                                    @keydown.enter='slSaveCallerForm(slDetail)'
+                                    @keydown.esc='slCallerForm = null'
+                                >
+                            </label>
+                            <div class='d-flex gap-1'>
+                                <button
+                                    class='btn btn-sm btn-outline-secondary'
+                                    :disabled='slSaving'
+                                    data-test='save-caller'
+                                    @click='slSaveCallerForm(slDetail)'
+                                >
+                                    Save
+                                </button>
+                                <button
+                                    class='btn btn-sm btn-link text-muted text-decoration-none'
+                                    @click='slCallerForm = null'
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Notes log -->
                     <div
                         v-if='slDetail.notes.length'
@@ -689,16 +863,46 @@
                         <div
                             v-for='c in slDetail.assigned'
                             :key='c.uid'
-                            class='d-flex align-items-center gap-2 small py-1 border-bottom'
+                            class='small py-1 border-bottom'
                         >
-                            <span class='flex-grow-1'>{{ c.callsign }}</span>
-                            <button
-                                v-if='slDetail.status === "active"'
-                                class='btn btn-link btn-sm p-0 text-danger text-decoration-none'
-                                @click='slUnassignContact(slDetail, c.uid)'
-                            >
-                                ✕
-                            </button>
+                            <div class='d-flex align-items-center gap-2'>
+                                <span
+                                    class='fw-semibold'
+                                    :class='unitStatus(c) === "cleared" ? "text-muted text-decoration-line-through" : ""'
+                                >{{ c.callsign }}</span>
+                                <span
+                                    class='badge'
+                                    :class='slUnitBadge(c)'
+                                >{{ slUnitLabel(c) }}</span>
+                                <span class='flex-grow-1' />
+                                <button
+                                    v-if='slDetail.status === "active" && unitStatus(c) === "assigned"'
+                                    class='btn btn-sm btn-outline-warning py-0'
+                                    :disabled='slSaving'
+                                    @click='slSetUnitStatus(slDetail, c, "on_scene")'
+                                >
+                                    On Scene
+                                </button>
+                                <button
+                                    v-if='slDetail.status === "active" && unitStatus(c) !== "cleared"'
+                                    class='btn btn-sm btn-outline-secondary py-0'
+                                    :disabled='slSaving'
+                                    @click='slSetUnitStatus(slDetail, c, "cleared")'
+                                >
+                                    Clear
+                                </button>
+                                <button
+                                    v-if='slDetail.status === "active"'
+                                    class='btn btn-link btn-sm p-0 text-danger text-decoration-none'
+                                    title='Assigned by mistake: remove from the record'
+                                    @click='slUnassignContact(slDetail, c.uid)'
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                            <div class='text-muted'>
+                                {{ unitTimesLine(c, shortTime) }}
+                            </div>
                         </div>
                         <div
                             v-if='!slDetail.assigned.length'
@@ -799,6 +1003,70 @@
                     >
                         {{ slDetailError }}
                     </div>
+                    <!-- Close chooser: how did the call end? Pick a disposition (it highlights); Other
+                         enables the text box beside it; Close Incident lights up once the pick is complete.
+                         The server refuses a close without a disposition. -->
+                    <div
+                        v-if='slClosing && slDetail.status === "active"'
+                        class='card border border-warning'
+                    >
+                        <div class='card-body py-2 px-3 small d-flex flex-column gap-2'>
+                            <div class='d-flex align-items-center'>
+                                <span class='fw-semibold'>Disposition</span>
+                                <button
+                                    class='btn btn-link btn-sm p-0 ms-auto text-decoration-none'
+                                    :disabled='slSaving'
+                                    @click='slCancelClose'
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                            <div class='d-flex flex-wrap gap-1'>
+                                <button
+                                    v-for='d in DISPOSITIONS'
+                                    :key='d'
+                                    class='btn btn-sm'
+                                    :class='slDisposition === d ? "btn-warning" : "btn-outline-warning"'
+                                    :disabled='slSaving'
+                                    @click='slPickDisposition(d)'
+                                >
+                                    {{ d }}
+                                </button>
+                            </div>
+                            <div class='d-flex gap-1'>
+                                <button
+                                    class='btn btn-sm text-nowrap'
+                                    :class='slDisposition === DISPOSITION_OTHER ? "btn-warning" : "btn-outline-warning"'
+                                    :disabled='slSaving'
+                                    @click='slPickDisposition(DISPOSITION_OTHER)'
+                                >
+                                    {{ DISPOSITION_OTHER }}
+                                </button>
+                                <input
+                                    ref='slOtherInput'
+                                    v-model='slOtherNote'
+                                    type='text'
+                                    :maxlength='DISPOSITION_NOTE_MAX'
+                                    class='form-control form-control-sm border'
+                                    :class='slDisposition === DISPOSITION_OTHER ? "border-warning" : ""'
+                                    :disabled='slSaving || slDisposition !== DISPOSITION_OTHER'
+                                    placeholder='Enter disposition'
+                                    @keydown.enter='slCanClose && slCloseIncident(slDetail, slDisposition, slOtherNote)'
+                                    @keydown.esc='slCancelClose'
+                                >
+                            </div>
+                            <div class='d-flex'>
+                                <button
+                                    class='btn btn-sm ms-auto'
+                                    :class='slCanClose ? "btn-warning" : "btn-outline-secondary"'
+                                    :disabled='slSaving || !slCanClose'
+                                    @click='slCloseIncident(slDetail, slDisposition, slOtherNote)'
+                                >
+                                    Close Incident
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                     <div class='d-flex gap-2 mt-2'>
                         <button
                             class='btn btn-sm btn-outline-secondary'
@@ -807,15 +1075,15 @@
                             Show on Map
                         </button>
                         <button
-                            v-if='slDetail.status === "active"'
+                            v-if='slDetail.status === "active" && !slClosing'
                             class='btn btn-sm btn-warning ms-auto'
                             :disabled='slSaving'
-                            @click='slCloseIncident(slDetail)'
+                            @click='slClosing = true'
                         >
                             Close Incident
                         </button>
                         <button
-                            v-else
+                            v-else-if='slDetail.status === "closed"'
                             class='btn btn-sm btn-outline-warning ms-auto'
                             :disabled='slSaving'
                             @click='slReopenIncident(slDetail)'
@@ -858,7 +1126,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { IconUsers } from '@tabler/icons-vue';
 import { useMapStore } from '../../../src/stores/map.ts';
 import IncidentForm from './IncidentForm.vue';
@@ -869,15 +1137,19 @@ import {
     postMissionLog,
 } from '../lib/takcad-client.ts';
 import type { VehicleResponseMetadata } from '../lib/takcad-client.ts';
-import { dropIncidentMarker, removeIncidentMarker, updateIncidentMarker } from '../lib/map-marker.ts';
+import { dialablePhone as slDialable } from '../lib/map-marker.ts';
+import { showIncident, closeIncidentInField } from '../lib/field-delivery.ts';
 import { getContacts, sendAssignmentMessage, sendUpdateMessage } from '../lib/contacts-client.ts';
 import type { TakContact } from '../lib/contacts-client.ts';
 import type { IncidentMetadata, IncidentRef, VehicleRef, PersonRef, IncidentTypeRef, PersonCallsign } from '../lib/takcad-types.ts';
 import { isActive, formatAddress, formatTime, STATUS_CANCELLED } from '../lib/takcad-types.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
-import { listIncidents, patchIncident } from '../lib/events-client.ts';
-import type { DispatcherIncident, AssignedContact } from '../lib/events-client.ts';
+import { listIncidents, patchIncident, getDispatcherSettings, addCaller, updateCaller, removeCaller, assignUnits, setUnitStatus, removeUnit } from '../lib/events-client.ts';
+import { cjisReminderFrom } from '../lib/cjis-reminder.ts';
+import type { DispatcherIncident, AssignedContact, IncidentCaller } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
+import { BOARD_LABEL, boardState, respondingLine, unitStatus, unitTimesLine } from '../lib/unit-status.ts';
+import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, dispositionLabel } from '../lib/dispositions.ts';
 
 const props = defineProps<{
     serverMode:    'detecting' | 'takcad' | 'standalone';
@@ -1149,6 +1421,21 @@ const slDetail          = ref<DispatcherIncident | null>(null);
 const slNoteInput       = ref('');
 const slReportEditing   = ref(false);
 const slReportInput     = ref('');
+// Close chooser: open after the first press of Close Incident. The dispatcher picks a disposition
+// (highlighted), types the Other text when that is the pick, then presses Close Incident.
+const slClosing         = ref(false);
+const slDisposition     = ref<string | null>(null);
+const slOtherNote       = ref('');
+const slOtherInput      = ref<HTMLInputElement | null>(null);
+// Close Incident lights up once the pick is complete: a preset, or Other with its text.
+const slCanClose = computed(() =>
+    !!slDisposition.value && (slDisposition.value !== DISPOSITION_OTHER || slOtherNote.value.trim().length > 0));
+// Caller form: null = closed, 'new' = adding a caller, otherwise the id of the caller being edited.
+const slCallerForm      = ref<string | null>(null);
+const slCallerName      = ref('');
+const slCallerPhone     = ref('');
+const slCallerNote      = ref('');
+const slCallerTime      = ref('');
 const slContactSearch   = ref('');
 const slSaving          = ref(false);
 const slDetailError     = ref('');
@@ -1201,20 +1488,16 @@ async function slAssignSelected(inc: DispatcherIncident) {
     if (!chosen.length) return;
 
     // Use the freshest incident state (the passed `inc` can be a stale snapshot), and assign
-    // ALL selected in ONE patch — the server replaces assigned wholesale, so looping per
-    // contact off a stale base would keep only the last one.
+    // ALL selected in ONE call.
     const cur = dispatcherStore.incidents.find(i => i.id === inc.id) ?? inc;
     const existing = cur.assigned ?? [];
     const toAdd = chosen.filter(c => !existing.some(a => a.uid === c.uid));
     if (!toAdd.length) return;
 
-    const now = new Date().toISOString();
-    const assigned: AssignedContact[] = [...existing, ...toAdd.map(c => ({ uid: c.uid, callsign: c.callsign }))];
-    const notes = [...(cur.notes ?? []), ...toAdd.map(c => ({ text: `${c.callsign} was assigned`, time: now }))];
-
     slDetailError.value = '';
     try {
-        const updated = await patchIncident(inc.id, { assigned, notes });
+        // The server stamps the time and writes the "assigned" notes.
+        const updated = await assignUnits(inc.id, toAdd.map(c => ({ uid: c.uid, callsign: c.callsign })));
         slApplyIncident(updated);
 
         // One GeoChat per newly-assigned responder
@@ -1223,7 +1506,7 @@ async function slAssignSelected(inc: DispatcherIncident) {
             catch (e) { console.warn('[dispatcher] assignment message failed', e); }
         }
         // Update the marker remarks once with the full responder list
-        try { await updateIncidentMarker(mapStore, slMarkerFor(updated)); }
+        try { await showIncident(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
         const feed = dispatcherStore.activeEvent;
         if (feed) {
@@ -1261,10 +1544,9 @@ watch(slActiveIncidents, n => {
 // Build the marker payload for an incident, folding responders + notes into the remarks
 // details (same presentation as before, now sourced from server fields).
 function slMarkerFor(inc: DispatcherIncident, extraDetail = '') {
-    const responders = (inc.assigned ?? []).map(c => c.callsign).join(', ');
     const details = [
         inc.details ?? '',
-        responders ? `Responding: ${responders}` : '',
+        respondingLine(inc.assigned),
         ...(inc.notes ?? []).map(n => n.text),
         extraDetail,
     ].filter(Boolean).join('\n');
@@ -1279,7 +1561,13 @@ function slMarkerFor(inc: DispatcherIncident, extraDetail = '') {
         time:       inc.created_at,
         dispatcher: inc.dispatcher ?? '',
         details,
+        // Callers reach the marker only through this list. Off means nothing about callers goes out.
+        callers:    dispatcherStore.callerOnMarkers ? (inc.callers ?? []) : [],
         feedGuid:   dispatcherStore.activeEvent?.feed_guid,
+        delivery:    dispatcherStore.activeEvent?.delivery,
+        channel:     dispatcherStore.activeEvent?.channel,
+        coreEventId: inc.core_event_id,
+        closedAt:    inc.closed_at,
     };
 }
 
@@ -1310,6 +1598,11 @@ async function slOpenDetail(id: string) {
     slContactSearch.value = '';
     slDetailError.value = '';
     slReportEditing.value = false;
+    slClosing.value = false;
+    slDisposition.value = null;
+    slOtherNote.value = '';
+    slCallerForm.value = null;
+    slRefreshCallerSetting();
     showContactPicker.value = false;
     pickerSelected.value = [];
     await loadContacts();
@@ -1317,13 +1610,11 @@ async function slOpenDetail(id: string) {
 
 async function slAssignContact(inc: DispatcherIncident, contact: TakContact) {
     if ((inc.assigned ?? []).some(c => c.uid === contact.uid)) return;
-    const assigned: AssignedContact[] = [...(inc.assigned ?? []), { uid: contact.uid, callsign: contact.callsign }];
-    const notes = [...(inc.notes ?? []), { text: `${contact.callsign} was assigned`, time: new Date().toISOString() }];
     slContactSearch.value = '';
     slDetailError.value = '';
 
     try {
-        const updated = await patchIncident(inc.id, { assigned, notes });
+        const updated = await assignUnits(inc.id, [{ uid: contact.uid, callsign: contact.callsign }]);
         slApplyIncident(updated);
 
         // GeoChat assignment message
@@ -1332,7 +1623,7 @@ async function slAssignContact(inc: DispatcherIncident, contact: TakContact) {
         } catch (e) { console.warn('[dispatcher] assignment message failed', e); }
 
         // Update CoT marker remarks with responders
-        try { await updateIncidentMarker(mapStore, slMarkerFor(updated)); }
+        try { await showIncident(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
 
         // DataSync log
@@ -1369,13 +1660,94 @@ async function slSaveReportNumber(inc: DispatcherIncident) {
     }
 }
 
+// Callers: each add / edit / make-primary / remove is one server call that locks the incident row,
+// so dispatchers working the same incident can't overwrite each other's callers. Callers are not
+// logged to the notes; the list (with each call's time) is the record. The marker is resent so
+// field units see the change (closed incidents have no marker to resend).
+function callTime(iso: string): string {
+    try { return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+    catch { return iso; }
+}
+
+// <input type=datetime-local> wants local "YYYY-MM-DDTHH:mm".
+function toLocalInput(d: Date): string {
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function slStartAddCaller() {
+    slCallerName.value = '';
+    slCallerPhone.value = '';
+    slCallerNote.value = '';
+    slCallerTime.value = toLocalInput(new Date());
+    slCallerForm.value = 'new';
+}
+
+function slStartEditCaller(c: IncidentCaller) {
+    slCallerName.value = c.name ?? '';
+    slCallerPhone.value = c.phone ?? '';
+    slCallerNote.value = c.note ?? '';
+    slCallerTime.value = toLocalInput(new Date(c.time));
+    slCallerForm.value = c.id;
+}
+
+async function slCallerChange(op: () => Promise<DispatcherIncident>): Promise<boolean> {
+    if (slSaving.value) return false;  // Enter can fire again while a save is in flight
+    slSaving.value = true; slDetailError.value = '';
+    try {
+        const updated = await op();
+        slApplyIncident(updated);
+        if (updated.status === 'active') {
+            try { await showIncident(mapStore, slMarkerFor(updated)); }
+            catch { /* best-effort */ }
+        }
+        return true;
+    } catch (e) {
+        slDetailError.value = e instanceof Error ? e.message : String(e);
+        return false;
+    } finally {
+        slSaving.value = false;
+    }
+}
+
+async function slSaveCallerForm(inc: DispatcherIncident) {
+    const target = slCallerForm.value;
+    if (!target) return;
+    const when = slCallerTime.value ? new Date(slCallerTime.value) : null;
+    if (when && Number.isNaN(when.getTime())) { slDetailError.value = 'Time of call is not a valid date'; return; }
+    const body = {
+        name:  slCallerName.value.trim(),
+        phone: slCallerPhone.value.trim(),
+        note:  slCallerNote.value.trim(),
+        ...(when ? { time: when.toISOString() } : {}),
+    };
+    if (!body.name && !body.phone) {
+        slDetailError.value = 'Enter a caller name or phone number';
+        return;
+    }
+    const ok = await slCallerChange(() => (target === 'new'
+        ? addCaller(inc.id, body)
+        : updateCaller(inc.id, target, body)));
+    if (ok) slCallerForm.value = null;
+}
+
+async function slMakePrimary(inc: DispatcherIncident, c: IncidentCaller) {
+    await slCallerChange(() => updateCaller(inc.id, c.id, { primary: true }));
+}
+
+async function slRemoveCaller(inc: DispatcherIncident, c: IncidentCaller) {
+    const label = [c.name, c.phone].filter(Boolean).join(' · ');
+    if (!confirm(`Remove caller ${label}? This deletes them from the incident record.`)) return;
+    if (slCallerForm.value === c.id) slCallerForm.value = null;
+    await slCallerChange(() => removeCaller(inc.id, c.id));
+}
+
 async function slUnassignContact(inc: DispatcherIncident, uid: string) {
     const contact = (inc.assigned ?? []).find(c => c.uid === uid);
-    const assigned = (inc.assigned ?? []).filter(c => c.uid !== uid);
     slDetailError.value = '';
 
     try {
-        const updated = await patchIncident(inc.id, { assigned });
+        const updated = await removeUnit(inc.id, uid);
         slApplyIncident(updated);
 
         const feed = dispatcherStore.activeEvent;
@@ -1384,11 +1756,49 @@ async function slUnassignContact(inc: DispatcherIncident, uid: string) {
             catch { /* best-effort */ }
         }
 
-        try { await updateIncidentMarker(mapStore, slMarkerFor(updated)); }
+        try { await showIncident(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
     } catch (e) {
         slDetailError.value = e instanceof Error ? e.message : String(e);
     }
+}
+
+// On Scene / Clear buttons. The server stamps the time; nothing goes to the unit (it just radioed dispatch).
+async function slSetUnitStatus(inc: DispatcherIncident, unit: AssignedContact, to: 'on_scene' | 'cleared') {
+    if (slSaving.value) return;
+    slSaving.value = true; slDetailError.value = '';
+    try {
+        const updated = await setUnitStatus(inc.id, unit.uid, to);
+        slApplyIncident(updated);
+
+        try { await showIncident(mapStore, slMarkerFor(updated)); }
+        catch { /* best-effort */ }
+
+        const feed = dispatcherStore.activeEvent;
+        if (feed) {
+            try { await postMissionLog(feed.feed_name, `${to === 'on_scene' ? 'ON SCENE' : 'CLEARED'}: ${updated.number} → ${unit.callsign}`); }
+            catch { /* best-effort */ }
+        }
+    } catch (e) {
+        slDetailError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        slSaving.value = false;
+    }
+}
+
+function slUnitLabel(u: AssignedContact): string {
+    const s = unitStatus(u);
+    return s === 'on_scene' ? 'On Scene' : s === 'cleared' ? 'Cleared' : 'Assigned';
+}
+
+function slUnitBadge(u: AssignedContact): string {
+    const s = unitStatus(u);
+    return s === 'on_scene' ? 'bg-warning text-dark' : s === 'cleared' ? 'bg-secondary text-white' : 'bg-info text-dark';
+}
+
+function slBoardClass(inc: DispatcherIncident): string {
+    const b = boardState(inc.assigned);
+    return b === 'on_scene' ? 'bg-warning text-dark' : b === 'dispatched' ? 'bg-info text-dark' : 'bg-light text-dark border';
 }
 
 async function slAddNote(inc: DispatcherIncident) {
@@ -1403,7 +1813,7 @@ async function slAddNote(inc: DispatcherIncident) {
         slApplyIncident(updated);
 
         // Update CoT marker with latest notes appended to details
-        try { await updateIncidentMarker(mapStore, slMarkerFor(updated)); }
+        try { await showIncident(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
 
         // DataSync log entry
@@ -1414,7 +1824,7 @@ async function slAddNote(inc: DispatcherIncident) {
         }
 
         // Push the update to every assigned responder as a direct GeoChat
-        for (const c of (updated.assigned ?? [])) {
+        for (const c of (updated.assigned ?? []).filter(u => unitStatus(u) !== 'cleared')) {
             try { await sendUpdateMessage(mapStore, c, { name: `${updated.number} ${updated.type ?? ''}` }, text); }
             catch (e) { console.warn('[dispatcher] update message failed', e); }
         }
@@ -1423,14 +1833,38 @@ async function slAddNote(inc: DispatcherIncident) {
     }
 }
 
-async function slCloseIncident(inc: DispatcherIncident) {
+function slPickDisposition(d: string) {
+    slDisposition.value = d;
+    // Other: the text box beside it takes the cursor so the dispatcher can type at once.
+    if (d === DISPOSITION_OTHER) nextTick(() => slOtherInput.value?.focus());
+}
+
+function slCancelClose() {
+    slClosing.value = false;
+    slDisposition.value = null;
+    slOtherNote.value = '';
+}
+
+// disposition: one of DISPOSITIONS, or DISPOSITION_OTHER with `note` (the text typed beside it).
+async function slCloseIncident(inc: DispatcherIncident, disposition: string | null, note?: string) {
+    if (!disposition) return;
     slSaving.value = true; slDetailError.value = '';
     try {
-        const updated = await patchIncident(inc.id, { status: 'closed' });
+        const stillOn = (inc.assigned ?? []).filter(u => unitStatus(u) !== 'cleared');
+        // The server stores the disposition, writes the "Closed: …" note and clears every unit
+        // still on the incident (stamped with the close time).
+        const trimmed = (note ?? '').trim();
+        const updated = await patchIncident(inc.id, {
+            status: 'closed',
+            disposition,
+            ...(trimmed ? { disposition_note: trimmed } : {}),
+        });
         slApplyIncident(updated);
+        slCancelClose();
 
-        // Remove CoT marker (record stays server-side)
-        try { await removeIncidentMarker(mapStore, slMarkerFor(updated)); }
+        // DataSync: remove the marker (record stays server-side). Broadcast: mark it CLOSED;
+        // it drops off field devices 60 minutes after closing.
+        try { await closeIncidentInField(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
 
         // DataSync log entry
@@ -1441,7 +1875,12 @@ async function slCloseIncident(inc: DispatcherIncident) {
                 const startMs = new Date(updated.created_at).getTime();
                 const durMin = Math.round((closedAt.getTime() - startMs) / 60000);
                 const hhmm = `${String(closedAt.getHours()).padStart(2, '0')}:${String(closedAt.getMinutes()).padStart(2, '0')}`;
-                await postMissionLog(feed.feed_name, `INCIDENT CLOSED: ${updated.number} | ${updated.type ?? ''} | Closed ${hhmm} | ${durMin} min`);
+                // Closing cleared every unit still on the incident (the server stamps the close time).
+                for (const u of stillOn) {
+                    try { await postMissionLog(feed.feed_name, `CLEARED: ${updated.number} → ${u.callsign}`); }
+                    catch { /* best-effort */ }
+                }
+                await postMissionLog(feed.feed_name, `INCIDENT CLOSED: ${updated.number} | ${updated.type ?? ''} | Closed ${hhmm} | ${durMin} min | ${dispositionLabel(updated)}`);
             } catch { /* best-effort */ }
         }
         slView.value = 'list';
@@ -1459,8 +1898,8 @@ async function slReopenIncident(inc: DispatcherIncident) {
         const updated = await patchIncident(inc.id, { status: 'active' });
         slApplyIncident(updated);
 
-        // Re-drop the CoT marker to the feed
-        try { await dropIncidentMarker(mapStore, slMarkerFor(updated)); }
+        // Re-drop the CoT marker to the feed (broadcast: reopen the Core Event)
+        try { await showIncident(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
 
         const feed = dispatcherStore.activeEvent;
@@ -1495,9 +1934,20 @@ function startTakcadPoll() {
     pollTimer = setInterval(() => { loadList(); refreshDetail(); }, 15_000);
 }
 
+// The Manage-panel settings (caller details on markers, CJIS reminder) are shared across
+// dispatchers, so re-read them when the board starts and when an incident is opened (cheap)
+// rather than on every poll (the settings blob can carry the agency logo).
+function slRefreshCallerSetting() {
+    getDispatcherSettings().then((s) => {
+        dispatcherStore.callerOnMarkers = s.caller_on_markers !== false;
+        dispatcherStore.cjisReminder = cjisReminderFrom(s);
+    }).catch(() => { /* keep last */ });
+}
+
 // Standalone: 15s poll of the open Event's incidents so multiple dispatchers converge.
 function startStandalonePoll() {
     slLoadIncidents();
+    slRefreshCallerSetting();
     pollTimer = setInterval(() => { slLoadIncidents(); }, 15_000);
 }
 
