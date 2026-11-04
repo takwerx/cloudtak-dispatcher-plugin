@@ -199,10 +199,10 @@
 
             <!-- Broadcast mode: how long a closed incident's marker stays on field devices. CloudTAK system admin only. -->
             <div>
-                <div class='small text-muted fw-semibold text-uppercase mb-1 d-flex align-items-center gap-2'>
+                <div class='small text-muted fw-semibold text-uppercase mb-1 d-flex align-items-center flex-wrap gap-2'>
                     Broadcast Mode Incident Closed Marker Retention
                     <span
-                        class='badge bg-secondary text-white fw-normal'
+                        class='badge bg-secondary text-white fw-normal text-nowrap'
                         title='Only a CloudTAK system admin can change this'
                     >CloudTAK admin only</span>
                 </div>
