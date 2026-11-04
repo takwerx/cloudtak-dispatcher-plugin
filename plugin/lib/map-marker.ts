@@ -3,6 +3,11 @@ import { normalize_geojson } from '@tak-ps/node-cot/normalize_geojson';
 import type { useMapStore } from '../../../src/stores/map.ts';
 import SubscriptionChat from '../../../src/base/subscription-chat.ts';
 import ProfileConfig from '../../../src/base/profile.ts';
+import { dialablePhone, callersRemark, markerContactFor } from './marker-contact.ts';
+import type { MarkerCaller } from './marker-contact.ts';
+
+// Re-exported so the components keep importing these from here.
+export { dialablePhone, callersRemark };
 
 type MapStore = ReturnType<typeof useMapStore>;
 
@@ -17,6 +22,7 @@ export interface MarkerIncident {
     time:        string;
     dispatcher:  string;
     details:     string;
+    callers?:    MarkerCaller[];  // empty/omitted when Caller Details is off: nothing about callers goes out
     feedGuid?:   string;  // DataSync mission GUID to route the marker into
 }
 
@@ -28,6 +34,7 @@ function buildRemarks(incident: MarkerIncident): string {
         incident.type,
         `Start: ${hhmm}`,
         incident.dispatcher ? `Dispatcher: ${incident.dispatcher}` : '',
+        callersRemark(incident.callers),
         incident.details    ? incident.details                       : '',
     ].filter(Boolean);
     return parts.join(' | ');
@@ -75,6 +82,10 @@ export async function dropIncidentMarker(mapStore: MapStore, incident: MarkerInc
     norm.properties.type = 'a-n-G';
     norm.properties.how  = 'h-g-i-g-o';
     norm.properties.icon = INCIDENT_ICON;
+    // normalize_geojson drops `contact`, so restore it: field clients (ATAK/iTAK/TAK Aware)
+    // can offer a call action from <contact phone>. Always set (see markerContact): an update
+    // cannot remove a key from the stored marker.
+    norm.properties.contact = markerContactFor(norm.properties.callsign, incident.callers);
     const withOrigin = incident.feedGuid
         ? { ...norm, origin: { mode: 'Mission', mode_id: incident.feedGuid } }
         : norm;

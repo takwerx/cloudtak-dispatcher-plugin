@@ -4,6 +4,7 @@ name: PR checks
 # A red check blocks the merge once `checks-ok` is made a required check. Run the same things locally:
 #   bash .github/ci/static_checks.sh      (needs shellcheck and PyYAML)
 #   CI_TOOLS=<folder with typescript and vue installed> node .github/ci/syntax_ts_vue.mjs
+#   node --test plugin/test/*.test.ts
 on:
   pull_request:
     branches: [dev, main]
@@ -52,10 +53,24 @@ jobs:
         env:
           CI_TOOLS: ${{ runner.temp }}/ci-tools
 
+  # Unit tests that need no CloudTAK checkout (plugin/test/*.test.ts), run with plain node.
+  # Proof tests for the callers list and the marker's caller phone (ops #403).
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: node --test plugin/test/*.test.ts
+
   # One stable name to require in branch protection. A failed or cancelled job fails it.
   checks-ok:
     if: always()
-    needs: [static, syntax]
+    needs: [static, syntax, unit]
     runs-on: ubuntu-24.04
     steps:
       - env:

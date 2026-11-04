@@ -187,14 +187,17 @@
             >
         </div>
 
-        <!-- Caller Info (takcad only, collapsible) -->
-        <div v-if='serverMode === "takcad"'>
+        <!-- Caller Info (collapsible; caller type is TAK-CAD only) -->
+        <div>
             <button
                 type='button'
                 class='btn btn-sm btn-link text-muted p-0 text-decoration-none'
                 @click='showCaller = !showCaller'
             >
-                {{ showCaller ? '▾' : '▸' }} Caller Info
+                {{ showCaller ? '▾' : '▸' }} Caller Info<span
+                    v-if='serverMode === "standalone"'
+                    class='ms-1'
+                >(first caller; add more from the incident)</span>
             </button>
             <div
                 v-if='showCaller'
@@ -203,16 +206,19 @@
                 <input
                     v-model='form.callerName'
                     type='text'
+                    maxlength='120'
                     class='form-control form-control-sm border'
                     placeholder='Caller name'
                 >
                 <input
                     v-model='form.callerPhone'
                     type='tel'
+                    maxlength='40'
                     class='form-control form-control-sm border'
                     placeholder='Phone number'
                 >
                 <select
+                    v-if='serverMode === "takcad"'
                     v-model='form.callerType'
                     class='form-select form-select-sm border'
                 >
@@ -414,6 +420,7 @@ onMounted(async () => {
             if (Array.isArray(list)) {
                 customTypes.value = list.filter((t): t is string => typeof t === 'string');
             }
+            dispatcherStore.callerOnMarkers = s.caller_on_markers !== false;
         }).catch(() => { /* defaults only */ });
     }
 
@@ -486,6 +493,8 @@ async function submitStandalone(address: string) {
             dispatcher,
             details:    form.details,
             report_number: form.reportNumber.trim() || undefined,
+            caller_name:   form.callerName.trim()   || undefined,
+            caller_phone:  form.callerPhone.trim()  || undefined,
         });
 
         // CoT marker + DataSync log/chat (best-effort; the record already exists server-side).
@@ -502,6 +511,7 @@ async function submitStandalone(address: string) {
                 time:       incident.created_at,
                 dispatcher,
                 details:    form.details,
+                callers:    dispatcherStore.callerOnMarkers ? (incident.callers ?? []) : [],
                 feedGuid:   event.feed_guid,
             });
         } catch (e) {

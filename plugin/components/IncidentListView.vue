@@ -532,6 +532,13 @@
                                     · Rpt {{ inc.report_number }}</template>
                             </div>
                             <div
+                                v-if='inc.caller_name || inc.caller_phone'
+                                class='small text-muted text-truncate'
+                            >
+                                Caller: {{ [inc.caller_name, inc.caller_phone].filter(Boolean).join(' · ') }}<template v-if='(inc.callers ?? []).length > 1'>
+                                    (+{{ inc.callers.length - 1 }} more)</template>
+                            </div>
+                            <div
                                 v-if='slLatestNoteText(inc)'
                                 class='small fst-italic text-truncate'
                             >
@@ -644,6 +651,145 @@
                             </div>
                         </div>
                     </div>
+                    <!-- Callers: every call about this incident, in the order received. The primary
+                         caller's number is the marker's tap-to-call number. Editable on active or closed incidents. -->
+                    <div class='border-top pt-2 mt-2'>
+                        <div class='d-flex align-items-center mb-1'>
+                            <div class='small text-muted flex-grow-1'>
+                                Callers
+                            </div>
+                            <button
+                                v-if='slCallerForm === null'
+                                class='btn btn-link btn-sm p-0 text-decoration-none'
+                                data-test='add-caller'
+                                @click='slStartAddCaller()'
+                            >
+                                + Add caller
+                            </button>
+                        </div>
+                        <div
+                            v-for='c in (slDetail.callers ?? [])'
+                            :key='c.id'
+                            class='small py-1 border-bottom'
+                            data-test='caller-row'
+                        >
+                            <div class='d-flex gap-1'>
+                                <span class='text-muted text-nowrap'>{{ callTime(c.time) }}</span>
+                                <span class='flex-grow-1 text-break'>
+                                    {{ c.name || '' }}
+                                    <a
+                                        v-if='c.phone && slDialable(c.phone)'
+                                        :href='`tel:${slDialable(c.phone)}`'
+                                    >{{ c.phone }}</a>
+                                    <template v-else>{{ c.phone || '' }}</template>
+                                </span>
+                            </div>
+                            <div
+                                v-if='c.note'
+                                class='text-muted fst-italic'
+                            >
+                                {{ c.note }}
+                            </div>
+                            <div class='d-flex align-items-center justify-content-end gap-2'>
+                                <span
+                                    v-if='c.primary'
+                                    class='badge bg-primary text-white'
+                                    title='Its number is the tap-to-call number on the incident marker'
+                                >Primary</span>
+                                <button
+                                    v-else
+                                    class='btn btn-link btn-sm p-0 text-decoration-none'
+                                    :disabled='slSaving'
+                                    title='Use this number for tap-to-call on the marker'
+                                    @click='slMakePrimary(slDetail, c)'
+                                >
+                                    Make primary
+                                </button>
+                                <button
+                                    class='btn btn-link btn-sm p-0 text-decoration-none'
+                                    :disabled='slSaving'
+                                    @click='slStartEditCaller(c)'
+                                >
+                                    Edit
+                                </button>
+                                <button
+                                    class='btn btn-link btn-sm p-0 text-danger text-decoration-none'
+                                    :disabled='slSaving'
+                                    title='Remove caller'
+                                    @click='slRemoveCaller(slDetail, c)'
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        </div>
+                        <div
+                            v-if='!(slDetail.callers ?? []).length && slCallerForm === null'
+                            class='text-muted small py-1'
+                        >
+                            No callers recorded
+                        </div>
+
+                        <!-- Add / edit one caller -->
+                        <div
+                            v-if='slCallerForm !== null'
+                            class='d-flex flex-column gap-1 mt-2'
+                        >
+                            <div class='small text-muted'>
+                                {{ slCallerForm === 'new' ? 'Add caller' : 'Edit caller' }}
+                            </div>
+                            <input
+                                v-model='slCallerName'
+                                type='text'
+                                maxlength='120'
+                                class='form-control form-control-sm border'
+                                placeholder='Caller name'
+                                @keydown.esc='slCallerForm = null'
+                            >
+                            <input
+                                v-model='slCallerPhone'
+                                type='tel'
+                                maxlength='40'
+                                class='form-control form-control-sm border'
+                                placeholder='Phone number'
+                                @keydown.esc='slCallerForm = null'
+                            >
+                            <input
+                                v-model='slCallerNote'
+                                type='text'
+                                maxlength='200'
+                                class='form-control form-control-sm border'
+                                placeholder='Note (optional), e.g. reports smoke from rear'
+                                @keydown.esc='slCallerForm = null'
+                            >
+                            <label class='small text-muted mb-0'>
+                                Time of call
+                                <input
+                                    v-model='slCallerTime'
+                                    type='datetime-local'
+                                    class='form-control form-control-sm border'
+                                    @keydown.enter='slSaveCallerForm(slDetail)'
+                                    @keydown.esc='slCallerForm = null'
+                                >
+                            </label>
+                            <div class='d-flex gap-1'>
+                                <button
+                                    class='btn btn-sm btn-outline-secondary'
+                                    :disabled='slSaving'
+                                    data-test='save-caller'
+                                    @click='slSaveCallerForm(slDetail)'
+                                >
+                                    Save
+                                </button>
+                                <button
+                                    class='btn btn-sm btn-link text-muted text-decoration-none'
+                                    @click='slCallerForm = null'
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Notes log -->
                     <div
                         v-if='slDetail.notes.length'
@@ -869,14 +1015,14 @@ import {
     postMissionLog,
 } from '../lib/takcad-client.ts';
 import type { VehicleResponseMetadata } from '../lib/takcad-client.ts';
-import { dropIncidentMarker, removeIncidentMarker, updateIncidentMarker } from '../lib/map-marker.ts';
+import { dropIncidentMarker, removeIncidentMarker, updateIncidentMarker, dialablePhone as slDialable } from '../lib/map-marker.ts';
 import { getContacts, sendAssignmentMessage, sendUpdateMessage } from '../lib/contacts-client.ts';
 import type { TakContact } from '../lib/contacts-client.ts';
 import type { IncidentMetadata, IncidentRef, VehicleRef, PersonRef, IncidentTypeRef, PersonCallsign } from '../lib/takcad-types.ts';
 import { isActive, formatAddress, formatTime, STATUS_CANCELLED } from '../lib/takcad-types.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
-import { listIncidents, patchIncident } from '../lib/events-client.ts';
-import type { DispatcherIncident, AssignedContact } from '../lib/events-client.ts';
+import { listIncidents, patchIncident, getCallerOnMarkers, addCaller, updateCaller, removeCaller } from '../lib/events-client.ts';
+import type { DispatcherIncident, AssignedContact, IncidentCaller } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
 
 const props = defineProps<{
@@ -1149,6 +1295,12 @@ const slDetail          = ref<DispatcherIncident | null>(null);
 const slNoteInput       = ref('');
 const slReportEditing   = ref(false);
 const slReportInput     = ref('');
+// Caller form: null = closed, 'new' = adding a caller, otherwise the id of the caller being edited.
+const slCallerForm      = ref<string | null>(null);
+const slCallerName      = ref('');
+const slCallerPhone     = ref('');
+const slCallerNote      = ref('');
+const slCallerTime      = ref('');
 const slContactSearch   = ref('');
 const slSaving          = ref(false);
 const slDetailError     = ref('');
@@ -1279,6 +1431,8 @@ function slMarkerFor(inc: DispatcherIncident, extraDetail = '') {
         time:       inc.created_at,
         dispatcher: inc.dispatcher ?? '',
         details,
+        // Callers reach the marker only through this list. Off means nothing about callers goes out.
+        callers:    dispatcherStore.callerOnMarkers ? (inc.callers ?? []) : [],
         feedGuid:   dispatcherStore.activeEvent?.feed_guid,
     };
 }
@@ -1310,6 +1464,8 @@ async function slOpenDetail(id: string) {
     slContactSearch.value = '';
     slDetailError.value = '';
     slReportEditing.value = false;
+    slCallerForm.value = null;
+    slRefreshCallerSetting();
     showContactPicker.value = false;
     pickerSelected.value = [];
     await loadContacts();
@@ -1367,6 +1523,88 @@ async function slSaveReportNumber(inc: DispatcherIncident) {
     } finally {
         slSaving.value = false;
     }
+}
+
+// Callers: each add / edit / make-primary / remove is one server call that locks the incident row,
+// so dispatchers working the same incident can't overwrite each other's callers. Callers are not
+// logged to the notes; the list (with each call's time) is the record. The marker is resent so
+// field units see the change (closed incidents have no marker to resend).
+function callTime(iso: string): string {
+    try { return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+    catch { return iso; }
+}
+
+// <input type=datetime-local> wants local "YYYY-MM-DDTHH:mm".
+function toLocalInput(d: Date): string {
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function slStartAddCaller() {
+    slCallerName.value = '';
+    slCallerPhone.value = '';
+    slCallerNote.value = '';
+    slCallerTime.value = toLocalInput(new Date());
+    slCallerForm.value = 'new';
+}
+
+function slStartEditCaller(c: IncidentCaller) {
+    slCallerName.value = c.name ?? '';
+    slCallerPhone.value = c.phone ?? '';
+    slCallerNote.value = c.note ?? '';
+    slCallerTime.value = toLocalInput(new Date(c.time));
+    slCallerForm.value = c.id;
+}
+
+async function slCallerChange(op: () => Promise<DispatcherIncident>): Promise<boolean> {
+    if (slSaving.value) return false;  // Enter can fire again while a save is in flight
+    slSaving.value = true; slDetailError.value = '';
+    try {
+        const updated = await op();
+        slApplyIncident(updated);
+        if (updated.status === 'active') {
+            try { await updateIncidentMarker(mapStore, slMarkerFor(updated)); }
+            catch { /* best-effort */ }
+        }
+        return true;
+    } catch (e) {
+        slDetailError.value = e instanceof Error ? e.message : String(e);
+        return false;
+    } finally {
+        slSaving.value = false;
+    }
+}
+
+async function slSaveCallerForm(inc: DispatcherIncident) {
+    const target = slCallerForm.value;
+    if (!target) return;
+    const when = slCallerTime.value ? new Date(slCallerTime.value) : null;
+    if (when && Number.isNaN(when.getTime())) { slDetailError.value = 'Time of call is not a valid date'; return; }
+    const body = {
+        name:  slCallerName.value.trim(),
+        phone: slCallerPhone.value.trim(),
+        note:  slCallerNote.value.trim(),
+        ...(when ? { time: when.toISOString() } : {}),
+    };
+    if (!body.name && !body.phone) {
+        slDetailError.value = 'Enter a caller name or phone number';
+        return;
+    }
+    const ok = await slCallerChange(() => (target === 'new'
+        ? addCaller(inc.id, body)
+        : updateCaller(inc.id, target, body)));
+    if (ok) slCallerForm.value = null;
+}
+
+async function slMakePrimary(inc: DispatcherIncident, c: IncidentCaller) {
+    await slCallerChange(() => updateCaller(inc.id, c.id, { primary: true }));
+}
+
+async function slRemoveCaller(inc: DispatcherIncident, c: IncidentCaller) {
+    const label = [c.name, c.phone].filter(Boolean).join(' · ');
+    if (!confirm(`Remove caller ${label}? This deletes them from the incident record.`)) return;
+    if (slCallerForm.value === c.id) slCallerForm.value = null;
+    await slCallerChange(() => removeCaller(inc.id, c.id));
 }
 
 async function slUnassignContact(inc: DispatcherIncident, uid: string) {
@@ -1495,9 +1733,17 @@ function startTakcadPoll() {
     pollTimer = setInterval(() => { loadList(); refreshDetail(); }, 15_000);
 }
 
+// The Manage-panel toggle is shared across dispatchers, so re-read it when the board starts
+// and when an incident is opened (cheap) rather than on every poll (the settings blob can
+// carry the agency logo).
+function slRefreshCallerSetting() {
+    getCallerOnMarkers().then((on) => { dispatcherStore.callerOnMarkers = on; }).catch(() => { /* keep last */ });
+}
+
 // Standalone: 15s poll of the open Event's incidents so multiple dispatchers converge.
 function startStandalonePoll() {
     slLoadIncidents();
+    slRefreshCallerSetting();
     pollTimer = setInterval(() => { slLoadIncidents(); }, 15_000);
 }
 
