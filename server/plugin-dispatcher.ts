@@ -131,6 +131,21 @@ function normDisposition(disposition: string | undefined, note: string | undefin
 function closeNote(disposition: string, note: string | null): string {
     return `Closed: ${note ? `${disposition} — ${note}` : disposition}`;
 }
+
+// Reopening a closed incident needs a reason, written as a note ("Reopened: caller called back"), so the
+// record says why it came back. With employee numbers on, the note also says who.
+const REOPEN_REASON_MAX = 120;
+
+function normReopenReason(v: unknown): string {
+    const t = typeof v === 'string' ? v.trim() : '';
+    if (!t) throw new Err(400, null, 'Enter a reason to reopen the incident');
+    if (t.length > REOPEN_REASON_MAX) throw new Err(400, null, `Reopen reason is too long (${REOPEN_REASON_MAX} characters max)`);
+    return t;
+}
+
+function reopenNote(reason: string): string {
+    return `Reopened: ${reason}`;
+}
 // </disposition-pure>
 
 // ── Employee numbers (who did it) ──────────────────────────────────────────────
@@ -1069,6 +1084,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             // Read only when status goes active → closed (required then); see <disposition-pure>.
             disposition: Type.Optional(Type.String()),
             disposition_note: Type.Optional(Type.String()),
+            // Read only when status goes closed → active (required then); written as a "Reopened: …" note.
+            reopen_reason: Type.Optional(Type.String()),
             assigned: Type.Optional(Type.Array(Type.Any())),
             notes: Type.Optional(Type.Array(Type.Any())),
         }),
@@ -1149,6 +1166,10 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                     dispositionNote = null;
                 }
                 const closedByNo = closedByAfter(cur.closed_by_no, closing, next.status === 'active', operator);
+                // Reopening: the reason is required and goes on the record as a note.
+                if (next.status === 'active' && cur.status === 'closed') {
+                    next.notes = [...next.notes, { text: reopenNote(normReopenReason(b.reopen_reason)), time: now }];
+                }
                 if (closing) {
                     const cleared = clearAllUnits(next.assigned, closedAt as string);
                     next.assigned = cleared.list;

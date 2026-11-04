@@ -1096,6 +1096,47 @@
                             </div>
                         </div>
                     </div>
+                    <!-- Reopen: why is it coming back? The reason is required and goes in the notes as
+                         "Reopened: <reason>" (with the employee number when Employee Numbers is on). -->
+                    <div
+                        v-if='slReopening && slDetail.status === "closed"'
+                        class='card border border-warning'
+                        data-test='reopen-card'
+                    >
+                        <div class='card-body py-2 px-3 small d-flex flex-column gap-2'>
+                            <div class='d-flex align-items-center'>
+                                <span class='fw-semibold'>Reason for reopening</span>
+                                <button
+                                    class='btn btn-link btn-sm p-0 ms-auto text-decoration-none'
+                                    :disabled='slSaving'
+                                    @click='slCancelReopen'
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                            <input
+                                ref='slReopenInput'
+                                v-model='slReopenReason'
+                                type='text'
+                                :maxlength='REOPEN_REASON_MAX'
+                                class='form-control form-control-sm border border-warning'
+                                placeholder='Why is it being reopened?'
+                                :disabled='slSaving'
+                                @keydown.enter='slReopenReason.trim() && slReopenIncident(slDetail, slReopenReason)'
+                                @keydown.esc='slCancelReopen'
+                            >
+                            <div class='d-flex'>
+                                <button
+                                    class='btn btn-sm ms-auto'
+                                    :class='slReopenReason.trim() ? "btn-warning" : "btn-outline-secondary"'
+                                    :disabled='slSaving || !slReopenReason.trim()'
+                                    @click='slReopenIncident(slDetail, slReopenReason)'
+                                >
+                                    Reopen Incident
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                     <div class='d-flex gap-2 mt-2'>
                         <button
                             class='btn btn-sm btn-outline-secondary'
@@ -1112,10 +1153,10 @@
                             Close Incident
                         </button>
                         <button
-                            v-else-if='slDetail.status === "closed"'
+                            v-else-if='slDetail.status === "closed" && !slReopening'
                             class='btn btn-sm btn-outline-warning ms-auto'
                             :disabled='slSaving'
-                            @click='slReopenIncident(slDetail)'
+                            @click='slStartReopen'
                         >
                             Reopen
                         </button>
@@ -1179,7 +1220,7 @@ import { operatorNumbersFrom } from '../lib/operator.ts';
 import type { DispatcherIncident, AssignedContact, IncidentCaller } from '../lib/events-client.ts';
 import { dispatcherStore, applyOperatorNumbers } from '../lib/dispatcher-store.ts';
 import { BOARD_LABEL, boardState, respondingLine, unitStatus, unitTimesLine } from '../lib/unit-status.ts';
-import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, dispositionLabel } from '../lib/dispositions.ts';
+import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, REOPEN_REASON_MAX, dispositionLabel } from '../lib/dispositions.ts';
 
 const props = defineProps<{
     serverMode:    'detecting' | 'takcad' | 'standalone';
@@ -1457,6 +1498,10 @@ const slClosing         = ref(false);
 const slDisposition     = ref<string | null>(null);
 const slOtherNote       = ref('');
 const slOtherInput      = ref<HTMLInputElement | null>(null);
+// Reopen box: open after pressing Reopen on a closed incident; Reopen Incident needs a reason.
+const slReopening       = ref(false);
+const slReopenReason    = ref('');
+const slReopenInput     = ref<HTMLInputElement | null>(null);
 // Close Incident lights up once the pick is complete: a preset, or Other with its text.
 const slCanClose = computed(() =>
     !!slDisposition.value && (slDisposition.value !== DISPOSITION_OTHER || slOtherNote.value.trim().length > 0));
@@ -1631,6 +1676,7 @@ async function slOpenDetail(id: string) {
     slClosing.value = false;
     slDisposition.value = null;
     slOtherNote.value = '';
+    slCancelReopen();
     slCallerForm.value = null;
     slRefreshCallerSetting();
     showContactPicker.value = false;
@@ -1875,6 +1921,17 @@ function slCancelClose() {
     slOtherNote.value = '';
 }
 
+function slStartReopen() {
+    slReopening.value = true;
+    slReopenReason.value = '';
+    nextTick(() => slReopenInput.value?.focus());
+}
+
+function slCancelReopen() {
+    slReopening.value = false;
+    slReopenReason.value = '';
+}
+
 // disposition: one of DISPOSITIONS, or DISPOSITION_OTHER with `note` (the text typed beside it).
 async function slCloseIncident(inc: DispatcherIncident, disposition: string | null, note?: string) {
     if (!disposition) return;
@@ -1922,11 +1979,15 @@ async function slCloseIncident(inc: DispatcherIncident, disposition: string | nu
     }
 }
 
-async function slReopenIncident(inc: DispatcherIncident) {
+async function slReopenIncident(inc: DispatcherIncident, reason: string) {
+    const why = reason.trim();
+    if (!why) return;
     slSaving.value = true; slDetailError.value = '';
     try {
-        const updated = await patchIncident(inc.id, { status: 'active' });
+        // The server requires the reason and writes the "Reopened: …" note.
+        const updated = await patchIncident(inc.id, { status: 'active', reopen_reason: why });
         slApplyIncident(updated);
+        slCancelReopen();
 
         // Re-drop the CoT marker to the feed (broadcast: reopen the Core Event)
         try { await showIncident(mapStore, slMarkerFor(updated)); }
@@ -1934,7 +1995,7 @@ async function slReopenIncident(inc: DispatcherIncident) {
 
         const feed = dispatcherStore.activeEvent;
         if (feed) {
-            try { await postMissionLog(feed.feed_name, `INCIDENT REOPENED: ${updated.number} | ${updated.type ?? ''}`); }
+            try { await postMissionLog(feed.feed_name, `INCIDENT REOPENED: ${updated.number} | ${updated.type ?? ''} | ${why}`); }
             catch { /* best-effort */ }
         }
         slTab.value = 'active';

@@ -42,7 +42,10 @@ Closing an incident asks for a **disposition**, how the call ended: pick a prese
 beside it, then press **Close Incident**. The list is `plugin/lib/dispositions.ts`; the server stores the text
 it is sent, so changing the list needs no server change. The disposition is written as a `Closed: …` note,
 shown on the closed incident's card and detail, in the report and CSV, and on the `INCIDENT CLOSED` feed-log
-line. Reopening clears it (the note stays); closing again asks again. There is no editing it in place.
+line. **Reopen** asks for a reason (required, 120 characters) and writes it as a `Reopened: …` note, with the
+employee number when Employee Numbers is on; the feed log's `INCIDENT REOPENED:` line ends with it.
+Reopening clears the disposition (the `Closed:` note stays); closing again asks again. There is no editing
+it in place.
 
 ### CJIS reminder (standalone)
 

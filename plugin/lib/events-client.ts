@@ -121,7 +121,7 @@ export interface CreateIncidentBody {
 // clears the disposition. Both are ignored on any other patch.
 export type IncidentPatch = Partial<Pick<DispatcherIncident,
     'type' | 'address' | 'lat' | 'lon' | 'dispatcher' | 'details' | 'status' | 'notes'>>
-    & { report_number?: string; core_event_id?: string; disposition?: string; disposition_note?: string };
+    & { report_number?: string; core_event_id?: string; disposition?: string; disposition_note?: string; reopen_reason?: string };
 
 // For addCaller / updateCaller. updateCaller: undefined = leave as is, '' = clear.
 // time: ISO date of the call (default now). primary: true makes this caller the primary.
