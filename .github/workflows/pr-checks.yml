@@ -1,6 +1,8 @@
 name: PR checks
 
-# Automatic checks on every PR (ops #329, same shape as infra-TAK's PR checks). No Claude involved.
+# Automatic checks on every PR, whatever branch it is aimed at, so stacked PRs get checked too
+# (ops #329, #466; same shape as infra-TAK's PR checks). No Claude involved. Do not add a `branches:`
+# filter back: .github/ci/check_pr_trigger.py (run by static_checks.sh) fails the PR if it returns.
 # A red check blocks the merge once `checks-ok` is made a required check. Run the same things locally:
 #   bash .github/ci/static_checks.sh      (needs shellcheck and PyYAML)
 #   CI_TOOLS=<folder with typescript and vue installed> node .github/ci/syntax_ts_vue.mjs
@@ -9,7 +11,6 @@ name: PR checks
 #   node --test .github/ci/tests/upgrade-db.test.mjs   (needs an empty Postgres; see the file's header)
 on:
   pull_request:
-    branches: [dev, main]
     types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
