@@ -6,6 +6,7 @@ name: PR checks
 #   CI_TOOLS=<folder with typescript and vue installed> node .github/ci/syntax_ts_vue.mjs
 #   node --test plugin/test/*.test.ts
 #   node --import ./.github/ci/tests/register.mjs --test .github/ci/tests/dispatcher.test.mjs   (node 24)
+#   node --test .github/ci/tests/upgrade-db.test.mjs   (needs an empty Postgres; see the file's header)
 on:
   pull_request:
     branches: [dev, main]
@@ -83,10 +84,37 @@ jobs:
           node-version: '24'
       - run: node --import ./.github/ci/tests/register.mjs --test .github/ci/tests/dispatcher.test.mjs
 
+  # Updating a v1.3.0 database (with data) to this version, and rolling back (ops #468): the server's
+  # schema bootstrap runs against a real Postgres, twice, and the old rows must still load.
+  upgrade-db:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: node --test .github/ci/tests/upgrade-db.test.mjs
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: postgres
+
   # One stable name to require in branch protection. A failed or cancelled job fails it.
   checks-ok:
     if: always()
-    needs: [static, syntax, unit, tests]
+    needs: [static, syntax, unit, tests, upgrade-db]
     runs-on: ubuntu-24.04
     steps:
       - env:
