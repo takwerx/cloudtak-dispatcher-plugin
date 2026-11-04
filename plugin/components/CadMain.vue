@@ -31,8 +31,9 @@
                     v-if='activeCount > 0'
                     class='badge bg-danger'
                 >{{ activeCount }}</span>
-                <!-- Standalone with Dispatcher Settings → Employee Numbers on: who is at this terminal, then the CloudTAK login.
-                     One box, Enter, done. Never blocks work: unset just shows the yellow button. -->
+                <!-- Standalone with Dispatcher Settings → Employee Numbers on: "On duty #<number>", then the CloudTAK
+                     login. Clicking the number changes it (shift change). With no number yet, the yellow bar
+                     below the header asks for it. -->
                 <form
                     v-if='operatorShown && operatorEditing'
                     class='ms-auto d-flex align-items-center gap-1'
@@ -63,17 +64,11 @@
                         <button
                             v-if='store.operator'
                             type='button'
-                            class='btn btn-sm btn-link p-0 fw-semibold text-reset text-decoration-none'
-                            title='Your employee number. Click to change (shift change).'
+                            class='btn btn-sm btn-link p-0 text-reset text-decoration-none'
+                            title='Your employee number. Click to change it (shift change).'
+                            data-test='operator-on-duty'
                             @click='startOperatorEdit'
-                        >#{{ store.operator }}</button>
-                        <button
-                            v-else
-                            type='button'
-                            class='btn btn-sm btn-warning py-0'
-                            title='Enter your employee number so incidents record who took and dispatched them'
-                            @click='startOperatorEdit'
-                        >Set employee #</button>
+                        ><span class='text-muted'>On duty</span> <span class='fw-semibold'>#{{ store.operator }}</span></button>
                     </template>
                     <span
                         class='text-muted'
@@ -125,6 +120,42 @@
                     />
                 </button>
             </div>
+
+            <!-- ── Employee Numbers on and no number yet: ask, across the top, on every screen. Never blocks:
+                 everything below stays usable; the bar just stays until a number is entered. ── -->
+            <form
+                v-if='operatorShown && !store.operator && !operatorEditing'
+                class='px-3 py-2 border-bottom flex-shrink-0 d-flex flex-wrap align-items-center gap-2'
+                style='background:rgba(255,193,7,.15)'
+                data-test='operator-prompt'
+                @submit.prevent='saveOperatorPrompt'
+            >
+                <label
+                    for='operatorPromptBox'
+                    class='fw-semibold text-warning small mb-0 flex-grow-1'
+                >Enter your employee number to start</label>
+                <div class='d-flex gap-1'>
+                    <input
+                        id='operatorPromptBox'
+                        v-model='operatorPromptInput'
+                        type='text'
+                        inputmode='numeric'
+                        autocomplete='off'
+                        :maxlength='OPERATOR_MAX'
+                        class='form-control border-warning'
+                        style='width:130px'
+                        placeholder='Employee #'
+                    >
+                    <button
+                        type='submit'
+                        class='btn btn-warning fw-semibold'
+                    >Start</button>
+                </div>
+                <div
+                    v-if='operatorPromptError'
+                    class='w-100 small text-warning'
+                >{{ operatorPromptError }}</div>
+            </form>
 
             <!-- ── TAK-CAD mode: DataSync feed picker (markers/log routing) ─────── -->
             <div
@@ -510,6 +541,22 @@ function saveOperatorInput() {
     store.operator = id;
     saveOperator(id);
     operatorEditing.value = false;
+}
+
+// The yellow bar's box (no number yet). Digits only; a wrong entry says so and keeps the bar.
+const operatorPromptInput = ref('');
+const operatorPromptError = ref('');
+
+function saveOperatorPrompt() {
+    const id = parseOperator(operatorPromptInput.value);
+    if (!id) {
+        operatorPromptError.value = `Digits only, up to ${OPERATOR_MAX}.`;
+        return;
+    }
+    store.operator = id;
+    saveOperator(id);
+    operatorPromptInput.value = '';
+    operatorPromptError.value = '';
 }
 
 function forceStandalone() {

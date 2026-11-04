@@ -179,7 +179,7 @@
              employee number when Dispatcher Settings → Employee Numbers is on -->
         <div
             v-if='serverMode === "standalone"'
-            class='d-flex gap-2'
+            class='d-flex flex-wrap gap-2'
         >
             <div class='flex-grow-1'>
                 <label class='form-label small text-muted mb-1'>Report Number</label>
@@ -191,7 +191,8 @@
                     placeholder='Optional — can be added later'
                 >
             </div>
-            <!-- Pre-filled from the header; change it only when taking a call for someone else. -->
+            <!-- Pre-filled from the header; change it only when taking a call for someone else. Yellow when
+                 empty, so a new user sees it; never required. -->
             <div
                 v-if='dispatcherStore.operatorNumbers'
                 style='width:110px'
@@ -203,8 +204,16 @@
                     inputmode='numeric'
                     :maxlength='OPERATOR_MAX'
                     class='form-control form-control-sm border'
+                    :class='form.operator.trim() ? "" : "border-warning"'
                     placeholder='Employee #'
+                    data-test='taken-by'
                 >
+            </div>
+            <div
+                v-if='dispatcherStore.operatorNumbers && !form.operator.trim()'
+                class='w-100 small text-warning'
+            >
+                Enter your employee number in Taken by #, or in the yellow bar at the top.
             </div>
         </div>
 
@@ -292,7 +301,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, watch } from 'vue';
 import { useMapStore } from '../../../src/stores/map.ts';
 import {
     getIncident, insertIncident, updateIncident,
@@ -365,6 +374,11 @@ const form = reactive({
     callerName:  '',
     callerPhone: '',
     callerType:  '',
+});
+
+// The number entered in the top bar after this form opened fills an empty Taken by # box.
+watch(() => dispatcherStore.operator, (id) => {
+    if (id && !form.operator.trim()) form.operator = id;
 });
 
 function toLocalInput(iso: string): string {
