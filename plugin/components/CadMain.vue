@@ -46,15 +46,24 @@
                         inputmode='numeric'
                         :maxlength='OPERATOR_MAX'
                         class='form-control form-control-sm border py-0'
+                        :class='operatorInput.trim() && !parseOperator(operatorInput) ? "border-danger" : ""'
                         style='width:90px'
                         placeholder='Employee #'
-                        aria-label='Your employee number'
+                        aria-label='Your employee number. Empty it and press Save to clear it.'
+                        title='Type a new number, or empty the box to clear it, then Save'
+                        data-test='operator-change'
                         @keydown.esc='operatorEditing = false'
                     >
                     <button
                         type='submit'
                         class='btn btn-sm btn-primary py-0'
-                    >Go</button>
+                    >Save</button>
+                    <button
+                        type='button'
+                        class='btn btn-sm btn-link p-0 text-muted text-decoration-none'
+                        title='Cancel, keep the current number'
+                        @click='operatorEditing = false'
+                    >✕</button>
                 </form>
                 <span
                     v-else
@@ -68,7 +77,7 @@
                             title='Your employee number. Click to change it (shift change).'
                             data-test='operator-on-duty'
                             @click='startOperatorEdit'
-                        ><span class='text-muted'>On duty</span> <span class='fw-semibold'>#{{ store.operator }}</span></button>
+                        ><span class='text-muted'>On duty&nbsp;</span><span class='fw-semibold'>#{{ store.operator }}</span></button>
                     </template>
                     <span
                         class='text-muted'
@@ -524,20 +533,27 @@ const operatorInput = ref('');
 const operatorBox = ref<HTMLInputElement | null>(null);
 const operatorShown = computed(() => store.serverMode === 'standalone' && store.operatorNumbers);
 
+// Change opens with the current number filled in and selected: type over it for a new number, or delete
+// it and Save to clear it (back to no number; the yellow bar asks again). Esc or ✕ keeps it.
 async function startOperatorEdit() {
-    operatorInput.value = '';
+    operatorInput.value = store.operator ?? '';
     operatorEditing.value = true;
     await nextTick();
     operatorBox.value?.focus();
+    operatorBox.value?.select();
 }
 
 function saveOperatorInput() {
-    const id = parseOperator(operatorInput.value);
-    if (!id) {
-        // Digits only. Leave the box open; an empty box just closes it and keeps the current number.
-        if (!operatorInput.value.trim()) operatorEditing.value = false;
+    // Empty box: clear the number (null). Nothing is stamped until a new one is entered.
+    if (!operatorInput.value.trim()) {
+        store.operator = null;
+        saveOperator(null);
+        operatorEditing.value = false;
         return;
     }
+    // Anything else must be a valid number; leave the box open on a wrong entry.
+    const id = parseOperator(operatorInput.value);
+    if (!id) return;
     store.operator = id;
     saveOperator(id);
     operatorEditing.value = false;

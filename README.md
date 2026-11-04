@@ -68,7 +68,9 @@ Off by default; with it off the Dispatcher works exactly as before. For desks th
 login, the CloudTAK system admin can turn on **Dispatcher Settings → Employee Numbers**. Then a yellow bar
 across the top of the Dispatcher asks once for an **employee number** (digits only; type it and press
 **Start** or Enter). Nothing is blocked while it is empty. The header then shows **On duty** `#<number>`
-before the login, and clicking it changes it at shift change. It lasts until the browser tab closes. On
+before the login. Clicking it opens the number for change at shift change: type a new one, or empty the
+box and **Save** to clear it (the yellow bar asks again). It lasts until the browser tab closes; a reload
+keeps it. On
 the New Incident form an empty **Taken by #** box is outlined in yellow. The number is saved:
 
 - on each caller as **Taken by #**, when the caller is added (the New Incident form's **Taken by #** box is
