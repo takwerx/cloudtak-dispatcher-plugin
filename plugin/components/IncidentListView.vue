@@ -1929,7 +1929,11 @@ function slStartReopen() {
     }
     slReopening.value = true;
     slReopenReason.value = '';
-    nextTick(() => slReopenInput.value?.focus());
+    // The box sits at the bottom of a long panel: bring it into view, not just focus it.
+    nextTick(() => {
+        slReopenInput.value?.focus();
+        slReopenInput.value?.scrollIntoView({ block: 'center' });
+    });
 }
 
 function slCancelReopen() {
