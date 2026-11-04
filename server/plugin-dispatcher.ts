@@ -258,12 +258,15 @@ async function operatorNumbersEnabled(config: ConfigStateless): Promise<boolean>
 // dispatcher not to paste CJIS data into the Dispatcher. Both settings are shared per CloudTAK and
 // may only be changed by a CloudTAK system admin (the account CloudTAK creates on first launch);
 // every signed-in user still reads them, so the line shows for everyone. The custom call type list
-// (incident_types) is admin-only the same way. Pure (no database) so plugin/test/cjis-server.test.ts
-// can run it.
+// (incident_types) and the broadcast closed-marker window (closed_marker_minutes, whole minutes
+// 0..1440, default 60; see plugin/lib/closed-window.ts) are admin-only the same way. Pure (no
+// database) so plugin/test/cjis-server.test.ts and closed-window.test.ts can run it.
 // <cjis-pure>
 const CJIS_REMINDER_DEFAULT_TEXT = 'Information derived from CJIS sources must not be entered into incident records.';
 const CJIS_REMINDER_TEXT_MAX = 300;
-const ADMIN_ONLY_KEYS = new Set(['cjis_reminder_enabled', 'cjis_reminder_text', 'incident_types']);
+const CLOSED_MARKER_MINUTES_MIN = 0;
+const CLOSED_MARKER_MINUTES_MAX = 1440;
+const ADMIN_ONLY_KEYS = new Set(['cjis_reminder_enabled', 'cjis_reminder_text', 'incident_types', 'closed_marker_minutes']);
 
 // True for the settings keys only a system admin may write.
 function isAdminOnlySetting(key: string): boolean {
@@ -282,6 +285,12 @@ function normCjisSetting(key: string, value: unknown): unknown {
         const t = String(value ?? '').trim();
         if (t.length > CJIS_REMINDER_TEXT_MAX) throw new Err(400, null, `Reminder text is too long (${CJIS_REMINDER_TEXT_MAX} characters max)`);
         return t || CJIS_REMINDER_DEFAULT_TEXT;
+    }
+    if (key === 'closed_marker_minutes') {
+        if (typeof value !== 'number' || !Number.isInteger(value) || value < CLOSED_MARKER_MINUTES_MIN || value > CLOSED_MARKER_MINUTES_MAX) {
+            throw new Err(400, null, `closed_marker_minutes must be a whole number of minutes from ${CLOSED_MARKER_MINUTES_MIN} to ${CLOSED_MARKER_MINUTES_MAX}`);
+        }
+        return value;
     }
     return value;
 }
