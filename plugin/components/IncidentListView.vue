@@ -1146,6 +1146,7 @@ import { isActive, formatAddress, formatTime, STATUS_CANCELLED } from '../lib/ta
 import type { MissionRef } from '../lib/takcad-client.ts';
 import { listIncidents, patchIncident, getDispatcherSettings, addCaller, updateCaller, removeCaller, assignUnits, setUnitStatus, removeUnit } from '../lib/events-client.ts';
 import { cjisReminderFrom } from '../lib/cjis-reminder.ts';
+import { closedMarkerMinutesFrom, setClosedMarkerMinutes } from '../lib/closed-window.ts';
 import type { DispatcherIncident, AssignedContact, IncidentCaller } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
 import { BOARD_LABEL, boardState, respondingLine, unitStatus, unitTimesLine } from '../lib/unit-status.ts';
@@ -1863,7 +1864,7 @@ async function slCloseIncident(inc: DispatcherIncident, disposition: string | nu
         slCancelClose();
 
         // DataSync: remove the marker (record stays server-side). Broadcast: mark it CLOSED;
-        // it drops off field devices 60 minutes after closing.
+        // it drops off field devices after the admin-set window (Manage panel, default 60 min).
         try { await closeIncidentInField(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
 
@@ -1941,6 +1942,7 @@ function slRefreshCallerSetting() {
     getDispatcherSettings().then((s) => {
         dispatcherStore.callerOnMarkers = s.caller_on_markers !== false;
         dispatcherStore.cjisReminder = cjisReminderFrom(s);
+        setClosedMarkerMinutes(closedMarkerMinutesFrom(s));
     }).catch(() => { /* keep last */ });
 }
 
