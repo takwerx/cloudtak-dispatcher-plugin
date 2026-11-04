@@ -225,10 +225,11 @@
                             >Record who took, dispatched and closed each call, by employee number</label>
                         </div>
                         <div class='text-muted small'>
-                            For desks that share one CloudTAK login. When on, each dispatcher enters their
-                            employee number once at the top of the Dispatcher, and every incident records
-                            who took each call, the initial dispatcher, who closed it, and who wrote each
-                            note, in the incident and on the report. Off leaves the Dispatcher as it is.
+                            For desks that share one CloudTAK login. When on, each dispatcher signs in once
+                            with their employee number at the top of the Dispatcher, and every incident
+                            records who took each call, the initial dispatcher, who closed it, and who wrote
+                            each note, in the incident and on the report. It is not a password login: it
+                            records who did what. Off leaves the Dispatcher as it is.
                         </div>
                         <div
                             v-if='operatorNumbersError'

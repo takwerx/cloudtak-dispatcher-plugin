@@ -213,7 +213,7 @@
                 v-if='dispatcherStore.operatorNumbers && !form.operator.trim()'
                 class='w-100 small text-warning'
             >
-                Enter your employee number in Taken by #, or in the yellow bar at the top.
+                Sign in at the top, or enter the employee number of who took the call.
             </div>
         </div>
 
@@ -376,9 +376,11 @@ const form = reactive({
     callerType:  '',
 });
 
-// The number entered in the top bar after this form opened fills an empty Taken by # box.
-watch(() => dispatcherStore.operator, (id) => {
-    if (id && !form.operator.trim()) form.operator = id;
+// Taken by # follows whoever is signed in while this form is open (sign in, sign out, the next person
+// signs in), unless someone typed a different number into the box themselves.
+watch(() => dispatcherStore.operator, (id, before) => {
+    const box = form.operator.trim();
+    if (!box || box === (before ?? '')) form.operator = id ?? '';
 });
 
 function toLocalInput(iso: string): string {

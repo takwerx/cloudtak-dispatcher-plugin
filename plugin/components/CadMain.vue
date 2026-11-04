@@ -31,59 +31,17 @@
                     v-if='activeCount > 0'
                     class='badge bg-danger'
                 >{{ activeCount }}</span>
-                <!-- Standalone with Dispatcher Settings → Employee Numbers on: "On duty #<number>", then the CloudTAK
-                     login. Clicking the number changes it (shift change). With no number yet, the yellow bar
-                     below the header asks for it. -->
-                <form
-                    v-if='operatorShown && operatorEditing'
-                    class='ms-auto d-flex align-items-center gap-1'
-                    @submit.prevent='saveOperatorInput'
-                >
-                    <input
-                        ref='operatorBox'
-                        v-model='operatorInput'
-                        type='text'
-                        inputmode='numeric'
-                        :maxlength='OPERATOR_MAX'
-                        class='form-control form-control-sm border py-0'
-                        :class='operatorInput.trim() && !parseOperator(operatorInput) ? "border-danger" : ""'
-                        style='width:90px'
-                        placeholder='Employee #'
-                        aria-label='Your employee number. Empty it and press Save to clear it.'
-                        title='Type a new number, or empty the box to clear it, then Save'
-                        data-test='operator-change'
-                        @keydown.esc='operatorEditing = false'
-                    >
-                    <button
-                        type='submit'
-                        class='btn btn-sm btn-primary py-0'
-                    >Save</button>
-                    <button
-                        type='button'
-                        class='btn btn-sm btn-link p-0 text-muted text-decoration-none'
-                        title='Cancel, keep the current number'
-                        @click='operatorEditing = false'
-                    >✕</button>
-                </form>
+                <!-- The CloudTAK callsign, as always. With Employee Numbers on and someone signed in, it moves to the
+                     signed-in line under the header (next to the employee number), so it is not shown twice. -->
+                <span
+                    v-if='!signedIn'
+                    class='text-muted ms-auto small'
+                    :title='`Dispatcher: ${store.dispatcherName}`'
+                >{{ store.dispatcherName }}</span>
                 <span
                     v-else
-                    class='ms-auto small d-flex align-items-center gap-1 text-nowrap'
-                >
-                    <template v-if='operatorShown'>
-                        <button
-                            v-if='store.operator'
-                            type='button'
-                            class='btn btn-sm btn-link p-0 text-reset text-decoration-none'
-                            title='Your employee number. Click to change it (shift change).'
-                            data-test='operator-on-duty'
-                            @click='startOperatorEdit'
-                        ><span class='text-muted'>On duty&nbsp;</span><span class='fw-semibold'>#{{ store.operator }}</span></button>
-                    </template>
-                    <span
-                        class='text-muted'
-                        :title='`Dispatcher: ${store.dispatcherName}`'
-                    >{{ store.dispatcherName }}</span>
-                </span>
+                    class='ms-auto'
+                />
                 <!-- TAK-CAD connection toggle -->
                 <button
                     v-if='store.serverMode === "takcad"'
@@ -130,23 +88,24 @@
                 </button>
             </div>
 
-            <!-- ── Employee Numbers on and no number yet: ask, across the top, on every screen. Never blocks:
-                 everything below stays usable; the bar just stays until a number is entered. ── -->
+            <!-- ── Employee Numbers on (Dispatcher Settings), standalone. One line under the header, on every screen:
+                 not signed in = the yellow Sign in bar; signed in = who is on this desk, with Sign out. Never
+                 blocks: everything below stays usable. Not a password login: it records who did what. ── -->
             <form
-                v-if='operatorShown && !store.operator && !operatorEditing'
+                v-if='operatorShown && !store.operator'
                 class='px-3 py-2 border-bottom flex-shrink-0 d-flex flex-wrap align-items-center gap-2'
                 style='background:rgba(255,193,7,.15)'
-                data-test='operator-prompt'
-                @submit.prevent='saveOperatorPrompt'
+                data-test='operator-sign-in'
+                @submit.prevent='signIn'
             >
                 <label
-                    for='operatorPromptBox'
+                    for='operatorSignInBox'
                     class='fw-semibold text-warning small mb-0 flex-grow-1'
-                >Enter your employee number to start</label>
+                >Sign in with your employee number</label>
                 <div class='d-flex gap-1'>
                     <input
-                        id='operatorPromptBox'
-                        v-model='operatorPromptInput'
+                        id='operatorSignInBox'
+                        v-model='signInInput'
                         type='text'
                         inputmode='numeric'
                         autocomplete='off'
@@ -157,14 +116,31 @@
                     >
                     <button
                         type='submit'
-                        class='btn btn-warning fw-semibold'
-                    >Start</button>
+                        class='btn btn-warning fw-semibold text-nowrap'
+                    >Sign in</button>
                 </div>
                 <div
-                    v-if='operatorPromptError'
+                    v-if='signInError'
                     class='w-100 small text-warning'
-                >{{ operatorPromptError }}</div>
+                >{{ signInError }}</div>
             </form>
+            <div
+                v-else-if='signedIn'
+                class='px-3 py-1 border-bottom flex-shrink-0 d-flex flex-wrap align-items-center column-gap-3 small'
+                data-test='operator-signed-in'
+            >
+                <span class='text-nowrap'><span class='text-muted'>Employee</span> <span class='fw-semibold'>#{{ store.operator }}</span></span>
+                <span
+                    class='text-nowrap text-truncate'
+                    :title='`CloudTAK callsign: ${store.dispatcherName}`'
+                ><span class='text-muted'>Callsign</span> {{ store.dispatcherName }}</span>
+                <button
+                    type='button'
+                    class='btn btn-link btn-sm p-0 ms-auto text-decoration-none'
+                    title='Sign out of this desk (shift change). The next person signs in with their number.'
+                    @click='signOut'
+                >Sign out</button>
+            </div>
 
             <!-- ── TAK-CAD mode: DataSync feed picker (markers/log routing) ─────── -->
             <div
@@ -379,7 +355,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onErrorCaptured, watch, nextTick } from 'vue';
+import { ref, computed, onMounted, onErrorCaptured, watch } from 'vue';
 import ProfileConfig from '../../../src/base/profile.ts';
 import { IconHeadset, IconPictureInPictureOn, IconSettings } from '@tabler/icons-vue';
 import IncidentListView from './IncidentListView.vue';
@@ -528,51 +504,27 @@ watch(() => store.serverMode, (mode) => {
 });
 
 // ── Operator (employee number at this terminal; see lib/operator.ts) ──────────
-const operatorEditing = ref(false);
-const operatorInput = ref('');
-const operatorBox = ref<HTMLInputElement | null>(null);
+// Sign in: type the number, Sign in (or Enter). Sign out: clears it; the next person signs in.
 const operatorShown = computed(() => store.serverMode === 'standalone' && store.operatorNumbers);
+const signedIn = computed(() => operatorShown.value && !!store.operator);
+const signInInput = ref('');
+const signInError = ref('');
 
-// Change opens with the current number filled in and selected: type over it for a new number, or delete
-// it and Save to clear it (back to no number; the yellow bar asks again). Esc or ✕ keeps it.
-async function startOperatorEdit() {
-    operatorInput.value = store.operator ?? '';
-    operatorEditing.value = true;
-    await nextTick();
-    operatorBox.value?.focus();
-    operatorBox.value?.select();
-}
-
-function saveOperatorInput() {
-    // Empty box: clear the number (null). Nothing is stamped until a new one is entered.
-    if (!operatorInput.value.trim()) {
-        store.operator = null;
-        saveOperator(null);
-        operatorEditing.value = false;
-        return;
-    }
-    // Anything else must be a valid number; leave the box open on a wrong entry.
-    const id = parseOperator(operatorInput.value);
-    if (!id) return;
-    store.operator = id;
-    saveOperator(id);
-    operatorEditing.value = false;
-}
-
-// The yellow bar's box (no number yet). Digits only; a wrong entry says so and keeps the bar.
-const operatorPromptInput = ref('');
-const operatorPromptError = ref('');
-
-function saveOperatorPrompt() {
-    const id = parseOperator(operatorPromptInput.value);
+function signIn() {
+    const id = parseOperator(signInInput.value);
     if (!id) {
-        operatorPromptError.value = `Digits only, up to ${OPERATOR_MAX}.`;
+        signInError.value = `Digits only, up to ${OPERATOR_MAX}.`;
         return;
     }
     store.operator = id;
     saveOperator(id);
-    operatorPromptInput.value = '';
-    operatorPromptError.value = '';
+    signInInput.value = '';
+    signInError.value = '';
+}
+
+function signOut() {
+    store.operator = null;
+    saveOperator(null);
 }
 
 function forceStandalone() {

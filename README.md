@@ -66,12 +66,12 @@ on markers, the CJIS reminder, employee numbers and custom call types. The gear 
 
 Off by default; with it off the Dispatcher works exactly as before. For desks that share one CloudTAK
 login, the CloudTAK system admin can turn on **Dispatcher Settings → Employee Numbers**. Then a yellow bar
-across the top of the Dispatcher asks once for an **employee number** (digits only; type it and press
-**Start** or Enter). Nothing is blocked while it is empty. The header then shows **On duty** `#<number>`
-before the login. Clicking it opens the number for change at shift change: type a new one, or empty the
-box and **Save** to clear it (the yellow bar asks again). It lasts until the browser tab closes; a reload
-keeps it. On
-the New Incident form an empty **Taken by #** box is outlined in yellow. The number is saved:
+under the Dispatcher's header reads **Sign in with your employee number** (digits only; type it and press
+**Sign in** or Enter). Nothing is blocked while no one is signed in. Once signed in, that line shows
+`Employee #<number>`, the CloudTAK callsign, and **Sign out**; at shift change one person signs out and
+the next signs in. It is not a password login: it records who did what. It lasts until the browser tab
+closes; a reload keeps it. On the New Incident form the **Taken by #** box follows whoever is signed in
+(unless a different number was typed into it), and is outlined in yellow when empty. The number is saved:
 
 - on each caller as **Taken by #**, when the caller is added (the New Incident form's **Taken by #** box is
   pre-filled from the header and can be changed when taking a call for someone else);
