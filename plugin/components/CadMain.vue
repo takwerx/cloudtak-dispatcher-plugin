@@ -31,10 +31,55 @@
                     v-if='activeCount > 0'
                     class='badge bg-danger'
                 >{{ activeCount }}</span>
+                <!-- Standalone with Dispatcher Settings → Employee Numbers on: who is at this terminal, then the CloudTAK login.
+                     One box, Enter, done. Never blocks work: unset just shows the yellow button. -->
+                <form
+                    v-if='operatorShown && operatorEditing'
+                    class='ms-auto d-flex align-items-center gap-1'
+                    @submit.prevent='saveOperatorInput'
+                >
+                    <input
+                        ref='operatorBox'
+                        v-model='operatorInput'
+                        type='text'
+                        inputmode='numeric'
+                        :maxlength='OPERATOR_MAX'
+                        class='form-control form-control-sm border py-0'
+                        style='width:90px'
+                        placeholder='Employee #'
+                        aria-label='Your employee number'
+                        @keydown.esc='operatorEditing = false'
+                    >
+                    <button
+                        type='submit'
+                        class='btn btn-sm btn-primary py-0'
+                    >Go</button>
+                </form>
                 <span
-                    class='text-muted ms-auto small'
-                    :title='`Dispatcher: ${store.dispatcherName}`'
-                >{{ store.dispatcherName }}</span>
+                    v-else
+                    class='ms-auto small d-flex align-items-center gap-1 text-nowrap'
+                >
+                    <template v-if='operatorShown'>
+                        <button
+                            v-if='store.operator'
+                            type='button'
+                            class='btn btn-sm btn-link p-0 fw-semibold text-reset text-decoration-none'
+                            title='Your employee number. Click to change (shift change).'
+                            @click='startOperatorEdit'
+                        >#{{ store.operator }}</button>
+                        <button
+                            v-else
+                            type='button'
+                            class='btn btn-sm btn-warning py-0'
+                            title='Enter your employee number so incidents record who took and dispatched them'
+                            @click='startOperatorEdit'
+                        >Set employee #</button>
+                    </template>
+                    <span
+                        class='text-muted'
+                        :title='`Dispatcher: ${store.dispatcherName}`'
+                    >{{ store.dispatcherName }}</span>
+                </span>
                 <!-- TAK-CAD connection toggle -->
                 <button
                     v-if='store.serverMode === "takcad"'
@@ -54,6 +99,20 @@
                     v-else
                     class='badge bg-secondary text-white small opacity-50'
                 >TAK-CAD…</span>
+                <!-- Dispatcher Settings: shared by every event (standalone only; reachable with no event open) -->
+                <button
+                    v-if='store.serverMode === "standalone"'
+                    class='btn btn-sm btn-link p-0'
+                    :class='showSettings ? "text-warning" : "text-muted"'
+                    title='Dispatcher Settings — shared by every event'
+                    aria-label='Dispatcher Settings'
+                    @click='showSettings = !showSettings; showManage = false'
+                >
+                    <IconSettings
+                        :size='16'
+                        stroke='1.5'
+                    />
+                </button>
                 <button
                     v-if='!floating'
                     class='btn btn-sm btn-link p-0 text-muted'
@@ -165,8 +224,8 @@
                 >Archived</span>
                 <button
                     class='btn btn-link btn-sm p-0 text-muted'
-                    title='Manage — report, call types, agency header'
-                    @click='showManage = true'
+                    title='Manage — report for this event'
+                    @click='showSettings = false; showManage = true'
                 >
                     <IconSettings
                         :size='16'
@@ -199,9 +258,17 @@
                 </button>
             </div>
 
+            <!-- ── Standalone: Dispatcher Settings (shared by every event), over any screen ── -->
+            <div
+                v-if='store.serverMode === "standalone" && showSettings'
+                class='flex-grow-1 overflow-hidden'
+            >
+                <DispatcherSettings @close='showSettings = false' />
+            </div>
+
             <!-- ── Standalone mode: Events screen (no Event open) ──────────────── -->
             <div
-                v-if='store.serverMode === "standalone" && !store.activeEvent'
+                v-else-if='store.serverMode === "standalone" && !store.activeEvent'
                 class='flex-grow-1 overflow-hidden'
             >
                 <EventsView @opened='onEventOpened' />
@@ -218,7 +285,7 @@
                 />
             </div>
 
-            <!-- ── Standalone: manage (report / call types / agency) ────────────── -->
+            <!-- ── Standalone: manage the open Event (its report) ─────────────── -->
             <div
                 v-else-if='showManage && store.activeEvent'
                 class='flex-grow-1 overflow-hidden'
@@ -272,7 +339,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onErrorCaptured, watch } from 'vue';
+import { ref, computed, onMounted, onErrorCaptured, watch, nextTick } from 'vue';
 import ProfileConfig from '../../../src/base/profile.ts';
 import { IconHeadset, IconPictureInPictureOn, IconSettings } from '@tabler/icons-vue';
 import IncidentListView from './IncidentListView.vue';
@@ -281,6 +348,7 @@ import PersonnelListView from './PersonnelListView.vue';
 import EventsView from './EventsView.vue';
 import ReportView from './ReportView.vue';
 import ManagePanel from './ManagePanel.vue';
+import DispatcherSettings from './DispatcherSettings.vue';
 import { getIncidentTypes, getVehicleTypes, getVehicles, getPersonnel, getRoles, getIncidentMetadata, getMissions, getSubscribedFeedGuids } from '../lib/takcad-client.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
 import type { IncidentTypeRef, VehicleType, VehicleRef, PersonRef, Role } from '../lib/takcad-types.ts';
@@ -288,6 +356,7 @@ import { listIncidents } from '../lib/events-client.ts';
 import type { DispatcherEvent } from '../lib/events-client.ts';
 import { dispatcherStore as store, saveLastEventId } from '../lib/dispatcher-store.ts';
 import { popOutDispatcher, dockDispatcher } from '../lib/float-pane.ts';
+import { parseOperator, saveOperator, OPERATOR_MAX } from '../lib/operator.ts';
 
 // floating: this instance lives inside the floating pane (DispatcherFloat) rather than
 // the anchored menu route.
@@ -326,6 +395,7 @@ onErrorCaptured((err) => {
 const activeTab        = ref<TabKey>('incidents');
 const showReport       = ref(false);
 const showManage       = ref(false);
+const showSettings     = ref(false);
 const activeCount      = ref(0);
 const connectionStatus = ref('');
 const incidentTypes    = ref<IncidentTypeRef[]>([]);
@@ -416,6 +486,31 @@ watch(() => store.serverMode, (mode) => {
         if (activeTab.value !== 'incidents') activeTab.value = 'incidents';
     }
 });
+
+// ── Operator (employee number at this terminal; see lib/operator.ts) ──────────
+const operatorEditing = ref(false);
+const operatorInput = ref('');
+const operatorBox = ref<HTMLInputElement | null>(null);
+const operatorShown = computed(() => store.serverMode === 'standalone' && store.operatorNumbers);
+
+async function startOperatorEdit() {
+    operatorInput.value = '';
+    operatorEditing.value = true;
+    await nextTick();
+    operatorBox.value?.focus();
+}
+
+function saveOperatorInput() {
+    const id = parseOperator(operatorInput.value);
+    if (!id) {
+        // Digits only. Leave the box open; an empty box just closes it and keeps the current number.
+        if (!operatorInput.value.trim()) operatorEditing.value = false;
+        return;
+    }
+    store.operator = id;
+    saveOperator(id);
+    operatorEditing.value = false;
+}
 
 function forceStandalone() {
     store.forcedMode = 'standalone';

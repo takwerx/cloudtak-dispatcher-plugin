@@ -19,7 +19,7 @@ Standalone incidents keep a list of **callers** (name, phone, optional note, tim
 Incident form records the first caller; add more, edit them, or pick the **primary** caller from the
 incident at any time, active or closed. Every caller is listed in the incident marker's remarks, and a
 dialable copy of the primary caller's number goes in the marker's `<contact phone>` so field clients can
-offer a call. **Manage → Caller Details** turns that off for the whole CloudTAK (default on): with it off,
+offer a call. **Dispatcher Settings → Caller Details** turns that off for the whole CloudTAK (default on): with it off,
 no caller name, phone or note reaches a field device. Every caller is included in the after-action report
 and CSV. A database from the earlier single-caller version moves its caller into the list on start.
 
@@ -47,10 +47,37 @@ line. Reopening clears it (the note stays); closing again asks again. There is n
 ### CJIS reminder (standalone)
 
 Every standalone incident opens with a one-line **CJIS reminder** ("Information derived from CJIS sources
-must not be entered into incident records.", default on). **Manage → CJIS Reminder** turns it off or changes
+must not be entered into incident records.", default on). **Dispatcher Settings → CJIS Reminder** turns it off or changes
 the wording for the whole CloudTAK; only the CloudTAK system admin account (the one CloudTAK creates on
-first launch) can change it, and the server refuses the change for anyone else. **Manage → Custom Call
+first launch) can change it, and the server refuses the change for anyone else. **Dispatcher Settings → Custom Call
 Types** is locked to the same admin account.
+
+### Dispatcher Settings and Manage (standalone)
+
+Settings shared by every event and every dispatcher on the CloudTAK are under **Dispatcher Settings**, the
+gear in the Dispatcher's top bar, which opens with or without an event: the report header, caller details
+on markers, the CJIS reminder, employee numbers and custom call types. The gear on an open event is
+**Manage**, for that event only: its after-action report.
+
+### Employee numbers: who took, dispatched and closed each call (standalone, optional)
+
+Off by default; with it off the Dispatcher works exactly as before. For desks that share one CloudTAK
+login, the CloudTAK system admin can turn on **Dispatcher Settings → Employee Numbers**. Then the header asks once for
+an **employee number** (**Set employee #**, digits only); it shows `#<number>` before the login, and
+clicking it changes it at shift change. It lasts until the browser tab closes. The number is saved:
+
+- on each caller as **Taken by #**, when the caller is added (the New Incident form's **Taken by #** box is
+  pre-filled from the header and can be changed when taking a call for someone else);
+- as the incident's **Initial Dispatcher #** when the first unit is assigned (later assignments do not
+  change it);
+- as **Closed by #** when it is closed (reopening clears it; the `Closed: …` note keeps each closer);
+- after every note (`E12 assigned · <number>`);
+- as who **created** the incident, shown on the report and in the CSV only.
+
+The detail, the printed report and the CSV (`created_by_no`, `initial_dispatcher_no`, `closed_by_no`,
+Taken by in the callers column, note authors) show them. The **Dispatcher** field and the field units'
+marker keep the CloudTAK callsign either way. With no number entered nothing is blocked; the numbers
+stay empty.
 
 ### Delivery to field units (standalone)
 

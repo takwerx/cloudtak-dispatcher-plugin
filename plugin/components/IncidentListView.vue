@@ -576,7 +576,7 @@
                     >{{ BOARD_LABEL[boardState(slDetail.assigned)] }}</span>
                 </div>
                 <div class='flex-grow-1 overflow-auto p-3 d-flex flex-column gap-3'>
-                    <!-- CJIS reminder: one shared line, on by default, Manage → CJIS Reminder (admin only) -->
+                    <!-- CJIS reminder: one shared line, on by default, Dispatcher Settings → CJIS Reminder (admin only) -->
                     <div
                         v-if='dispatcherStore.cjisReminder.enabled'
                         class='small text-warning border border-warning rounded px-2 py-1'
@@ -621,6 +621,16 @@
                                 <div class='col-8'>
                                     {{ slDetail.dispatcher || '—' }}
                                 </div>
+                                <!-- Employee numbers (Dispatcher Settings → Employee Numbers on). Who created
+                                     the incident is kept for the report and CSV; who took each call is on the caller. -->
+                                <template v-if='dispatcherStore.operatorNumbers'>
+                                    <div class='col-4 text-muted'>
+                                        Initial Dispatcher #
+                                    </div>
+                                    <div class='col-8'>
+                                        {{ slDetail.initial_dispatcher_no || '—' }}
+                                    </div>
+                                </template>
                                 <div class='col-4 text-muted'>
                                     Report #
                                 </div>
@@ -664,6 +674,14 @@
                                     <div class='col-8'>
                                         {{ dispositionLabel(slDetail) || '—' }}
                                     </div>
+                                    <template v-if='dispatcherStore.operatorNumbers'>
+                                        <div class='col-4 text-muted'>
+                                            Closed by #
+                                        </div>
+                                        <div class='col-8'>
+                                            {{ slDetail.closed_by_no || '—' }}
+                                        </div>
+                                    </template>
                                 </template>
                                 <template v-if='slDetail.details'>
                                     <div class='col-4 text-muted'>
@@ -719,6 +737,12 @@
                                 {{ c.note }}
                             </div>
                             <div class='d-flex align-items-center justify-content-end gap-2'>
+                                <!-- Who took this call (Employee Numbers on); left side, actions stay right -->
+                                <span
+                                    v-if='c.taken_by && dispatcherStore.operatorNumbers'
+                                    class='text-muted me-auto'
+                                    title='Employee number of who took this call'
+                                >Taken by #{{ c.taken_by }}</span>
                                 <span
                                     v-if='c.primary'
                                     class='badge bg-primary text-white'
@@ -831,6 +855,11 @@
                         >
                             <span class='text-muted'>{{ shortTime(n.time) }}</span>
                             {{ n.text }}
+                            <span
+                                v-if='n.by && dispatcherStore.operatorNumbers'
+                                class='text-muted'
+                                title='Employee number'
+                            >· {{ n.by }}</span>
                         </div>
                     </div>
 
@@ -1146,8 +1175,9 @@ import { isActive, formatAddress, formatTime, STATUS_CANCELLED } from '../lib/ta
 import type { MissionRef } from '../lib/takcad-client.ts';
 import { listIncidents, patchIncident, getDispatcherSettings, addCaller, updateCaller, removeCaller, assignUnits, setUnitStatus, removeUnit } from '../lib/events-client.ts';
 import { cjisReminderFrom } from '../lib/cjis-reminder.ts';
+import { operatorNumbersFrom } from '../lib/operator.ts';
 import type { DispatcherIncident, AssignedContact, IncidentCaller } from '../lib/events-client.ts';
-import { dispatcherStore } from '../lib/dispatcher-store.ts';
+import { dispatcherStore, applyOperatorNumbers } from '../lib/dispatcher-store.ts';
 import { BOARD_LABEL, boardState, respondingLine, unitStatus, unitTimesLine } from '../lib/unit-status.ts';
 import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, dispositionLabel } from '../lib/dispositions.ts';
 
@@ -1934,13 +1964,14 @@ function startTakcadPoll() {
     pollTimer = setInterval(() => { loadList(); refreshDetail(); }, 15_000);
 }
 
-// The Manage-panel settings (caller details on markers, CJIS reminder) are shared across
+// The Dispatcher Settings (caller details on markers, CJIS reminder, employee numbers) are shared across
 // dispatchers, so re-read them when the board starts and when an incident is opened (cheap)
 // rather than on every poll (the settings blob can carry the agency logo).
 function slRefreshCallerSetting() {
     getDispatcherSettings().then((s) => {
         dispatcherStore.callerOnMarkers = s.caller_on_markers !== false;
         dispatcherStore.cjisReminder = cjisReminderFrom(s);
+        applyOperatorNumbers(operatorNumbersFrom(s));
     }).catch(() => { /* keep last */ });
 }
 

@@ -14,8 +14,8 @@
             >
         </div>
 
-        <!-- Type — shared dropdown in both modes (custom types managed via the event
-             bar's gear → Manage, not here mid-incident) -->
+        <!-- Type — shared dropdown in both modes (custom types managed via the top
+             bar's gear → Dispatcher Settings, not here mid-incident) -->
         <div>
             <label class='form-label small text-muted mb-1'>Incident Type <span class='text-danger'>*</span></label>
             <select
@@ -175,16 +175,37 @@
             />
         </div>
 
-        <!-- Report number (standalone only; optional, can also be added later) -->
-        <div v-if='serverMode === "standalone"'>
-            <label class='form-label small text-muted mb-1'>Report Number</label>
-            <input
-                v-model='form.reportNumber'
-                type='text'
-                maxlength='64'
-                class='form-control form-control-sm border'
-                placeholder='Optional — can be added later'
+        <!-- Report number (standalone only; optional, can also be added later), and the call taker's
+             employee number when Dispatcher Settings → Employee Numbers is on -->
+        <div
+            v-if='serverMode === "standalone"'
+            class='d-flex gap-2'
+        >
+            <div class='flex-grow-1'>
+                <label class='form-label small text-muted mb-1'>Report Number</label>
+                <input
+                    v-model='form.reportNumber'
+                    type='text'
+                    maxlength='64'
+                    class='form-control form-control-sm border'
+                    placeholder='Optional — can be added later'
+                >
+            </div>
+            <!-- Pre-filled from the header; change it only when taking a call for someone else. -->
+            <div
+                v-if='dispatcherStore.operatorNumbers'
+                style='width:110px'
             >
+                <label class='form-label small text-muted mb-1'>Taken by #</label>
+                <input
+                    v-model='form.operator'
+                    type='text'
+                    inputmode='numeric'
+                    :maxlength='OPERATOR_MAX'
+                    class='form-control form-control-sm border'
+                    placeholder='Employee #'
+                >
+            </div>
         </div>
 
         <!-- Caller Info (collapsible; caller type is TAK-CAD only) -->
@@ -287,6 +308,7 @@ import { showIncident } from '../lib/field-delivery.ts';
 import { createIncident, getDispatcherSettings } from '../lib/events-client.ts';
 import type { DispatcherIncident } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
+import { parseOperator, OPERATOR_MAX } from '../lib/operator.ts';
 
 const props = defineProps<{
     serverMode:    'detecting' | 'takcad' | 'standalone';
@@ -315,7 +337,7 @@ let geoDebounce: ReturnType<typeof setTimeout>;
 
 // Shared type list: TAK-CAD server types (names only) or default list
 // Custom call types (standalone only): deployment-shared via dispatcher_settings,
-// merged over the built-in defaults; edited in ManagePanel (event bar gear).
+// merged over the built-in defaults; edited in DispatcherSettings (top bar gear).
 // TAK-CAD mode keeps its server-provided list.
 const customTypes = ref<string[]>([]);
 
@@ -339,6 +361,7 @@ const form = reactive({
     lon:        null as number | null,
     details:    '',
     reportNumber: '',
+    operator:    dispatcherStore.operator ?? '',
     callerName:  '',
     callerPhone: '',
     callerType:  '',
@@ -482,6 +505,11 @@ async function submitStandalone(address: string) {
 
     const dispatcher = dispatcherStore.dispatcherName;
 
+    // Who took the call (Employee Numbers on): the incident's creator and the first caller's Taken by.
+    // Digits only, or empty for none.
+    const operatorText = dispatcherStore.operatorNumbers ? form.operator.trim() : '';
+    if (operatorText && !parseOperator(operatorText)) { saveError.value = 'Taken by #: digits only'; return; }
+
     saving.value = true;
     try {
         // Persist server-side first; the server assigns the incident number (<prefix>-NNN)
@@ -492,6 +520,7 @@ async function submitStandalone(address: string) {
             lat:        form.lat!,
             lon:        form.lon!,
             dispatcher,
+            ...(dispatcherStore.operatorNumbers ? { operator: operatorText } : {}),
             details:    form.details,
             report_number: form.reportNumber.trim() || undefined,
             caller_name:   form.callerName.trim()   || undefined,

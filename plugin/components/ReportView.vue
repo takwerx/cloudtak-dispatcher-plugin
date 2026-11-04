@@ -119,7 +119,7 @@
                     </p>
                 </div>
 
-                <!-- Exports (agency header is edited in ManagePanel; loaded here for rendering) -->
+                <!-- Exports (agency header is edited in DispatcherSettings; loaded here for rendering) -->
                 <div
                     v-if='exportError'
                     class='alert alert-danger py-2 small'
@@ -179,7 +179,7 @@ const loadError   = ref('');
 const exportError = ref('');
 const incidents   = ref<DispatcherIncident[]>([]);
 
-// Agency identity for the report header — edited in ManagePanel, stored server-side;
+// Agency identity for the report header — edited in DispatcherSettings, stored server-side;
 // loaded here only so exports render it.
 const agency = reactive<AgencySettings>({ name: '', id: '', logo: null });
 
@@ -206,11 +206,18 @@ const inRange   = computed(() => filterByRange(incidents.value, range.value));
 const stats     = computed(() => buildStats(inRange.value, range.value));
 const narrative = computed(() => buildNarrative(props.event, stats.value, range.value));
 
+// Dispatcher Settings → Employee Numbers on: the report and CSV add the numbers, and "Generated … by" names this
+// terminal's operator before the CloudTAK login.
+function generatedBy(): string {
+    const name = dispatcherStore.dispatcherName;
+    return dispatcherStore.operatorNumbers && dispatcherStore.operator ? `#${dispatcherStore.operator} (${name})` : name;
+}
+
 function printReport() {
     exportError.value = '';
     const html = buildReportHtml(
         props.event, inRange.value, stats.value, narrative.value,
-        range.value, dispatcherStore.dispatcherName, agency,
+        range.value, generatedBy(), agency, dispatcherStore.operatorNumbers,
     );
     if (!openPrintWindow(html)) {
         exportError.value = 'Popup blocked — allow popups for CloudTAK, or use the HTML download and print that file.';
@@ -220,18 +227,18 @@ function printReport() {
 function downloadHtml() {
     downloadFile(reportFilename(props.event, 'html'), 'text/html', buildReportHtml(
         props.event, inRange.value, stats.value, narrative.value,
-        range.value, dispatcherStore.dispatcherName, agency,
+        range.value, generatedBy(), agency, dispatcherStore.operatorNumbers,
     ));
 }
 
 function downloadCsv() {
-    downloadFile(reportFilename(props.event, 'csv'), 'text/csv', buildCsv(inRange.value));
+    downloadFile(reportFilename(props.event, 'csv'), 'text/csv', buildCsv(inRange.value, dispatcherStore.operatorNumbers));
 }
 
 function downloadJson() {
     downloadFile(reportFilename(props.event, 'json'), 'application/json', buildJsonArchive(
         props.event, inRange.value, stats.value, narrative.value,
-        range.value, dispatcherStore.dispatcherName, agency,
+        range.value, generatedBy(), agency,
     ));
 }
 
