@@ -146,6 +146,12 @@ function normReopenReason(v: unknown): string {
 function reopenNote(reason: string): string {
     return `Reopened: ${reason}`;
 }
+
+// The reason belongs to the Employee Numbers feature: asked for only while that admin switch is on, so
+// agencies that leave it off (and browsers still running an older bundle) reopen exactly as before.
+function reopenNeedsReason(numbersOn: boolean, from: string, to: string): boolean {
+    return numbersOn && from === 'closed' && to === 'active';
+}
 // </disposition-pure>
 
 // ── Employee numbers (who did it) ──────────────────────────────────────────────
@@ -1166,8 +1172,9 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                     dispositionNote = null;
                 }
                 const closedByNo = closedByAfter(cur.closed_by_no, closing, next.status === 'active', operator);
-                // Reopening: the reason is required and goes on the record as a note.
-                if (next.status === 'active' && cur.status === 'closed') {
+                // Reopening with employee numbers on: the reason is required and goes on the record as a
+                // note. Off, reopen works as it always did (no reason asked, none written).
+                if (reopenNeedsReason(numbersOn, cur.status, next.status)) {
                     next.notes = [...next.notes, { text: reopenNote(normReopenReason(b.reopen_reason)), time: now }];
                 }
                 if (closing) {

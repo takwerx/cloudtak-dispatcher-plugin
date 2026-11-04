@@ -1922,6 +1922,11 @@ function slCancelClose() {
 }
 
 function slStartReopen() {
+    // Employee Numbers off: reopen right away, as it always did (no reason box).
+    if (!dispatcherStore.operatorNumbers) {
+        if (slDetail.value) void slReopenIncident(slDetail.value, '');
+        return;
+    }
     slReopening.value = true;
     slReopenReason.value = '';
     nextTick(() => slReopenInput.value?.focus());
@@ -1980,12 +1985,13 @@ async function slCloseIncident(inc: DispatcherIncident, disposition: string | nu
 }
 
 async function slReopenIncident(inc: DispatcherIncident, reason: string) {
-    const why = reason.trim();
-    if (!why) return;
+    const withReason = dispatcherStore.operatorNumbers;
+    const why = withReason ? reason.trim() : '';
+    if (withReason && !why) return;
     slSaving.value = true; slDetailError.value = '';
     try {
-        // The server requires the reason and writes the "Reopened: …" note.
-        const updated = await patchIncident(inc.id, { status: 'active', reopen_reason: why });
+        // Employee Numbers on: the server requires the reason and writes the "Reopened: …" note.
+        const updated = await patchIncident(inc.id, withReason ? { status: 'active', reopen_reason: why } : { status: 'active' });
         slApplyIncident(updated);
         slCancelReopen();
 
@@ -1995,7 +2001,7 @@ async function slReopenIncident(inc: DispatcherIncident, reason: string) {
 
         const feed = dispatcherStore.activeEvent;
         if (feed) {
-            try { await postMissionLog(feed.feed_name, `INCIDENT REOPENED: ${updated.number} | ${updated.type ?? ''} | ${why}`); }
+            try { await postMissionLog(feed.feed_name, `INCIDENT REOPENED: ${updated.number} | ${updated.type ?? ''}${why ? ` | ${why}` : ''}`); }
             catch { /* best-effort */ }
         }
         slTab.value = 'active';

@@ -20,7 +20,7 @@ const file = join(dir, 'reopen.ts');
 writeFileSync(file, `
 export class Err extends Error { status: number; constructor(status: number, _x: unknown, message: string) { super(message); this.status = status; } }
 ${block}
-export { normReopenReason, reopenNote, REOPEN_REASON_MAX };
+export { normReopenReason, reopenNote, reopenNeedsReason, REOPEN_REASON_MAX };
 `);
 const m = await import(pathToFileURL(file).href);
 const refuses = (fn: () => unknown, re: RegExp) =>
@@ -39,8 +39,20 @@ test('the reason is trimmed, capped, and written as "Reopened: …"', () => {
     assert.equal(m.reopenNote('caller called back'), 'Reopened: caller called back');
 });
 
-test('the route reads the reason only on closed → active, writes the note before the notes are stamped', () => {
-    const at = src.indexOf("if (next.status === 'active' && cur.status === 'closed') {");
+test('switch off: reopen asks for no reason and the server requires none (today\'s behavior, old bundles included)', () => {
+    assert.equal(m.reopenNeedsReason(false, 'closed', 'active'), false);
+    assert.equal(m.reopenNeedsReason(false, 'closed', 'closed'), false);
+});
+
+test('switch on: only closed → active needs a reason', () => {
+    assert.equal(m.reopenNeedsReason(true, 'closed', 'active'), true);
+    for (const [from, to] of [['active', 'active'], ['active', 'closed'], ['closed', 'closed']]) {
+        assert.equal(m.reopenNeedsReason(true, from, to), false, `${from} → ${to}`);
+    }
+});
+
+test('the route reads the reason only when the switch is on and closed → active, writes the note before the notes are stamped', () => {
+    const at = src.indexOf('if (reopenNeedsReason(numbersOn, cur.status, next.status)) {');
     const stamp = src.indexOf('if (numbersOn) next.notes = stampNewNotes(');
     assert.ok(at > 0, 'the reopen branch is in the PATCH route');
     assert.match(src.slice(at, at + 200), /reopenNote\(normReopenReason\(b\.reopen_reason\)\)/);
