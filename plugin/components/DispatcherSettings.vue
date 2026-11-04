@@ -19,6 +19,98 @@
                 An event's own report opens from its Event report button while that event is open.
             </div>
 
+            <!-- Display Mode: one monitor (windows over the map) or several (the workspace window). Per computer:
+                 any dispatcher sets it, it is remembered in this browser and changes nothing for anyone else. -->
+            <div>
+                <div class='small text-muted fw-semibold text-uppercase mb-1 d-flex align-items-center gap-2'>
+                    Display Mode
+                    <span
+                        class='badge bg-info text-dark fw-normal'
+                        title='Remembered in this browser on this computer; it does not change anyone else'
+                    >This computer only</span>
+                </div>
+                <div class='card border'>
+                    <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
+                        <div
+                            v-for='m in displayModeChoices'
+                            :key='m.value'
+                            class='form-check mb-0'
+                        >
+                            <input
+                                :id='`displayMode-${m.value}`'
+                                v-model='displayMode'
+                                class='form-check-input'
+                                type='radio'
+                                name='displayMode'
+                                :value='m.value'
+                                :data-test='`display-mode-${m.value}`'
+                                @change='saveMode'
+                            >
+                            <label
+                                class='form-check-label'
+                                :for='`displayMode-${m.value}`'
+                            >
+                                <span class='fw-semibold'>{{ m.label }}</span>
+                                <span class='d-block text-muted'>{{ m.help }}</span>
+                            </label>
+                        </div>
+                        <span class='text-muted'>
+                            Changing it closes the open incident windows, and a popped-out Dispatcher returns to the
+                            menu. In Single Monitor Mode the incidents reopen over the map when you go back to the
+                            list; in Multi-Monitor Mode they reopen when you press Workspace.
+                        </span>
+                        <span
+                            v-if='displayModeSaved'
+                            class='text-muted d-inline-flex align-items-center gap-1'
+                        ><IconCheck
+                            :size='16'
+                            stroke='1'
+                        />Saved on this computer</span>
+                    </div>
+                </div>
+            </div>
+
+            <hr class='my-1'>
+
+            <!-- Caller details on map markers -->
+            <div>
+                <div class='small text-muted fw-semibold text-uppercase mb-1'>
+                    Caller Details
+                </div>
+                <div class='card border'>
+                    <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
+                        <div class='form-check form-switch mb-0'>
+                            <input
+                                id='callerOnMarkers'
+                                v-model='callerOnMarkers'
+                                class='form-check-input'
+                                type='checkbox'
+                                :disabled='savingCaller'
+                                @change='saveCallerOnMarkers'
+                            >
+                            <label
+                                class='form-check-label'
+                                for='callerOnMarkers'
+                            >Show callers on incident markers</label>
+                        </div>
+                        <div class='text-muted small'>
+                            On: field units see every caller (name, phone, note) and can tap the primary
+                            caller's number to call. Off: no caller details reach field devices; they stay
+                            in the Dispatcher only. Applies to every dispatcher on this
+                            CloudTAK; markers already on the map update the next time the incident changes.
+                        </div>
+                        <div
+                            v-if='callerError'
+                            class='text-danger small'
+                        >
+                            {{ callerError }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <hr class='my-1'>
+
             <!-- Agency header + logo, printed on every event's report -->
             <div>
                 <div class='small text-muted fw-semibold text-uppercase mb-1'>
@@ -93,45 +185,6 @@
                                     class='me-1'
                                 />{{ agencySaved ? 'Saved' : 'Save header' }}
                             </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <hr class='my-1'>
-
-            <!-- Caller details on map markers -->
-            <div>
-                <div class='small text-muted fw-semibold text-uppercase mb-1'>
-                    Caller Details
-                </div>
-                <div class='card border'>
-                    <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
-                        <div class='form-check form-switch mb-0'>
-                            <input
-                                id='callerOnMarkers'
-                                v-model='callerOnMarkers'
-                                class='form-check-input'
-                                type='checkbox'
-                                :disabled='savingCaller'
-                                @change='saveCallerOnMarkers'
-                            >
-                            <label
-                                class='form-check-label'
-                                for='callerOnMarkers'
-                            >Show callers on incident markers</label>
-                        </div>
-                        <div class='text-muted small'>
-                            On: field units see every caller (name, phone, note) and can tap the primary
-                            caller's number to call. Off: no caller details reach field devices; they stay
-                            in the Dispatcher only. Applies to every dispatcher on this
-                            CloudTAK; markers already on the map update the next time the incident changes.
-                        </div>
-                        <div
-                            v-if='callerError'
-                            class='text-danger small'
-                        >
-                            {{ callerError }}
                         </div>
                     </div>
                 </div>
@@ -252,59 +305,6 @@
                         >
                             {{ operatorNumbersError }}
                         </div>
-                    </div>
-                </div>
-            </div>
-
-            <hr class='my-1'>
-
-            <!-- Display Mode: one monitor (windows over the map) or several (the workspace window). Per computer:
-                 any dispatcher sets it, it is remembered in this browser and changes nothing for anyone else. -->
-            <div>
-                <div class='small text-muted fw-semibold text-uppercase mb-1 d-flex align-items-center gap-2'>
-                    Display Mode
-                    <span
-                        class='badge bg-info text-dark fw-normal'
-                        title='Remembered in this browser on this computer; it does not change anyone else'
-                    >This computer only</span>
-                </div>
-                <div class='card border'>
-                    <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
-                        <div
-                            v-for='m in displayModeChoices'
-                            :key='m.value'
-                            class='form-check mb-0'
-                        >
-                            <input
-                                :id='`displayMode-${m.value}`'
-                                v-model='displayMode'
-                                class='form-check-input'
-                                type='radio'
-                                name='displayMode'
-                                :value='m.value'
-                                :data-test='`display-mode-${m.value}`'
-                                @change='saveMode'
-                            >
-                            <label
-                                class='form-check-label'
-                                :for='`displayMode-${m.value}`'
-                            >
-                                <span class='fw-semibold'>{{ m.label }}</span>
-                                <span class='d-block text-muted'>{{ m.help }}</span>
-                            </label>
-                        </div>
-                        <span class='text-muted'>
-                            Changing it closes the open incident windows, and a popped-out Dispatcher returns to the
-                            menu. In Single Monitor Mode the incidents reopen over the map when you go back to the
-                            list; in Multi-Monitor Mode they reopen when you press Workspace.
-                        </span>
-                        <span
-                            v-if='displayModeSaved'
-                            class='text-muted d-inline-flex align-items-center gap-1'
-                        ><IconCheck
-                            :size='16'
-                            stroke='1'
-                        />Saved on this computer</span>
                     </div>
                 </div>
             </div>
@@ -437,6 +437,11 @@
                     </div>
                 </div>
             </div>
+
+            <hr class='my-1'>
+
+            <!-- Local address data (verified points, intersections, place names). Admin only. -->
+            <AddressSources :is-admin='isAdmin' />
         </div>
     </div>
 </template>
@@ -455,6 +460,7 @@ import {
 } from '../lib/closed-window.ts';
 import { saveDisplayMode } from '../lib/display-mode.ts';
 import type { DisplayMode } from '../lib/display-mode.ts';
+import AddressSources from './AddressSources.vue';
 
 const emit = defineEmits<{
     (e: 'close'): void;

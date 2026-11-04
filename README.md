@@ -159,6 +159,38 @@ Multi-Monitor Mode the tab already says that, and an undocked incident is marked
 edge. The full incident (callers, notes, units, report number) is one click away.
 
 **Close all** and **✕** are remembered (per browser), so closed windows stay closed.
+### Local address data (standalone)
+
+By default the incident form's address search and map-click lookup use the public OpenStreetMap
+geocoder. **Dispatcher Settings → Local Address Data** (CloudTAK system admin only) lets an admin load the agency's
+own **address points**, **street intersections** and **common place names** so those are searched
+first, with the public geocoder as the fallback:
+
+- **From a file** — a CSV or GeoJSON upload of point data; the kind (addresses, intersections or places) is
+  read from the column names and can be changed, the admin maps the file's columns to the plugin's fields
+  (guessed automatically for the usual names), sets a "data as of" date, and the rows are checked and
+  swapped in only when the whole load succeeds. Replace the file any time. **Download example CSV**
+  gives a sample file for the selected kind with the column names the mapping recognises and, in note rows at
+  the top (skipped on import), what goes in each column.
+- **From a web address** — an ArcGIS Feature Service layer (`…/FeatureServer/0`, read in pages) or a
+  plain GeoJSON / CSV URL, pulled again after a set number of hours (checked when a lookup arrives,
+  or with **Refresh now**).
+
+Typing in the Location box then offers **Place** (from two characters, narrowing as more is typed)
+and **Verified** results ahead of **OpenStreetMap** ones. A map click fills the nearest verified
+address point or intersection within the configured
+distances (defaults 60 m / 40 m) and shows how far it is from the click, with up to three alternates.
+The incident point stays where the dispatcher clicked: the click chooses the address, not the other way round.
+Beyond the give-up distance (150 m) the public geocoder answers as before.
+An address with units offers up to six of them as buttons (the nearest ones after a map click); typing in the
+**Unit** box narrows the buttons. For a typed address, a unit the data knows puts the point on that unit. Any
+other unit is typed by hand and goes on the address line as written (a bare `421` becomes `#421`).
+Choosing a place also writes `Common Place Name: <place>` at the top of the incident details. A place or
+intersection with no city, state or ZIP of its own takes them from the verified address point it sits at, and
+**Default country** fills the Country box of every local result (local files rarely carry one). **Only show OpenStreetMap
+results within my coverage area** keeps typed public results inside a circle the admin sets (a centre, which
+**Use map centre** fills in, and a radius), with local address data on or off; a map click is not affected. The **Try it** box
+in Dispatcher Settings shows exactly what the local data returns for a typed address or a lat/lon.
 
 ### Delivery to field units (standalone)
 
@@ -188,7 +220,10 @@ Each Event chooses how its incidents reach field devices when it is created:
   - `plugin-dispatcher.ts` — the standalone Events/Incidents store (CloudTAK Postgres) + CRUD
     endpoints under `/api/dispatcher/…`.
   - `plugin-takcad.ts` — a server-side proxy to the TAK-CAD TAK Server plugin (and a keyless
-    Nominatim geocode helper), used only in TAK-CAD mode.
+    Nominatim geocode helper, used by older builds of the incident form in both modes).
+  - `plugin-addressing.ts` — local address data (points, intersections, places): the admin's
+    sources, file loads and web pulls, and the `/api/dispatcher/address/suggest` and `…/reverse`
+    lookups the incident form uses, with the public geocoder as the fallback.
 
 ## Install
 

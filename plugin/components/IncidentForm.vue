@@ -99,16 +99,99 @@
             >
                 <button
                     v-for='s in geoSuggestions'
-                    :key='s.label'
+                    :key='s.source + s.label'
                     type='button'
-                    class='list-group-item list-group-item-action py-1 small'
+                    class='list-group-item list-group-item-action py-1 small d-flex align-items-center gap-2'
+                    data-test='geo-suggestion'
                     @click='applySuggestion(s)'
                 >
-                    {{ s.label }}
+                    <span
+                        class='badge fw-normal flex-shrink-0'
+                        :class='badgeFor(s).cls'
+                    >{{ badgeFor(s).text }}</span>
+                    <span class='text-truncate'>
+                        {{ s.label }}<span
+                            v-if='s.kind === "place"'
+                            class='text-muted'
+                        >{{ s.category ? ' · ' + s.category : '' }}{{ s.streetName ? ' · ' + s.streetName : '' }}</span>
+                    </span>
                 </button>
             </div>
+            <!-- What the map click or chosen suggestion matched: source, distance, alternates, units -->
+            <div
+                v-if='match'
+                class='border rounded px-2 py-1 mb-1 small d-flex flex-column gap-1'
+                data-test='geo-match'
+            >
+                <div
+                    v-if='match.best'
+                    class='d-flex align-items-center flex-wrap gap-2'
+                >
+                    <span
+                        class='badge fw-normal flex-shrink-0'
+                        :class='badgeFor(match.best).cls'
+                    >{{ badgeFor(match.best).text }}</span>
+                    <span>{{ match.best.label }}</span>
+                    <span
+                        v-if='match.best.distance != null'
+                        class='text-muted'
+                    >· {{ distanceText(match.best.distance) }} from your click</span>
+                </div>
+                <div
+                    v-else
+                    class='text-muted'
+                >
+                    No address found near that point. Type the address, or pick one below.
+                </div>
+                <div
+                    v-if='unitsOffered.shown.length'
+                    class='d-flex align-items-center flex-wrap gap-1'
+                    data-test='geo-units'
+                >
+                    <span class='text-muted'>Unit:</span>
+                    <button
+                        v-for='u in unitsOffered.shown'
+                        :key='u.unit'
+                        type='button'
+                        class='btn btn-sm py-0'
+                        :class='sameUnit(form.unit, u.unit) ? "btn-secondary" : "btn-outline-secondary"'
+                        @click='form.unit = u.unit'
+                    >
+                        {{ u.unit }}
+                    </button>
+                    <span
+                        v-if='unitsOffered.more'
+                        class='text-muted'
+                    >… {{ unitsOffered.more }} more, type it in the Unit box</span>
+                </div>
+                <div
+                    v-if='match.alternates.length'
+                    class='d-flex flex-column'
+                >
+                    <button
+                        v-for='(a, i) in match.alternates'
+                        :key='i'
+                        type='button'
+                        class='btn btn-link btn-sm p-0 text-decoration-none d-flex align-items-center justify-content-start gap-2'
+                        @click='applyMatch(a)'
+                    >
+                        <span
+                            class='badge fw-normal flex-shrink-0'
+                            :class='badgeFor(a).cls'
+                        >{{ badgeFor(a).text }}</span>
+                        <span class='text-truncate'>{{ a.label }}<span
+                            v-if='a.kind === "place" && a.streetName'
+                            class='text-muted'
+                        > · {{ a.streetName }}</span></span>
+                        <span
+                            v-if='a.distance != null'
+                            class='text-muted flex-shrink-0'
+                        >· {{ distanceText(a.distance) }}</span>
+                    </button>
+                </div>
+            </div>
             <div class='row g-1'>
-                <div class='col-8'>
+                <div :class='localAddressing ? "col-9" : "col-8"'>
                     <input
                         v-model='form.streetName'
                         type='text'
@@ -116,7 +199,19 @@
                         placeholder='Street address'
                     >
                 </div>
-                <div class='col-4'>
+                <div
+                    v-if='localAddressing'
+                    class='col-3'
+                >
+                    <input
+                        v-model='form.unit'
+                        type='text'
+                        class='form-control form-control-sm border'
+                        placeholder='Unit'
+                        data-test='unit'
+                    >
+                </div>
+                <div :class='boxCol'>
                     <input
                         v-model='form.city'
                         type='text'
@@ -124,7 +219,7 @@
                         placeholder='City'
                     >
                 </div>
-                <div class='col-4'>
+                <div :class='boxCol'>
                     <input
                         v-model='form.state'
                         type='text'
@@ -132,7 +227,7 @@
                         placeholder='State'
                     >
                 </div>
-                <div class='col-4'>
+                <div :class='boxCol'>
                     <input
                         v-model='form.zipCode'
                         type='text'
@@ -140,7 +235,7 @@
                         placeholder='ZIP'
                     >
                 </div>
-                <div class='col-4'>
+                <div :class='boxCol'>
                     <input
                         v-model='form.country'
                         type='text'
@@ -317,6 +412,9 @@ import {
     DEFAULT_INCIDENT_TYPES,
 } from '../lib/takcad-client.ts';
 import type { GeocodeSuggestion, MissionRef } from '../lib/takcad-client.ts';
+import { suggestAddress, reverseAddress, getAddressSettings, badgeFor, distanceText } from '../lib/addressing.ts';
+import type { AddressSuggestion } from '../lib/addressing.ts';
+import { streetWithUnit, detailsWithPlace, unitChoices, unitNamed, sameUnit } from '../lib/address-form.ts';
 import type { IncidentRef, IncidentTypeRef } from '../lib/takcad-types.ts';
 import { STATUS_ACTIVE } from '../lib/takcad-types.ts';
 import { dropIncidentMarker, postMissionCallLog, postFeedChat } from '../lib/map-marker.ts';
@@ -348,10 +446,22 @@ const geocoding      = ref(false);
 const mapStore       = useMapStore();
 const picking        = ref(false);
 const geoQuery       = ref('');
-const geoSuggestions = ref<GeocodeSuggestion[]>([]);
+const geoSuggestions = ref<AddressSuggestion[]>([]);
 const geoFailed      = ref(false);
 const incidentNumber = ref('');
 let geoDebounce: ReturnType<typeof setTimeout>;
+
+// Local address data (admin-loaded points, intersections, places). Read once per form; an older
+// server without the route leaves the defaults, which are today's behaviour.
+const addr = reactive({ enabled: false, minChars: 4 });
+
+// What the last map click (or chosen suggestion with units) matched, for the line under the box.
+interface Match {
+    best: AddressSuggestion | null;
+    alternates: AddressSuggestion[];
+    clicked: boolean;   // from a map click: the point stays where the dispatcher clicked
+}
+const match = ref<Match | null>(null);
 
 // Shared type list: TAK-CAD server types (names only) or default list
 // Custom call types (standalone only): deployment-shared via dispatcher_settings,
@@ -375,6 +485,7 @@ const form = reactive({
     incidentType:      '',
     incidentTimeLocal: toLocalInput(new Date().toISOString()),
     streetName: '', city: '', state: '', zipCode: '', country: '',
+    unit:       '',
     lat:        null as number | null,
     lon:        null as number | null,
     details:    '',
@@ -400,20 +511,52 @@ function toLocalInput(iso: string): string {
     } catch { return ''; }
 }
 
+// Local data searches from a short prefix (places narrow as more is typed); the public geocoder
+// alone needs a few characters to be worth asking.
 function onGeoInput() {
     clearTimeout(geoDebounce);
-    if (geoQuery.value.length < 4) { geoSuggestions.value = []; return; }
-    geoDebounce = setTimeout(doGeocode, 500);
+    const min = addr.enabled ? addr.minChars : 4;
+    if (geoQuery.value.trim().length < min) { geoSuggestions.value = []; return; }
+    geoDebounce = setTimeout(doGeocode, addr.enabled ? 250 : 500);
+}
+
+// Local address data is a standalone feature. TAK-CAD mode keeps the TAK-CAD proxy, and so does an
+// older server without the local-address route (it answers 404).
+const localAddressing = computed(() => props.serverMode === 'standalone');
+
+// Standalone has a Unit box beside the street, so the four boxes under it share one row.
+// TAK-CAD mode keeps its layout: street and city, then state, ZIP and country.
+const boxCol = computed(() => localAddressing.value ? 'col-3' : 'col-4');
+
+function fromLegacy(s: GeocodeSuggestion): AddressSuggestion {
+    return { ...s, source: 'osm', kind: 'osm' };
+}
+
+async function legacySuggest(q: string): Promise<AddressSuggestion[]> {
+    return q.length >= 4 ? (await geocodeAddress(q)).map(fromLegacy) : [];
 }
 
 // The server asks the public geocoder, so with no internet the search fails. Say so in one line under
 // the box and keep the form: a failure thrown from here would replace the whole Dispatcher with the error
 // (CadMain's onErrorCaptured) and lose what was typed.
 async function doGeocode() {
-    if (!geoQuery.value.trim()) return;
+    const q = geoQuery.value.trim();
+    if (!q) return;
     geocoding.value = true;
     try {
-        geoSuggestions.value = await geocodeAddress(geoQuery.value);
+        if (!localAddressing.value) {
+            geoSuggestions.value = await legacySuggest(q);
+        } else {
+            try {
+                const r = await suggestAddress(q);
+                addr.enabled = r.settings.enabled;
+                addr.minChars = r.settings.min_chars;
+                // Answers can arrive out of order while typing: keep only the one for the current text.
+                if (geoQuery.value.trim() === q) geoSuggestions.value = r.suggestions;
+            } catch {
+                geoSuggestions.value = await legacySuggest(q);
+            }
+        }
         geoFailed.value = false;
     } catch (e) {
         geoSuggestions.value = [];
@@ -424,17 +567,85 @@ async function doGeocode() {
     }
 }
 
-function applySuggestion(s: GeocodeSuggestion) {
-    form.lat        = s.lat;
-    form.lon        = s.lon;
-    form.streetName = s.streetName;
+// Copy a suggestion's address fields into the form; coordinates too unless told to keep the click.
+// keepStreet: a place with no address of its own keeps the street already in the form. Only right
+// for a place offered beside a map-click match, where that street is the address it sits at.
+function fillFrom(s: AddressSuggestion, withCoords: boolean, keepStreet = false) {
+    form.streetName = s.streetName || (keepStreet && s.kind === 'place' ? form.streetName : '');
     form.city       = s.city;
     form.state      = s.state;
     form.zipCode    = s.zipCode;
     form.country    = s.country;
-    geoSuggestions.value = [];
-    geoQuery.value = s.label;
+    form.unit       = s.unit ?? '';
+    if (withCoords) {
+        form.lat = s.lat;
+        form.lon = s.lon;
+    }
+    // A public result with missing parts: parse its one-line label.
+    if (s.source === 'osm' && (!form.city || !form.state) && s.label) {
+        const parts = s.label.split(',').map((p: string) => p.trim());
+        if (!form.streetName && parts[0]) form.streetName = parts[0];
+        if (!form.city && parts[1])        form.city       = parts[1];
+        if (parts[2]) {
+            const sv = parts[2].split(' ').filter(Boolean);
+            if (!form.state   && sv[0]) form.state   = sv[0];
+            if (!form.zipCode && sv[1]) form.zipCode = sv[1];
+        }
+    }
+    // A place goes at the top of the details, since the incident record keeps one address line;
+    // choosing something that is not a place takes an earlier place's line out again.
+    form.details = detailsWithPlace(form.details, s.placeName);
 }
+
+function applySuggestion(s: AddressSuggestion) {
+    fillFrom(s, true);
+    geoSuggestions.value = [];
+    geoQuery.value = s.placeName ? `${s.placeName} · ${s.streetName}` : s.label;
+    // Units to choose from, or nothing more to show for a typed pick.
+    match.value = s.units && s.units.length
+        ? { best: s, alternates: [], clicked: false }
+        : null;
+    void fillFromPublic(s);
+}
+
+// A local place or intersection with no verified address near it (a trail post, a milepost) still
+// has no city or state: ask the public geocoder for those by location. Blank boxes only, and only
+// while this is still the chosen location. Offline, the boxes stay blank.
+async function fillFromPublic(s: AddressSuggestion) {
+    if (s.source === 'osm' || (s.city && s.state)) return;
+    try {
+        const p = await reverseGeocode(s.lat, s.lon);
+        if (!p || form.lat !== s.lat || form.lon !== s.lon) return;
+        if (!form.city && p.city)       form.city    = p.city;
+        if (!form.state && p.state)     form.state   = p.state;
+        if (!form.zipCode && p.zipCode) form.zipCode = p.zipCode;
+        if (!form.country && p.country) form.country = p.country;
+    } catch { /* offline: leave the boxes blank */ }
+}
+
+// Use one of the other matches of a map click for the address. The point stays on the click.
+function applyMatch(s: AddressSuggestion) {
+    fillFrom(s, false, true);
+    geoQuery.value = s.placeName ? `${s.placeName} · ${s.streetName}` : s.label;
+    if (match.value) {
+        match.value.best = s;
+        match.value.alternates = match.value.alternates.filter(a => a !== s);
+    }
+}
+
+// The unit buttons under a chosen address: a few, narrowing as the Unit box is typed in.
+const unitsOffered = computed(() => unitChoices(match.value?.best?.units ?? [], form.unit));
+
+// For a typed address the point follows the Unit box: a unit the data knows has its own point,
+// anything else typed keeps the address's. After a map click the point stays on the click.
+function placeUnit() {
+    const m = match.value;
+    if (!m?.best?.units?.length || m.clicked) return;
+    const at = unitNamed(m.best.units, form.unit) ?? m.best;
+    form.lat = at.lat;
+    form.lon = at.lon;
+}
+watch(() => form.unit, placeUnit);
 
 function pickOnMap() {
     const map = mapStore.map;
@@ -446,27 +657,32 @@ function pickOnMap() {
         picking.value = false;
         form.lat = Number(e.lngLat.lat.toFixed(6));
         form.lon = Number(e.lngLat.lng.toFixed(6));
+        const clickLat = form.lat, clickLon = form.lon;
+        match.value = null;
+        geoSuggestions.value = [];
         try {
-            const s = await reverseGeocode(form.lat, form.lon);
-            if (s) {
-                form.streetName = s.streetName;
-                form.city       = s.city;
-                form.state      = s.state;
-                form.zipCode    = s.zipCode;
-                form.country    = s.country;
-                geoQuery.value  = s.label;
-                // Fallback: parse label if fields are missing (ORS data gaps)
-                if ((!form.city || !form.state) && s.label) {
-                    const parts = s.label.split(',').map((p: string) => p.trim());
-                    if (!form.streetName && parts[0]) form.streetName = parts[0];
-                    if (!form.city && parts[1])        form.city       = parts[1];
-                    if (parts[2]) {
-                        const sv = parts[2].split(' ').filter(Boolean);
-                        if (!form.state   && sv[0]) form.state   = sv[0];
-                        if (!form.zipCode && sv[1]) form.zipCode = sv[1];
-                    }
+            let best: AddressSuggestion | null = null;
+            let alternates: AddressSuggestion[] = [];
+            const legacy = async () => {
+                const s = await reverseGeocode(clickLat, clickLon);
+                return s ? fromLegacy(s) : null;
+            };
+            if (!localAddressing.value) {
+                best = await legacy();
+            } else {
+                try {
+                    const r = await reverseAddress(clickLat, clickLon);
+                    best = r.suggestion; alternates = r.alternates;
+                    addr.enabled = r.settings.enabled;
+                } catch {
+                    best = await legacy();
                 }
             }
+            // A later click replaces this one: only report the match for the current point.
+            if (form.lat !== clickLat || form.lon !== clickLon) return;
+            match.value = { best, alternates, clicked: true };
+            if (best) fillFrom(best, false);
+            if (best) geoQuery.value = best.placeName ? `${best.placeName} · ${best.streetName}` : best.label;
         } catch { /* coords set regardless */ }
     });
 }
@@ -482,6 +698,10 @@ onMounted(async () => {
             }
             dispatcherStore.callerOnMarkers = s.caller_on_markers !== false;
         }).catch(() => { /* defaults only */ });
+        getAddressSettings().then((s) => {
+            addr.enabled = s.enabled;
+            addr.minChars = s.min_chars;
+        }).catch(() => { /* older server: public geocoder only */ });
     }
 
     // TAK-CAD mode pre-generates a number from the feed's mission log. Standalone numbers are
@@ -519,13 +739,21 @@ onMounted(async () => {
     }
 });
 
+// The coordinates warning goes as soon as there are coordinates, not only at the next Create Incident.
+const NEED_COORDS = 'Coordinates are required — use address search or enter lat/lon.';
+watch(() => form.lat != null && form.lon != null, (has) => {
+    if (has && saveError.value === NEED_COORDS) saveError.value = '';
+});
+
 async function submit() {
     saveError.value = '';
     if (form.lat == null || form.lon == null) {
-        saveError.value = 'Coordinates are required — use address search or enter lat/lon.';
+        saveError.value = NEED_COORDS;
         return;
     }
-    const address = [form.streetName, form.city, form.state].filter(Boolean).join(', ');
+    // The unit rides on the street line unless it is already in it.
+    const street = streetWithUnit(form.streetName, form.unit);
+    const address = [street, form.city, form.state].filter(Boolean).join(', ');
     if (props.serverMode === 'standalone') {
         await submitStandalone(address);
     } else {
