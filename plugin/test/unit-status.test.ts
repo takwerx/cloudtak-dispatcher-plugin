@@ -2,7 +2,7 @@
 //   node --test plugin/test/*.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BOARD_LABEL, boardState, firstOnScene, respondingLine, unitTimesLine } from '../lib/unit-status.ts';
+import { BOARD_LABEL, boardState, boardBadgeClass, firstOnScene, respondingLine, unitTimesLine } from '../lib/unit-status.ts';
 import { buildCsv, buildReportHtml, buildStats, unitLine } from '../lib/report.ts';
 
 const T1 = '2026-11-02T17:15:00.000Z', T2 = '2026-11-02T17:22:00.000Z', T3 = '2026-11-02T17:39:00.000Z', T4 = '2026-11-02T17:52:00.000Z';
@@ -80,4 +80,12 @@ test('an incident whose units have no times (older data) reports with no First o
     const html = buildReportHtml({ name: 'E', prefix: '26', feed_name: 'feed', channel: null, status: 'active' } as never, list, buildStats(list, range), [], range, 'me');
     assert.doesNotMatch(html, /First on scene/);
     assert.match(html, /<td>Units<\/td><td>E7<\/td>/);
+});
+
+test('board badge colour follows the board state (shared by list, detail and undocked cards)', () => {
+    assert.equal(boardBadgeClass([]), 'bg-light text-dark border');
+    assert.equal(boardBadgeClass(undefined), 'bg-light text-dark border');
+    assert.equal(boardBadgeClass([assignedU]), 'bg-info text-dark');
+    assert.equal(boardBadgeClass([{ ...assignedU, status: 'on_scene' }]), 'bg-warning text-dark');
+    assert.equal(boardBadgeClass([{ ...assignedU, status: 'cleared' }]), 'bg-light text-dark border');
 });

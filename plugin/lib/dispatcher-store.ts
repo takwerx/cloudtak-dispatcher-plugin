@@ -18,6 +18,8 @@ interface DispatcherState {
     // anchored menu view collapses to a dock-back placeholder so the board isn't
     // mounted (and polling) twice.
     floating:       boolean;
+    // Incident ids currently undocked into their own floating cards over the map (opening order).
+    undocked:       string[];
     // Standalone Event→Incident model (server-backed; shared across dispatchers on this CloudTAK).
     events:         DispatcherEvent[];
     activeEvent:    DispatcherEvent | null;
@@ -35,6 +37,7 @@ export const dispatcherStore = reactive<DispatcherState>({
     operatorNumbers: false,
     operator:       loadOperator(),
     floating:       false,
+    undocked:       [],
     events:         [],
     activeEvent:    null,
     incidents:      [],

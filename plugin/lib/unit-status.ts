@@ -24,6 +24,12 @@ export function boardState(units: AssignedContact[] | undefined): BoardState {
     return live.some(u => unitStatus(u) === 'on_scene') ? 'on_scene' : 'dispatched';
 }
 
+// Bootstrap classes for the board badge (list rows, detail, undocked cards).
+export function boardBadgeClass(units: AssignedContact[] | undefined): string {
+    const b = boardState(units);
+    return b === 'on_scene' ? 'bg-warning text-dark' : b === 'dispatched' ? 'bg-info text-dark' : 'bg-light text-dark border';
+}
+
 // The marker remarks line: `Responding: E12 (on scene), M4`. Cleared units drop off the line.
 export function respondingLine(units: AssignedContact[] | undefined): string {
     const live = (units ?? []).filter(u => unitStatus(u) !== 'cleared');

@@ -89,6 +89,19 @@ Taken by in the callers column, note authors) show them. The **Dispatcher** fiel
 marker keep the CloudTAK callsign either way. With no number entered nothing is blocked; the numbers
 stay empty.
 
+### Undocked incidents (standalone)
+
+The Dispatcher panel shows one incident at a time. Press **Undock** (the window icon next to **Back**
+on an incident) and that incident opens in its own window over the map; the panel goes back to the list,
+so several incidents can be open and worked at once. Each window is the same incident view with everything
+in it (callers, notes, units, close, reopen), draggable by its grip and resizable. New windows open side
+by side while they fit left of the panel, then step down and right. **✕** closes the window; the incident stays on the board, and
+clicking its row opens it in the panel again. The list marks undocked incidents and shows how many are out, with **Close all**. The
+windows stay live while the panel is on another incident, the list, or closed, and edits made in a window
+go through the same server calls as the panel. They close when the Event is closed. After a page reload (per
+browser) they come back when the Dispatcher is opened on that Event again. **Close all** and **✕** are
+remembered, so closed windows stay closed.
+
 ### Delivery to field units (standalone)
 
 Each Event chooses how its incidents reach field devices when it is created:

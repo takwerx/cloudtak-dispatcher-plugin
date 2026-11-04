@@ -5,6 +5,7 @@ import type { MenuItemConfig } from '../../plugin.ts';
 import { IconHeadset } from '@tabler/icons-vue';
 import CadMain from './components/CadMain.vue';
 import { dockDispatcher } from './lib/float-pane.ts';
+import { closeAllUndocked } from './lib/undock-panes.ts';
 
 const MENU_KEY   = 'plugin-tak-dispatcher';
 const ROUTE_NAME = 'home-menu-tak-dispatcher';
@@ -47,6 +48,8 @@ export default class DispatcherPlugin implements PluginInstance {
         // Also retract the floating pane if detached (no-op on the load-time disable()
         // calls — the pane store starts empty on every page load).
         try { dockDispatcher(); } catch { /* ignore */ }
+        // Same for undocked incident cards; the saved list is kept so they come back on re-enable.
+        try { closeAllUndocked(false); } catch { /* ignore */ }
     }
 }
 
