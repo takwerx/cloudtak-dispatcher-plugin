@@ -6,6 +6,7 @@
 #   2. shellcheck at error severity: any finding fails. Warnings are printed, never fail.
 #   3. every tracked *.json, *.yml and *.yaml parses (needs PyYAML)
 #   4. every tracked *.py compiles (python3 -I)
+#   5. pr-checks.yml has no branch or path filter on pull_request (check_pr_trigger.py, ops #466)
 #
 # Prints every problem it finds, then exits 1 if there was one. Exit 2 means the check itself
 # could not run (no shellcheck, no python), which also fails the PR.
@@ -77,6 +78,9 @@ for n in names:
 print("checked %d file(s), %d problem(s)" % (len(names), bad))
 sys.exit(1 if bad else 0)
 ' || { [ $? -eq 1 ] && fail=1 || exit 2; }
+
+echo "== PR checks run on every PR"
+python3 -I .github/ci/check_pr_trigger.py || { [ $? -eq 1 ] && fail=1 || exit 2; }
 
 if [ "$fail" -ne 0 ]; then
   echo "static checks FAILED" >&2

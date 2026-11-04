@@ -4,6 +4,8 @@ A dispatcher plugin for [CloudTAK](https://github.com/dfpc-coe/CloudTAK) — cre
 incidents on the map, organize them under named **Events**, assign responders, and notify them
 via mission chat and direct GeoChat.
 
+**Current version: 1.4.0.** What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+
 ## Modes
 
 The plugin auto-detects its environment on load:
