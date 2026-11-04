@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 
 const fd = await import('../../../plugin/lib/field-delivery.ts')
 const mm = await import('../../../plugin/lib/map-marker.ts')
+const cw = await import('../../../plugin/lib/closed-window.ts')
 
 const MINUTE = 60 * 1000
 const incident = (over = {}) => ({
@@ -125,6 +126,33 @@ test('close: name starts with CLOSED and ended is closed time + 60 minutes', asy
     const patch = writes().find(c => c.url === '/api/core/event/core-2')
     assert.equal(patch.body.name, 'CLOSED 26-001 Structure Fire')
     assert.equal(patch.body.ended, new Date(Date.parse(closedAt) + 60 * MINUTE).toISOString())
+})
+
+test('close: the admin-set window (closed_marker_minutes) replaces the 60 minutes; 0 ends a minute from now', async () => {
+    const closedAt = '2026-11-01T21:00:00.000Z'
+    try {
+        cw.setClosedMarkerMinutes(cw.closedMarkerMinutesFrom({ closed_marker_minutes: 15 }))
+        await fd.closeIncidentInField(mapStore(), incident({ coreEventId: 'core-2a', closedAt }))
+        assert.equal(writes().find(c => c.url === '/api/core/event/core-2a').body.ended,
+            new Date(Date.parse(closedAt) + 15 * MINUTE).toISOString())
+
+        cw.setClosedMarkerMinutes(1440)
+        await fd.closeIncidentInField(mapStore(), incident({ coreEventId: 'core-2b', closedAt }))
+        assert.equal(writes().find(c => c.url === '/api/core/event/core-2b').body.ended,
+            new Date(Date.parse(closedAt) + 1440 * MINUTE).toISOString())
+
+        const t0 = Date.now()
+        cw.setClosedMarkerMinutes(0)
+        await fd.closeIncidentInField(mapStore(), incident({ coreEventId: 'core-2c', closedAt }))
+        const ended = Date.parse(writes().find(c => c.url === '/api/core/event/core-2c').body.ended)
+        assert.ok(ended >= t0 + 59 * 1000 && ended <= Date.now() + 61 * 1000, 'about a minute out, not in the past')
+
+        // a withdraw of that 0-minute close must not push `ended` back out
+        await fd.withdrawIncident(mapStore(), incident({ coreEventId: 'core-2c', closedAt }))
+        assert.equal(writes().filter(c => c.url === '/api/core/event/core-2c').length, 1)
+    } finally {
+        cw.setClosedMarkerMinutes(cw.CLOSED_MARKER_MINUTES_DEFAULT)
+    }
 })
 
 test('close with no closedAt yet stamps now, so ended is about an hour out', async () => {

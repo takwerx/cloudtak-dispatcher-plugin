@@ -3,6 +3,7 @@ import type { useMapStore } from '../../../src/stores/map.ts';
 import { dropIncidentMarker, removeIncidentMarker, buildRemarks, INCIDENT_ICON } from './map-marker.ts';
 import type { MarkerIncident } from './map-marker.ts';
 import { patchIncident } from './events-client.ts';
+import { closedMarkerEndMs, closedMarkerMinutes, shouldWithdraw, WITHDRAW_MS } from './closed-window.ts';
 
 // How an incident reaches field devices depends on its Event's delivery mode:
 //
@@ -14,19 +15,14 @@ import { patchIncident } from './events-client.ts';
 //    every active one every 10 s, so anyone in the channel sees it with nothing to subscribe
 //    to, including people who connect late. Markers are machine generated (how="m-g"), so
 //    field users can't edit them: one way only. A Core Event's `ended` time caps the CoT
-//    stale time, so a closed incident is given ended = closed + 60 min and drops off devices
-//    then. No plugin marker is drawn for these incidents — the Core Event IS the marker.
+//    stale time, so a closed incident is given ended = closed + the admin-set window (Manage
+//    panel, default 60 min; closed-window.ts) and drops off devices then. No plugin marker is
+//    drawn for these incidents — the Core Event IS the marker.
 //
 // Each function takes the same MarkerIncident the plugin already builds, plus the delivery
 // fields (delivery / channel / coreEventId / closedAt), so call sites only swap the function.
 
 type MapStore = ReturnType<typeof useMapStore>;
-
-/** How long a closed incident stays on field devices in broadcast mode. */
-export const CLOSED_VISIBLE_MS = 60 * 60 * 1000;
-
-/** Archive / nuke: end the Core Event a minute out so devices drop it within about a minute. */
-const WITHDRAW_MS = 60 * 1000;
 
 // CloudTAK limits a Core Event name to 64 characters.
 const NAME_MAX = 64;
@@ -64,9 +60,11 @@ async function channelBitpos(name: string): Promise<number> {
     return bitpos;
 }
 
+// `ended` for a closed incident: the close time plus the shared window (closed-window.ts holds the
+// value the board last read from the settings; the default applies until then).
 function endedFor(m: MarkerIncident): string | null {
     if (!m.closedAt) return null;
-    return new Date(new Date(m.closedAt).getTime() + CLOSED_VISIBLE_MS).toISOString();
+    return new Date(closedMarkerEndMs(new Date(m.closedAt).getTime(), closedMarkerMinutes())).toISOString();
 }
 
 // Create or update this incident's Core Event.
@@ -119,7 +117,7 @@ export async function showIncident(mapStore: MapStore, m: MarkerIncident): Promi
 
 /**
  * Incident closed. DataSync: remove the marker now (as before). Broadcast: mark it CLOSED and
- * let it drop off field devices 60 minutes after closing.
+ * let it drop off field devices after the admin-set window (default 60 minutes).
  */
 export async function closeIncidentInField(mapStore: MapStore, m: MarkerIncident): Promise<void> {
     if (m.delivery === 'broadcast') {
@@ -141,7 +139,7 @@ export async function withdrawIncident(mapStore: MapStore, m: MarkerIncident): P
         // A closed incident already ending (or ended) sooner must not be pushed back out —
         // moving `ended` later would put an expired marker back on devices.
         const ending = endedFor(m);
-        if (ending && new Date(ending).getTime() <= Date.now() + WITHDRAW_MS) return;
+        if (!shouldWithdraw(ending ? new Date(ending).getTime() : null)) return;
         await std(`/api/core/event/${encodeURIComponent(known)}`, {
             method: 'PATCH',
             body: { ended: new Date(Date.now() + WITHDRAW_MS).toISOString() },
