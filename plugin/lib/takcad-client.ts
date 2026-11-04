@@ -186,6 +186,7 @@ export async function getMissionLog(missionName: string): Promise<{ content: str
 
 // Post a free-text entry to the mission log.
 export async function postMissionLog(missionName: string, content: string): Promise<void> {
+    if (!missionName) return;  // broadcast Events have no feed, so no feed log
     await std(`/api/marti/missions/${encodeURIComponent(missionName)}/log`, {
         method: 'POST',
         body:   { content },

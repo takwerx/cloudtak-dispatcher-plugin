@@ -8,9 +8,13 @@ export interface DispatcherEvent {
     id: string;
     name: string;
     prefix: string;
+    // How incidents reach field devices: 'datasync' = markers in the feed below;
+    // 'broadcast' = CloudTAK Core Events shared with `channel` (feed_guid / feed_name are '').
+    delivery: 'datasync' | 'broadcast';
     feed_guid: string;
     feed_name: string;
     // Channel label captured from the feed at creation — fallback display only.
+    // For a broadcast Event this IS the audience: the channel its incidents are sent to.
     channel: string | null;
     // The feed's LIVE channels, resolved by the server per request. Badges render
     // from this; visibility itself is feed-driven (you see the event iff TAK shows
@@ -48,6 +52,8 @@ export interface DispatcherIncident {
     // The PRIMARY caller's name / phone, derived by the server (read-only shortcuts).
     caller_name: string | null;
     caller_phone: string | null;
+    // Broadcast Events: the CloudTAK Core Event carrying this incident to the field.
+    core_event_id: string | null;
     status: 'active' | 'closed';
     assigned: AssignedContact[];
     notes: IncidentNote[];
@@ -67,8 +73,10 @@ export interface IncidentCaller {
 export interface CreateEventBody {
     name: string;
     prefix: string;
-    feed_guid: string;
-    feed_name: string;
+    delivery?: 'datasync' | 'broadcast';
+    // Required for DataSync Events; omitted for broadcast Events.
+    feed_guid?: string;
+    feed_name?: string;
     channel?: string;
 }
 
@@ -88,7 +96,7 @@ export interface CreateIncidentBody {
 // report_number: send '' to clear. Callers are changed with addCaller / updateCaller / removeCaller.
 export type IncidentPatch = Partial<Pick<DispatcherIncident,
     'type' | 'address' | 'lat' | 'lon' | 'dispatcher' | 'details' | 'status' | 'assigned' | 'notes'>>
-    & { report_number?: string };
+    & { report_number?: string; core_event_id?: string };
 
 // For addCaller / updateCaller. updateCaller: undefined = leave as is, '' = clear.
 // time: ISO date of the call (default now). primary: true makes this caller the primary.

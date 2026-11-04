@@ -1015,7 +1015,8 @@ import {
     postMissionLog,
 } from '../lib/takcad-client.ts';
 import type { VehicleResponseMetadata } from '../lib/takcad-client.ts';
-import { dropIncidentMarker, removeIncidentMarker, updateIncidentMarker, dialablePhone as slDialable } from '../lib/map-marker.ts';
+import { dialablePhone as slDialable } from '../lib/map-marker.ts';
+import { showIncident, closeIncidentInField } from '../lib/field-delivery.ts';
 import { getContacts, sendAssignmentMessage, sendUpdateMessage } from '../lib/contacts-client.ts';
 import type { TakContact } from '../lib/contacts-client.ts';
 import type { IncidentMetadata, IncidentRef, VehicleRef, PersonRef, IncidentTypeRef, PersonCallsign } from '../lib/takcad-types.ts';
@@ -1375,7 +1376,7 @@ async function slAssignSelected(inc: DispatcherIncident) {
             catch (e) { console.warn('[dispatcher] assignment message failed', e); }
         }
         // Update the marker remarks once with the full responder list
-        try { await updateIncidentMarker(mapStore, slMarkerFor(updated)); }
+        try { await showIncident(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
         const feed = dispatcherStore.activeEvent;
         if (feed) {
@@ -1434,6 +1435,10 @@ function slMarkerFor(inc: DispatcherIncident, extraDetail = '') {
         // Callers reach the marker only through this list. Off means nothing about callers goes out.
         callers:    dispatcherStore.callerOnMarkers ? (inc.callers ?? []) : [],
         feedGuid:   dispatcherStore.activeEvent?.feed_guid,
+        delivery:    dispatcherStore.activeEvent?.delivery,
+        channel:     dispatcherStore.activeEvent?.channel,
+        coreEventId: inc.core_event_id,
+        closedAt:    inc.closed_at,
     };
 }
 
@@ -1488,7 +1493,7 @@ async function slAssignContact(inc: DispatcherIncident, contact: TakContact) {
         } catch (e) { console.warn('[dispatcher] assignment message failed', e); }
 
         // Update CoT marker remarks with responders
-        try { await updateIncidentMarker(mapStore, slMarkerFor(updated)); }
+        try { await showIncident(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
 
         // DataSync log
@@ -1563,7 +1568,7 @@ async function slCallerChange(op: () => Promise<DispatcherIncident>): Promise<bo
         const updated = await op();
         slApplyIncident(updated);
         if (updated.status === 'active') {
-            try { await updateIncidentMarker(mapStore, slMarkerFor(updated)); }
+            try { await showIncident(mapStore, slMarkerFor(updated)); }
             catch { /* best-effort */ }
         }
         return true;
@@ -1622,7 +1627,7 @@ async function slUnassignContact(inc: DispatcherIncident, uid: string) {
             catch { /* best-effort */ }
         }
 
-        try { await updateIncidentMarker(mapStore, slMarkerFor(updated)); }
+        try { await showIncident(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
     } catch (e) {
         slDetailError.value = e instanceof Error ? e.message : String(e);
@@ -1641,7 +1646,7 @@ async function slAddNote(inc: DispatcherIncident) {
         slApplyIncident(updated);
 
         // Update CoT marker with latest notes appended to details
-        try { await updateIncidentMarker(mapStore, slMarkerFor(updated)); }
+        try { await showIncident(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
 
         // DataSync log entry
@@ -1667,8 +1672,9 @@ async function slCloseIncident(inc: DispatcherIncident) {
         const updated = await patchIncident(inc.id, { status: 'closed' });
         slApplyIncident(updated);
 
-        // Remove CoT marker (record stays server-side)
-        try { await removeIncidentMarker(mapStore, slMarkerFor(updated)); }
+        // DataSync: remove the marker (record stays server-side). Broadcast: mark it CLOSED;
+        // it drops off field devices 60 minutes after closing.
+        try { await closeIncidentInField(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
 
         // DataSync log entry
@@ -1697,8 +1703,8 @@ async function slReopenIncident(inc: DispatcherIncident) {
         const updated = await patchIncident(inc.id, { status: 'active' });
         slApplyIncident(updated);
 
-        // Re-drop the CoT marker to the feed
-        try { await dropIncidentMarker(mapStore, slMarkerFor(updated)); }
+        // Re-drop the CoT marker to the feed (broadcast: reopen the Core Event)
+        try { await showIncident(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
 
         const feed = dispatcherStore.activeEvent;

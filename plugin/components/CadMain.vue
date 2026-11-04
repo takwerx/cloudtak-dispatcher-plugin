@@ -137,7 +137,19 @@
                         style='background:#64748b;color:#fff'
                         :title='`Visible to channel ${activeEventChannel}`'
                     >{{ activeEventChannel }}</span>
-                    <span class='ms-2'>
+                    <span
+                        v-if='store.activeEvent.delivery === "broadcast"'
+                        class='ms-2'
+                    >
+                        <span
+                            class='badge bg-primary text-white'
+                            title='Incidents are broadcast to the channel as CloudTAK Core Events — nothing for field users to subscribe to'
+                        >Broadcast</span>
+                    </span>
+                    <span
+                        v-else
+                        class='ms-2'
+                    >
                         <span class='badge bg-primary text-white'>DataSync</span>
                         <span class='fw-semibold'>{{ store.activeEvent.feed_name }}</span>
                         <span
@@ -335,7 +347,8 @@ const feedSubscribed = ref<boolean | null>(null);
 
 async function checkFeedSubscription() {
     const ev = store.activeEvent;
-    if (!ev) { feedSubscribed.value = null; return; }
+    // Broadcast Events have no feed, so there is nothing to be subscribed to.
+    if (!ev || ev.delivery === 'broadcast') { feedSubscribed.value = null; return; }
     try {
         feedSubscribed.value = (await getSubscribedFeedGuids()).has(ev.feed_guid);
     } catch {
