@@ -101,3 +101,11 @@ test('the dropdown choices are 0, 5, 10, 15, 30 and 60, all within the server ra
     assert.deepEqual([...w.CLOSED_MARKER_MINUTE_CHOICES], [0, 5, 10, 15, 30, 60]);
     for (const m of w.CLOSED_MARKER_MINUTE_CHOICES) assert.equal(w.isClosedMarkerMinutes(m), true);
 });
+
+test('endedMsFrom reads the end time CloudTAK returns, in either date format, or null', () => {
+    assert.equal(w.endedMsFrom({ ended: '2026-11-04T15:03:36.223Z' }), Date.parse('2026-11-04T15:03:36.223Z'));
+    assert.equal(w.endedMsFrom({ ended: '2026-11-04 15:03:36.223+00' }), Date.parse('2026-11-04T15:03:36.223Z'));
+    for (const bad of [null, undefined, {}, { ended: null }, { ended: '' }, { ended: 'soon' }, { ended: 5 }, 'x']) {
+        assert.equal(w.endedMsFrom(bad), null);
+    }
+});

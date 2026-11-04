@@ -195,6 +195,29 @@ test('withdraw never pushes a closed incident\'s end time later', async () => {
     assert.equal(writes().length, 1)
 })
 
+test('withdraw goes by the end time the Core Event really has, not by today\'s window', async () => {
+    // closed 10 minutes ago under a 5-minute window, so its marker ended 5 minutes ago; the admin has
+    // since set the window to 60 minutes. A recomputed end time (closed + 60) would look "later
+    // than a minute from now" and pull the dead marker back onto devices for a minute.
+    const closedAt = new Date(Date.now() - 10 * MINUTE).toISOString()
+    const stored = new Date(Date.parse(closedAt) + 5 * MINUTE).toISOString()
+    globalThis.__respond = (url, opts) => url === '/api/core/event/core-7' && opts.method === 'GET' ? { ended: stored } : respond(url, opts)
+    await fd.withdrawIncident(mapStore(), incident({ coreEventId: 'core-7', closedAt }))
+    assert.equal(writes().length, 0, 'an already-ended marker is left alone')
+
+    // stored end time is far out (closed a minute ago under a 60-minute window): still pulled in
+    const closedNow = new Date(Date.now() - MINUTE).toISOString()
+    const farOut = new Date(Date.parse(closedNow) + 60 * MINUTE).toISOString()
+    globalThis.__respond = (url, opts) => url === '/api/core/event/core-8' && opts.method === 'GET' ? { ended: farOut } : respond(url, opts)
+    await fd.withdrawIncident(mapStore(), incident({ coreEventId: 'core-8', closedAt: closedNow }))
+    assert.equal(writes().filter(c => c.url === '/api/core/event/core-8').length, 1)
+
+    // CloudTAK can't be read: fall back to the end time the current window gives
+    globalThis.__respond = (url, opts) => { if (opts.method === 'GET') throw new Error('offline'); return respond(url, opts) }
+    await fd.withdrawIncident(mapStore(), incident({ coreEventId: 'core-9', closedAt: new Date(Date.now() - 59 * MINUTE).toISOString() }))
+    assert.equal(writes().filter(c => c.url === '/api/core/event/core-9').length, 0)
+})
+
 test('withdraw with no Core Event does nothing', async () => {
     await fd.withdrawIncident(mapStore(), incident({ uid: 'never-sent' }))
     assert.equal(calls().length, 0)

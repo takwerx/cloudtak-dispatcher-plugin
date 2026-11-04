@@ -3,7 +3,7 @@ import type { useMapStore } from '../../../src/stores/map.ts';
 import { dropIncidentMarker, removeIncidentMarker, buildRemarks, INCIDENT_ICON } from './map-marker.ts';
 import type { MarkerIncident } from './map-marker.ts';
 import { patchIncident } from './events-client.ts';
-import { closedMarkerEndMs, closedMarkerMinutes, shouldWithdraw, WITHDRAW_MS } from './closed-window.ts';
+import { closedMarkerEndMs, closedMarkerMinutes, endedMsFrom, shouldWithdraw, WITHDRAW_MS } from './closed-window.ts';
 
 // How an incident reaches field devices depends on its Event's delivery mode:
 //
@@ -137,9 +137,19 @@ export async function withdrawIncident(mapStore: MapStore, m: MarkerIncident): P
         const known = m.coreEventId || coreIds.get(m.uid);
         if (!known) return;
         // A closed incident already ending (or ended) sooner must not be pushed back out —
-        // moving `ended` later would put an expired marker back on devices.
-        const ending = endedFor(m);
-        if (!shouldWithdraw(ending ? new Date(ending).getTime() : null)) return;
+        // moving `ended` later would put an expired marker back on devices. Go by the end time
+        // the Core Event really has: the admin may have changed the window since it was closed.
+        // If it can't be read, fall back to the end time the current window would give.
+        if (m.closedAt) {
+            let ending: number | null = null;
+            try { ending = endedMsFrom(await std(`/api/core/event/${encodeURIComponent(known)}`, { method: 'GET' })); }
+            catch { /* use the computed time */ }
+            if (ending === null) {
+                const computed = endedFor(m);
+                ending = computed ? new Date(computed).getTime() : null;
+            }
+            if (!shouldWithdraw(ending)) return;
+        }
         await std(`/api/core/event/${encodeURIComponent(known)}`, {
             method: 'PATCH',
             body: { ended: new Date(Date.now() + WITHDRAW_MS).toISOString() },
