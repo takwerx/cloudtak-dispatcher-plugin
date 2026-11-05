@@ -243,6 +243,59 @@
 
             <hr class='my-1'>
 
+            <!-- Broadcast mode: how long a closed incident's marker stays on field devices. CloudTAK system admin only. -->
+            <div>
+                <div class='small text-muted fw-semibold text-uppercase mb-1 d-flex align-items-center flex-wrap gap-2'>
+                    Broadcast Mode Incident Closed Marker Retention
+                    <span
+                        class='badge bg-secondary text-white fw-normal text-nowrap'
+                        title='Only a CloudTAK system admin can change this'
+                    >CloudTAK admin only</span>
+                </div>
+                <div class='card border'>
+                    <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
+                        <div class='d-flex align-items-center gap-2'>
+                            <select
+                                id='closedMarkerMinutes'
+                                v-model.number='closedMinutes'
+                                class='form-select form-select-sm border'
+                                style='width: auto'
+                                data-test='closed-minutes'
+                                :disabled='!isAdmin || savingClosed'
+                                @change='saveClosedMinutes'
+                            >
+                                <option
+                                    v-for='m in closedMinuteChoices'
+                                    :key='m'
+                                    :value='m'
+                                >
+                                    {{ m === 0 ? '0 minutes (as soon as possible)' : `${m} minutes` }}
+                                </option>
+                            </select>
+                            <span
+                                v-if='savingClosed'
+                                class='spinner-border spinner-border-sm'
+                            />
+                            <span
+                                v-else-if='closedSaved'
+                                class='text-muted'
+                            >Saved ✓</span>
+                        </div>
+                        <div class='text-muted small'>
+                            Markers for closed incidents go stale after the set time and are no longer visible on the map.
+                        </div>
+                        <div
+                            v-if='closedError'
+                            class='text-danger small'
+                        >
+                            {{ closedError }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <hr class='my-1'>
+
             <!-- Custom call types. CloudTAK system admin only. -->
             <div>
                 <div class='small text-muted fw-semibold text-uppercase mb-1 d-flex align-items-center gap-2'>
@@ -316,19 +369,23 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { getDispatcherSettings, putDispatcherSetting } from '../lib/events-client.ts';
 import type { AgencySettings } from '../lib/events-client.ts';
 import { dispatcherStore, applyOperatorNumbers } from '../lib/dispatcher-store.ts';
 import { CJIS_REMINDER_DEFAULT_TEXT, cjisReminderFrom, isSystemAdmin } from '../lib/cjis-reminder.ts';
 import { OPERATOR_SETTING, operatorNumbersFrom } from '../lib/operator.ts';
+import {
+    CLOSED_MARKER_MINUTE_CHOICES, closedMarkerMinutes, closedMarkerMinutesFrom, isClosedMarkerMinutes,
+    setClosedMarkerMinutes,
+} from '../lib/closed-window.ts';
 
 const emit = defineEmits<{
     (e: 'close'): void;
 }>();
 
-// CloudTAK system admin (profile flag). Gates the CJIS reminder and the custom call types; the
-// server refuses those writes for anyone else anyway.
+// CloudTAK system admin (profile flag). Gates the CJIS reminder, employee numbers, the closed-marker
+// window and the custom call types; the server refuses those writes for anyone else anyway.
 const isAdmin = ref(false);
 
 // ── Custom call types (deployment-shared, merged over defaults in IncidentForm; admin only) ──
@@ -454,6 +511,41 @@ async function saveCjisText() {
     }
 }
 
+// ── Closed-marker retention (deployment-shared; broadcast mode; CloudTAK system admin only) ──
+// A value set outside the dropdown's choices (an older or hand-edited setting) is still offered so
+// the dropdown shows what is actually in force.
+const closedMinutes = ref<number>(closedMarkerMinutes());
+const closedMinuteChoices = computed(() => {
+    const list = [...CLOSED_MARKER_MINUTE_CHOICES];
+    if (!list.includes(closedMinutes.value)) list.push(closedMinutes.value);
+    return list.sort((a, b) => a - b);
+});
+const savingClosed  = ref(false);
+const closedSaved   = ref(false);
+const closedError   = ref('');
+
+async function saveClosedMinutes() {
+    closedError.value = '';
+    const want = closedMinutes.value;
+    const before = closedMarkerMinutes();
+    if (!isClosedMarkerMinutes(want)) {
+        closedMinutes.value = before;
+        return;
+    }
+    savingClosed.value = true;
+    try {
+        await putDispatcherSetting('closed_marker_minutes', want);
+        setClosedMarkerMinutes(want);
+        closedSaved.value = true;
+        setTimeout(() => { closedSaved.value = false; }, 2000);
+    } catch (e) {
+        closedMinutes.value = before;
+        closedError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        savingClosed.value = false;
+    }
+}
+
 // ── Agency header (moved here from ReportView; reports read it at export time) ──
 const agency       = reactive<AgencySettings>({ name: '', id: '', logo: null });
 const savingAgency = ref(false);
@@ -512,6 +604,7 @@ onMounted(async () => {
         dispatcherStore.cjisReminder = cjis;
         operatorNumbers.value = operatorNumbersFrom(s);
         applyOperatorNumbers(operatorNumbers.value);
+        closedMinutes.value = setClosedMarkerMinutes(closedMarkerMinutesFrom(s));
         const list = s.incident_types;
         if (Array.isArray(list)) {
             customTypes.value = list.filter((t): t is string => typeof t === 'string');

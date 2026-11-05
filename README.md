@@ -99,7 +99,13 @@ Each Event chooses how its incidents reach field devices when it is created:
   The CloudTAK server sends it to everyone in that channel and re-sends it every 10 seconds, so
   it appears on every device in the channel with nothing to subscribe to, including devices that
   connect later. It is one way (field users can't edit it), and a closed incident is marked
-  `CLOSED` and drops off devices 60 minutes after closing. Needs a CloudTAK with Core Events and
+  `CLOSED` and goes stale on devices after a set time: **Dispatcher Settings → Broadcast Mode Incident Closed
+  Marker Retention** offers 0, 5, 10, 15, 30 or 60 minutes (default 60; 0 drops the marker within
+  about a minute). Only the CloudTAK system admin account can change it. The time is applied when
+  an incident is closed, so changing it does not move incidents that are already closed. TAK clients
+  drop the marker at that time; the CloudTAK web map first greys it out and removes it per the
+  user's own **Settings → Display → Remove Stale Elements** (Immediate, 10 Minutes, 30 Minutes,
+  1 Hour or Never). Needs a CloudTAK with Core Events and
   its Admin Connection connected. The incidents also appear in CloudTAK's own Core Events list.
 
 ## Layout

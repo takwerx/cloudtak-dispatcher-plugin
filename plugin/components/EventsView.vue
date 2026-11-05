@@ -358,11 +358,12 @@ import { getMissions, getUserChannels, createFeed, feedChannels } from '../lib/t
 import OverlayManager from '../../../src/base/overlay.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
 import {
-    listEvents, createEvent, setEventStatus, deleteEvent, listIncidents,
+    listEvents, createEvent, setEventStatus, deleteEvent, listIncidents, getDispatcherSettings,
 } from '../lib/events-client.ts';
 import type { DispatcherEvent } from '../lib/events-client.ts';
 import { withdrawIncident, coreEventsAvailable } from '../lib/field-delivery.ts';
 import { dispatcherStore as store, loadLastEventId } from '../lib/dispatcher-store.ts';
+import { closedMarkerMinutesFrom, setClosedMarkerMinutes } from '../lib/closed-window.ts';
 import ReportView from './ReportView.vue';
 
 const emit = defineEmits<{
@@ -660,6 +661,10 @@ async function clearEventMarkers(ev: DispatcherEvent) {
     let incidents;
     try { incidents = await listIncidents(ev.id); }
     catch { return; }
+    // The withdraw guard uses the shared closed-marker window; read the latest value first
+    // (best-effort: an older server without the settings route keeps the default).
+    try { setClosedMarkerMinutes(closedMarkerMinutesFrom(await getDispatcherSettings())); }
+    catch { /* keep last */ }
     for (const inc of incidents) {
         try {
             await withdrawIncident(mapStore, {
