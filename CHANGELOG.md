@@ -1,6 +1,6 @@
 # Changelog
 
-## Next release
+## 1.5.0
 
 - **Employee numbers (optional, off by default).** The CloudTAK admin can turn on **Employee Numbers** in the
   new **Dispatcher Settings** screen (the gear, open even with no Event). Each dispatcher then signs in with
