@@ -158,6 +158,8 @@ export function buildReportHtml(
     range: ReportRange,
     generatedBy: string,
     agency?: AgencySettings | null,
+    // Dispatcher Settings → Employee Numbers on: add the Call taker # / Dispatcher # rows and the note authors.
+    operators = false,
 ): string {
     // Only render a logo we produced ourselves (canvas-downscaled data URI).
     const logo = agency?.logo && agency.logo.startsWith('data:image/') ? agency.logo : null;
@@ -173,7 +175,7 @@ export function buildReportHtml(
         const assigned = (i.assigned ?? []).map(c => esc(unitLine(c, t => fmt(new Date(t))))).join('<br>') || '—';
         const onScene = firstOnScene(i.assigned);
         const notes = (i.notes ?? [])
-            .map(n => `<div class='note'><span class='when'>${esc(fmt(new Date(n.time)))}</span> ${esc(n.text)}</div>`)
+            .map(n => `<div class='note'><span class='when'>${esc(fmt(new Date(n.time)))}</span> ${esc(n.text)}${operators && n.by ? ` <span class='muted'>· ${esc(n.by)}</span>` : ''}</div>`)
             .join('') || `<div class='note muted'>No notes</div>`;
         return `
         <div class='incident'>
@@ -187,8 +189,10 @@ export function buildReportHtml(
                 ${i.disposition ? `<tr><td>Disposition</td><td>${esc(dispositionLabel(i))}</td></tr>` : ''}
                 <tr><td>Location</td><td>${esc(i.address || `${(i.lat ?? 0).toFixed(5)}, ${(i.lon ?? 0).toFixed(5)}`)}</td></tr>
                 <tr><td>Dispatcher</td><td>${esc(i.dispatcher || '—')}</td></tr>
+                ${operators ? `<tr><td>Created by #</td><td>${esc(i.created_by_no || '—')}</td></tr><tr><td>Initial Dispatcher #</td><td>${esc(i.initial_dispatcher_no || '—')}</td></tr>` : ''}
+                ${operators && i.status === 'closed' ? `<tr><td>Closed by #</td><td>${esc(i.closed_by_no || '—')}</td></tr>` : ''}
                 ${i.report_number ? `<tr><td>Report #</td><td>${esc(i.report_number)}</td></tr>` : ''}
-                ${(i.callers ?? []).length ? `<tr><td>${i.callers.length > 1 ? 'Callers' : 'Caller'}</td><td>${i.callers.map(c => esc(callerLine(c, fmt(new Date(c.time))))).join('<br>')}</td></tr>` : ''}
+                ${(i.callers ?? []).length ? `<tr><td>${i.callers.length > 1 ? 'Callers' : 'Caller'}</td><td>${i.callers.map(c => esc(callerLine(c, fmt(new Date(c.time)), operators))).join('<br>')}</td></tr>` : ''}
                 ${onScene ? `<tr><td>First on scene</td><td>${esc(fmt(new Date(onScene)))}</td></tr>` : ''}
                 <tr><td>Units</td><td>${assigned}</td></tr>
             </table>
@@ -277,9 +281,11 @@ ${log || `<p class='muted'>No incidents in the selected period.</p>`}
 }
 
 // One caller for the report and CSV: "<when> <name> · <phone> — <note> (primary)".
-export function callerLine(c: IncidentCaller, when: string): string {
+// operators (Employee Numbers on): add who took the call, when known.
+export function callerLine(c: IncidentCaller, when: string, operators = false): string {
     const who = [c.name, c.phone].filter(Boolean).join(' · ');
-    return `${when} ${[who, c.note].filter(Boolean).join(' — ')}${c.primary ? ' (primary)' : ''}`;
+    const taken = operators && c.taken_by ? ` · taken by #${c.taken_by}` : '';
+    return `${when} ${[who, c.note].filter(Boolean).join(' — ')}${c.primary ? ' (primary)' : ''}${taken}`;
 }
 
 // One unit with its three times: `E12 (cleared) assigned 05:15 PM · on scene 05:22 PM · cleared 05:39 PM`.
@@ -295,17 +301,20 @@ function csvCell(v: string | number | null | undefined): string {
     return `"${s.replace(/"/g, '""')}"`;
 }
 
-export function buildCsv(incidents: DispatcherIncident[]): string {
+// operators: Dispatcher Settings → Employee Numbers is on. Only then the CSV gets the created_by_no /
+// initial_dispatcher_no / closed_by_no columns, who took each call in the callers column,
+// and the note authors, so with it off the file is exactly as before.
+export function buildCsv(incidents: DispatcherIncident[], operators = false): string {
     const header = [
         'number', 'report_number', 'caller_name', 'caller_phone', 'callers', 'type', 'status', 'created_at', 'closed_at', 'disposition', 'disposition_note', 'address',
-        'lat', 'lon', 'dispatcher', 'assigned_units', 'details', 'notes', 'first_on_scene', 'unit_times',
+        'lat', 'lon', 'dispatcher', ...(operators ? ['created_by_no', 'initial_dispatcher_no', 'closed_by_no'] : []), 'assigned_units', 'details', 'notes', 'first_on_scene', 'unit_times',
     ].join(',');
     const rows = incidents.map(i => [
         csvCell(i.number),
         csvCell(i.report_number),
         csvCell(i.caller_name),
         csvCell(i.caller_phone),
-        csvCell((i.callers ?? []).map(c => callerLine(c, `[${c.time}]`)).join(' | ')),
+        csvCell((i.callers ?? []).map(c => callerLine(c, `[${c.time}]`, operators)).join(' | ')),
         csvCell(i.type),
         csvCell(i.status),
         csvCell(i.created_at),
@@ -316,9 +325,10 @@ export function buildCsv(incidents: DispatcherIncident[]): string {
         csvCell(i.lat),
         csvCell(i.lon),
         csvCell(i.dispatcher),
+        ...(operators ? [csvCell(i.created_by_no), csvCell(i.initial_dispatcher_no), csvCell(i.closed_by_no)] : []),
         csvCell((i.assigned ?? []).map(c => c.callsign).join('; ')),
         csvCell(i.details),
-        csvCell((i.notes ?? []).map(n => `[${n.time}] ${n.text}`).join(' | ')),
+        csvCell((i.notes ?? []).map(n => `[${n.time}] ${n.text}${operators && n.by ? ` (${n.by})` : ''}`).join(' | ')),
         csvCell(firstOnScene(i.assigned)),
         csvCell((i.assigned ?? []).map(c => unitLine(c, t => `[${t}]`)).join(' | ')),
     ].join(','));

@@ -1,4 +1,5 @@
 import { std } from '../../../src/std.ts';
+import { loadOperator } from './operator.ts';
 
 // Typed client for the dispatcher server route (server/plugin-dispatcher.ts), which stores
 // Events and Incidents in CloudTAK's own Postgres so every dispatcher on this CloudTAK shares
@@ -40,6 +41,8 @@ export interface AssignedContact {
 export interface IncidentNote {
     text: string;
     time: string;
+    // Employee number of whoever wrote it (stamped by the server); absent on older notes.
+    by?: string;
 }
 
 export interface DispatcherIncident {
@@ -51,6 +54,12 @@ export interface DispatcherIncident {
     lat: number | null;
     lon: number | null;
     dispatcher: string | null;
+    // Employee numbers (only while Dispatcher Settings → Employee Numbers is on; see operator.ts), null
+    // otherwise: who created the incident (report and CSV only), who assigned its first unit, who closed it
+    // (cleared on reopen). Who took each call is `taken_by` on the caller.
+    created_by_no: string | null;
+    initial_dispatcher_no: string | null;
+    closed_by_no: string | null;
     details: string | null;
     report_number: string | null;
     // Every caller on the incident, in the order received; exactly one is primary (none when empty).
@@ -78,6 +87,7 @@ export interface IncidentCaller {
     note: string | null;
     time: string;       // when the call was received
     primary: boolean;   // its phone is the tap-to-call number on the incident marker
+    taken_by?: string;  // employee number of who took the call (Employee Numbers on); absent otherwise
 }
 
 export interface CreateEventBody {
@@ -96,6 +106,9 @@ export interface CreateIncidentBody {
     lat: number;
     lon: number;
     dispatcher?: string;
+    // Employee number of who took the call (Employee Numbers on): the incident's creator and the first
+    // caller's `taken_by`. Defaults to this terminal's operator; '' = none.
+    operator?: string;
     details?: string;
     report_number?: string;
     // The first caller (becomes the primary caller). More are added with addCaller().
@@ -108,7 +121,7 @@ export interface CreateIncidentBody {
 // clears the disposition. Both are ignored on any other patch.
 export type IncidentPatch = Partial<Pick<DispatcherIncident,
     'type' | 'address' | 'lat' | 'lon' | 'dispatcher' | 'details' | 'status' | 'notes'>>
-    & { report_number?: string; core_event_id?: string; disposition?: string; disposition_note?: string };
+    & { report_number?: string; core_event_id?: string; disposition?: string; disposition_note?: string; reopen_reason?: string };
 
 // For addCaller / updateCaller. updateCaller: undefined = leave as is, '' = clear.
 // time: ISO date of the call (default now). primary: true makes this caller the primary.
@@ -143,6 +156,13 @@ export async function deleteEvent(id: string): Promise<void> {
     await std(`/api/dispatcher/events/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
+// Every write carries this terminal's operator when one is set (see operator.ts). The server records it
+// only while the Employee Numbers switch is on, and ignores it otherwise.
+function withOperator<T extends object>(body: T): T & { operator?: string } {
+    const operator = loadOperator();
+    return operator ? { operator, ...body } : body;
+}
+
 export async function listIncidents(eventId: string): Promise<DispatcherIncident[]> {
     const r = await std(`/api/dispatcher/events/${encodeURIComponent(eventId)}/incidents`, {
         method: 'GET',
@@ -153,7 +173,7 @@ export async function listIncidents(eventId: string): Promise<DispatcherIncident
 export async function createIncident(eventId: string, body: CreateIncidentBody): Promise<DispatcherIncident> {
     const r = await std(`/api/dispatcher/events/${encodeURIComponent(eventId)}/incidents`, {
         method: 'POST',
-        body,
+        body: withOperator(body),
     }) as { incident: DispatcherIncident };
     return r.incident;
 }
@@ -161,7 +181,7 @@ export async function createIncident(eventId: string, body: CreateIncidentBody):
 export async function patchIncident(id: string, patch: IncidentPatch): Promise<DispatcherIncident> {
     const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(id)}`, {
         method: 'PATCH',
-        body: patch,
+        body: withOperator(patch),
     }) as { incident: DispatcherIncident };
     return r.incident;
 }
@@ -171,7 +191,7 @@ export async function patchIncident(id: string, patch: IncidentPatch): Promise<D
 export async function addCaller(incidentId: string, body: CallerInput): Promise<DispatcherIncident> {
     const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/callers`, {
         method: 'POST',
-        body,
+        body: withOperator(body),
     }) as { incident: DispatcherIncident };
     return r.incident;
 }
@@ -197,7 +217,7 @@ export async function removeCaller(incidentId: string, callerId: string): Promis
 export async function assignUnits(incidentId: string, units: { uid: string; callsign: string }[]): Promise<DispatcherIncident> {
     const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/units`, {
         method: 'POST',
-        body: { units },
+        body: withOperator({ units }),
     }) as { incident: DispatcherIncident };
     return r.incident;
 }
@@ -205,7 +225,7 @@ export async function assignUnits(incidentId: string, units: { uid: string; call
 export async function setUnitStatus(incidentId: string, uid: string, status: 'on_scene' | 'cleared'): Promise<DispatcherIncident> {
     const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/units/${encodeURIComponent(uid)}`, {
         method: 'PATCH',
-        body: { status },
+        body: withOperator({ status }),
     }) as { incident: DispatcherIncident };
     return r.incident;
 }

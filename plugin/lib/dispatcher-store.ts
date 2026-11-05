@@ -2,6 +2,7 @@ import { reactive } from 'vue';
 import type { DispatcherEvent, DispatcherIncident } from './events-client.ts';
 import type { CjisReminder } from './cjis-reminder.ts';
 import { CJIS_REMINDER_DEFAULT_TEXT } from './cjis-reminder.ts';
+import { loadOperator, saveOperator } from './operator.ts';
 
 export type ServerMode = 'detecting' | 'takcad' | 'standalone';
 
@@ -9,6 +10,10 @@ interface DispatcherState {
     serverMode:     ServerMode;
     forcedMode:     'standalone' | null;
     dispatcherName: string;
+    // Shared admin switch 'Employee numbers' (Dispatcher Settings; default off). Off = none of the operator UI shows.
+    operatorNumbers: boolean;
+    // Employee number of the person at this terminal (standalone mode; see operator.ts). null = not set.
+    operator:       string | null;
     // True while the Dispatcher is detached into a floating pane over the map; the
     // anchored menu view collapses to a dock-back placeholder so the board isn't
     // mounted (and polling) twice.
@@ -17,9 +22,9 @@ interface DispatcherState {
     events:         DispatcherEvent[];
     activeEvent:    DispatcherEvent | null;
     incidents:      DispatcherIncident[];
-    // Shared 'Caller details on map markers' setting (Manage panel); markers read it synchronously.
+    // Shared 'Caller details on map markers' setting (Dispatcher Settings); markers read it synchronously.
     callerOnMarkers: boolean;
-    // Shared CJIS reminder line on every standalone incident (Manage panel; admin-only to change).
+    // Shared CJIS reminder line on every standalone incident (Dispatcher Settings; admin-only to change).
     cjisReminder:   CjisReminder;
 }
 
@@ -27,6 +32,8 @@ export const dispatcherStore = reactive<DispatcherState>({
     serverMode:     'detecting',
     forcedMode:     null,
     dispatcherName: '',
+    operatorNumbers: false,
+    operator:       loadOperator(),
     floating:       false,
     events:         [],
     activeEvent:    null,
@@ -57,5 +64,15 @@ export function saveLastEventId(id: string | null): void {
         else localStorage.removeItem(LAST_EVENT_KEY);
     } catch {
         // ignore storage failures (private mode / quota)
+    }
+}
+
+// Apply the shared Employee Numbers switch. Turning it off also forgets this terminal's number, so
+// nothing is sent and the header asks again if an admin turns it back on.
+export function applyOperatorNumbers(on: boolean): void {
+    dispatcherStore.operatorNumbers = on;
+    if (!on && dispatcherStore.operator) {
+        dispatcherStore.operator = null;
+        saveOperator(null);
     }
 }

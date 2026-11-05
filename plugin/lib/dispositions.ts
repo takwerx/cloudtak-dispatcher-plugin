@@ -20,6 +20,8 @@ export const DISPOSITION_OTHER = 'Other';
 // Same caps as the server (DISPOSITION_MAX / DISPOSITION_NOTE_MAX in server/plugin-dispatcher.ts).
 export const DISPOSITION_MAX = 40;
 export const DISPOSITION_NOTE_MAX = 80;
+// Reopening a closed incident asks why; the server requires it and writes "Reopened: <reason>".
+export const REOPEN_REASON_MAX = 120;
 
 // "Unfounded", or "Other — lost contact with caller". Empty string when the incident has none.
 export function dispositionLabel(i: Pick<DispatcherIncident, 'disposition' | 'disposition_note'>): string {
