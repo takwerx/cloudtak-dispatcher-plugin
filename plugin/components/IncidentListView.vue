@@ -1960,7 +1960,7 @@ async function slCloseIncident(inc: DispatcherIncident, disposition: string | nu
         slCancelClose();
 
         // DataSync: remove the marker (record stays server-side). Broadcast: mark it CLOSED;
-        // it drops off field devices after the admin-set window (Manage panel, default 60 min).
+        // it drops off field devices after the admin-set window (Dispatcher Settings, default 60 min).
         try { await closeIncidentInField(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
 
