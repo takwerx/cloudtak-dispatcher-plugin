@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.1
 
 - **install.sh no longer drops other CloudTAK plugins.** On a box with more than one web plugin (TAK Sim, LiveWX Radar),
   the build-context file install.sh wrote kept only the Dispatcher, so the others were on disk but missing from the
