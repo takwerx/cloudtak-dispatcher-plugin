@@ -576,7 +576,7 @@
                     >{{ BOARD_LABEL[boardState(slDetail.assigned)] }}</span>
                 </div>
                 <div class='flex-grow-1 overflow-auto p-3 d-flex flex-column gap-3'>
-                    <!-- CJIS reminder: one shared line, on by default, Manage → CJIS Reminder (admin only) -->
+                    <!-- CJIS reminder: one shared line, on by default, Dispatcher Settings → CJIS Reminder (admin only) -->
                     <div
                         v-if='dispatcherStore.cjisReminder.enabled'
                         class='small text-warning border border-warning rounded px-2 py-1'
@@ -621,6 +621,16 @@
                                 <div class='col-8'>
                                     {{ slDetail.dispatcher || '—' }}
                                 </div>
+                                <!-- Employee numbers (Dispatcher Settings → Employee Numbers on). Who created
+                                     the incident is kept for the report and CSV; who took each call is on the caller. -->
+                                <template v-if='dispatcherStore.operatorNumbers'>
+                                    <div class='col-4 text-muted'>
+                                        Initial Dispatcher #
+                                    </div>
+                                    <div class='col-8'>
+                                        {{ slDetail.initial_dispatcher_no || '—' }}
+                                    </div>
+                                </template>
                                 <div class='col-4 text-muted'>
                                     Report #
                                 </div>
@@ -664,6 +674,14 @@
                                     <div class='col-8'>
                                         {{ dispositionLabel(slDetail) || '—' }}
                                     </div>
+                                    <template v-if='dispatcherStore.operatorNumbers'>
+                                        <div class='col-4 text-muted'>
+                                            Closed by #
+                                        </div>
+                                        <div class='col-8'>
+                                            {{ slDetail.closed_by_no || '—' }}
+                                        </div>
+                                    </template>
                                 </template>
                                 <template v-if='slDetail.details'>
                                     <div class='col-4 text-muted'>
@@ -719,6 +737,12 @@
                                 {{ c.note }}
                             </div>
                             <div class='d-flex align-items-center justify-content-end gap-2'>
+                                <!-- Who took this call (Employee Numbers on); left side, actions stay right -->
+                                <span
+                                    v-if='c.taken_by && dispatcherStore.operatorNumbers'
+                                    class='text-muted me-auto'
+                                    title='Employee number of who took this call'
+                                >Taken by #{{ c.taken_by }}</span>
                                 <span
                                     v-if='c.primary'
                                     class='badge bg-primary text-white'
@@ -831,6 +855,11 @@
                         >
                             <span class='text-muted'>{{ shortTime(n.time) }}</span>
                             {{ n.text }}
+                            <span
+                                v-if='n.by && dispatcherStore.operatorNumbers'
+                                class='text-muted'
+                                title='Employee number'
+                            >· {{ n.by }}</span>
                         </div>
                     </div>
 
@@ -1067,6 +1096,47 @@
                             </div>
                         </div>
                     </div>
+                    <!-- Reopen: why is it coming back? The reason is required and goes in the notes as
+                         "Reopened: <reason>" (with the employee number when Employee Numbers is on). -->
+                    <div
+                        v-if='slReopening && slDetail.status === "closed"'
+                        class='card border border-warning'
+                        data-test='reopen-card'
+                    >
+                        <div class='card-body py-2 px-3 small d-flex flex-column gap-2'>
+                            <div class='d-flex align-items-center'>
+                                <span class='fw-semibold'>Reason for reopening</span>
+                                <button
+                                    class='btn btn-link btn-sm p-0 ms-auto text-decoration-none'
+                                    :disabled='slSaving'
+                                    @click='slCancelReopen'
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                            <input
+                                ref='slReopenInput'
+                                v-model='slReopenReason'
+                                type='text'
+                                :maxlength='REOPEN_REASON_MAX'
+                                class='form-control form-control-sm border border-warning'
+                                placeholder='Why is it being reopened?'
+                                :disabled='slSaving'
+                                @keydown.enter='slReopenReason.trim() && slReopenIncident(slDetail, slReopenReason)'
+                                @keydown.esc='slCancelReopen'
+                            >
+                            <div class='d-flex'>
+                                <button
+                                    class='btn btn-sm ms-auto'
+                                    :class='slReopenReason.trim() ? "btn-warning" : "btn-outline-secondary"'
+                                    :disabled='slSaving || !slReopenReason.trim()'
+                                    @click='slReopenIncident(slDetail, slReopenReason)'
+                                >
+                                    Reopen Incident
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                     <div class='d-flex gap-2 mt-2'>
                         <button
                             class='btn btn-sm btn-outline-secondary'
@@ -1083,10 +1153,10 @@
                             Close Incident
                         </button>
                         <button
-                            v-else-if='slDetail.status === "closed"'
+                            v-else-if='slDetail.status === "closed" && !slReopening'
                             class='btn btn-sm btn-outline-warning ms-auto'
                             :disabled='slSaving'
-                            @click='slReopenIncident(slDetail)'
+                            @click='slStartReopen'
                         >
                             Reopen
                         </button>
@@ -1146,10 +1216,12 @@ import { isActive, formatAddress, formatTime, STATUS_CANCELLED } from '../lib/ta
 import type { MissionRef } from '../lib/takcad-client.ts';
 import { listIncidents, patchIncident, getDispatcherSettings, addCaller, updateCaller, removeCaller, assignUnits, setUnitStatus, removeUnit } from '../lib/events-client.ts';
 import { cjisReminderFrom } from '../lib/cjis-reminder.ts';
+import { operatorNumbersFrom } from '../lib/operator.ts';
+import { closedMarkerMinutesFrom, setClosedMarkerMinutes } from '../lib/closed-window.ts';
 import type { DispatcherIncident, AssignedContact, IncidentCaller } from '../lib/events-client.ts';
-import { dispatcherStore } from '../lib/dispatcher-store.ts';
+import { dispatcherStore, applyOperatorNumbers } from '../lib/dispatcher-store.ts';
 import { BOARD_LABEL, boardState, respondingLine, unitStatus, unitTimesLine } from '../lib/unit-status.ts';
-import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, dispositionLabel } from '../lib/dispositions.ts';
+import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, REOPEN_REASON_MAX, dispositionLabel } from '../lib/dispositions.ts';
 
 const props = defineProps<{
     serverMode:    'detecting' | 'takcad' | 'standalone';
@@ -1427,6 +1499,10 @@ const slClosing         = ref(false);
 const slDisposition     = ref<string | null>(null);
 const slOtherNote       = ref('');
 const slOtherInput      = ref<HTMLInputElement | null>(null);
+// Reopen box: open after pressing Reopen on a closed incident; Reopen Incident needs a reason.
+const slReopening       = ref(false);
+const slReopenReason    = ref('');
+const slReopenInput     = ref<HTMLInputElement | null>(null);
 // Close Incident lights up once the pick is complete: a preset, or Other with its text.
 const slCanClose = computed(() =>
     !!slDisposition.value && (slDisposition.value !== DISPOSITION_OTHER || slOtherNote.value.trim().length > 0));
@@ -1601,6 +1677,7 @@ async function slOpenDetail(id: string) {
     slClosing.value = false;
     slDisposition.value = null;
     slOtherNote.value = '';
+    slCancelReopen();
     slCallerForm.value = null;
     slRefreshCallerSetting();
     showContactPicker.value = false;
@@ -1845,6 +1922,26 @@ function slCancelClose() {
     slOtherNote.value = '';
 }
 
+function slStartReopen() {
+    // Employee Numbers off: reopen right away, as it always did (no reason box).
+    if (!dispatcherStore.operatorNumbers) {
+        if (slDetail.value) void slReopenIncident(slDetail.value, '');
+        return;
+    }
+    slReopening.value = true;
+    slReopenReason.value = '';
+    // The box sits at the bottom of a long panel: bring it into view, not just focus it.
+    nextTick(() => {
+        slReopenInput.value?.focus();
+        slReopenInput.value?.scrollIntoView({ block: 'center' });
+    });
+}
+
+function slCancelReopen() {
+    slReopening.value = false;
+    slReopenReason.value = '';
+}
+
 // disposition: one of DISPOSITIONS, or DISPOSITION_OTHER with `note` (the text typed beside it).
 async function slCloseIncident(inc: DispatcherIncident, disposition: string | null, note?: string) {
     if (!disposition) return;
@@ -1863,7 +1960,7 @@ async function slCloseIncident(inc: DispatcherIncident, disposition: string | nu
         slCancelClose();
 
         // DataSync: remove the marker (record stays server-side). Broadcast: mark it CLOSED;
-        // it drops off field devices 60 minutes after closing.
+        // it drops off field devices after the admin-set window (Dispatcher Settings, default 60 min).
         try { await closeIncidentInField(mapStore, slMarkerFor(updated)); }
         catch { /* best-effort */ }
 
@@ -1892,11 +1989,16 @@ async function slCloseIncident(inc: DispatcherIncident, disposition: string | nu
     }
 }
 
-async function slReopenIncident(inc: DispatcherIncident) {
+async function slReopenIncident(inc: DispatcherIncident, reason: string) {
+    const withReason = dispatcherStore.operatorNumbers;
+    const why = withReason ? reason.trim() : '';
+    if (withReason && !why) return;
     slSaving.value = true; slDetailError.value = '';
     try {
-        const updated = await patchIncident(inc.id, { status: 'active' });
+        // Employee Numbers on: the server requires the reason and writes the "Reopened: …" note.
+        const updated = await patchIncident(inc.id, withReason ? { status: 'active', reopen_reason: why } : { status: 'active' });
         slApplyIncident(updated);
+        slCancelReopen();
 
         // Re-drop the CoT marker to the feed (broadcast: reopen the Core Event)
         try { await showIncident(mapStore, slMarkerFor(updated)); }
@@ -1904,7 +2006,7 @@ async function slReopenIncident(inc: DispatcherIncident) {
 
         const feed = dispatcherStore.activeEvent;
         if (feed) {
-            try { await postMissionLog(feed.feed_name, `INCIDENT REOPENED: ${updated.number} | ${updated.type ?? ''}`); }
+            try { await postMissionLog(feed.feed_name, `INCIDENT REOPENED: ${updated.number} | ${updated.type ?? ''}${why ? ` | ${why}` : ''}`); }
             catch { /* best-effort */ }
         }
         slTab.value = 'active';
@@ -1934,13 +2036,15 @@ function startTakcadPoll() {
     pollTimer = setInterval(() => { loadList(); refreshDetail(); }, 15_000);
 }
 
-// The Manage-panel settings (caller details on markers, CJIS reminder) are shared across
+// The Dispatcher Settings (caller details on markers, CJIS reminder, employee numbers) are shared across
 // dispatchers, so re-read them when the board starts and when an incident is opened (cheap)
 // rather than on every poll (the settings blob can carry the agency logo).
 function slRefreshCallerSetting() {
     getDispatcherSettings().then((s) => {
         dispatcherStore.callerOnMarkers = s.caller_on_markers !== false;
         dispatcherStore.cjisReminder = cjisReminderFrom(s);
+        applyOperatorNumbers(operatorNumbersFrom(s));
+        setClosedMarkerMinutes(closedMarkerMinutesFrom(s));
     }).catch(() => { /* keep last */ });
 }
 

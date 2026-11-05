@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.5.0
+
+- **Employee numbers (optional, off by default).** The CloudTAK admin can turn on **Employee Numbers** in the
+  new **Dispatcher Settings** screen (the gear, open even with no Event). Each dispatcher then signs in with
+  their number; it is stamped on incidents, notes, who took the call and who closed it, and shown in the
+  report. Field devices never receive it. With the switch off nothing changes.
+- **Reopen asks for a reason (only with Employee Numbers on).** The reason is written to the incident notes
+  as "Reopened: <reason>". With the switch off, Reopen is one click, as before.
+- **Dispatcher Settings.** The CJIS reminder and other shared settings moved here from Manage.
+- **CSV export, only when Employee Numbers is on:** three columns (`created_by_no`, `initial_dispatcher_no`,
+  `closed_by_no`) are added after `dispatcher`, so every column after it moves three to the right. A script
+  that reads the CSV by column position needs updating; with the switch off the columns are unchanged.
+- **Broadcast mode: how long a closed incident stays on field devices.** The CloudTAK admin can pick 0, 5, 10,
+  15, 30 or 60 minutes in **Dispatcher Settings** (default 60, same as before; 0 drops it within about a
+  minute). It applies when an incident is closed. Other accounts see the setting but can't change it.
+
 ## 1.4.0
 
 - **Several callers on one incident.** Each incident keeps a list of callers with the time of each call. The

@@ -31,10 +31,17 @@
                     v-if='activeCount > 0'
                     class='badge bg-danger'
                 >{{ activeCount }}</span>
+                <!-- The CloudTAK callsign, as always. With Employee Numbers on and someone signed in, it moves to the
+                     signed-in line under the header (next to the employee number), so it is not shown twice. -->
                 <span
+                    v-if='!signedIn'
                     class='text-muted ms-auto small'
                     :title='`Dispatcher: ${store.dispatcherName}`'
                 >{{ store.dispatcherName }}</span>
+                <span
+                    v-else
+                    class='ms-auto'
+                />
                 <!-- TAK-CAD connection toggle -->
                 <button
                     v-if='store.serverMode === "takcad"'
@@ -54,6 +61,20 @@
                     v-else
                     class='badge bg-secondary text-white small opacity-50'
                 >TAK-CAD…</span>
+                <!-- Dispatcher Settings: shared by every event (standalone only; reachable with no event open) -->
+                <button
+                    v-if='store.serverMode === "standalone"'
+                    class='btn btn-sm btn-link p-0'
+                    :class='showSettings ? "text-warning" : "text-muted"'
+                    title='Dispatcher Settings — shared by every event'
+                    aria-label='Dispatcher Settings'
+                    @click='showSettings = !showSettings; showManage = false'
+                >
+                    <IconSettings
+                        :size='16'
+                        stroke='1.5'
+                    />
+                </button>
                 <button
                     v-if='!floating'
                     class='btn btn-sm btn-link p-0 text-muted'
@@ -65,6 +86,60 @@
                         stroke='1.5'
                     />
                 </button>
+            </div>
+
+            <!-- ── Employee Numbers on (Dispatcher Settings), standalone. One line under the header, on every screen:
+                 not signed in = the yellow Sign in bar; signed in = who is on this desk, with Sign out. Never
+                 blocks: everything below stays usable. Not a password login: it records who did what. ── -->
+            <form
+                v-if='operatorShown && !store.operator'
+                class='px-3 py-2 border-bottom flex-shrink-0 d-flex flex-wrap align-items-center gap-2'
+                style='background:rgba(255,193,7,.15)'
+                data-test='operator-sign-in'
+                @submit.prevent='signIn'
+            >
+                <label
+                    for='operatorSignInBox'
+                    class='fw-semibold text-warning small mb-0 flex-grow-1'
+                >Sign in with your employee number</label>
+                <div class='d-flex gap-1'>
+                    <input
+                        id='operatorSignInBox'
+                        v-model='signInInput'
+                        type='text'
+                        inputmode='numeric'
+                        autocomplete='off'
+                        :maxlength='OPERATOR_MAX'
+                        class='form-control border-warning'
+                        style='width:130px'
+                        placeholder='Employee #'
+                    >
+                    <button
+                        type='submit'
+                        class='btn btn-warning fw-semibold text-nowrap'
+                    >Sign in</button>
+                </div>
+                <div
+                    v-if='signInError'
+                    class='w-100 small text-warning'
+                >{{ signInError }}</div>
+            </form>
+            <div
+                v-else-if='signedIn'
+                class='px-3 py-1 border-bottom flex-shrink-0 d-flex flex-wrap align-items-center column-gap-3 small'
+                data-test='operator-signed-in'
+            >
+                <span class='text-nowrap'><span class='text-muted'>Employee</span> <span class='fw-semibold'>#{{ store.operator }}</span></span>
+                <span
+                    class='text-nowrap text-truncate'
+                    :title='`CloudTAK callsign: ${store.dispatcherName}`'
+                ><span class='text-muted'>Callsign</span> {{ store.dispatcherName }}</span>
+                <button
+                    type='button'
+                    class='btn btn-link btn-sm p-0 ms-auto text-decoration-none'
+                    title='Sign out of this desk (shift change). The next person signs in with their number.'
+                    @click='signOut'
+                >Sign out</button>
             </div>
 
             <!-- ── TAK-CAD mode: DataSync feed picker (markers/log routing) ─────── -->
@@ -165,8 +240,8 @@
                 >Archived</span>
                 <button
                     class='btn btn-link btn-sm p-0 text-muted'
-                    title='Manage — report, call types, agency header'
-                    @click='showManage = true'
+                    title='Manage — report for this event'
+                    @click='showSettings = false; showManage = true'
                 >
                     <IconSettings
                         :size='16'
@@ -199,9 +274,17 @@
                 </button>
             </div>
 
+            <!-- ── Standalone: Dispatcher Settings (shared by every event), over any screen ── -->
+            <div
+                v-if='store.serverMode === "standalone" && showSettings'
+                class='flex-grow-1 overflow-hidden'
+            >
+                <DispatcherSettings @close='showSettings = false' />
+            </div>
+
             <!-- ── Standalone mode: Events screen (no Event open) ──────────────── -->
             <div
-                v-if='store.serverMode === "standalone" && !store.activeEvent'
+                v-else-if='store.serverMode === "standalone" && !store.activeEvent'
                 class='flex-grow-1 overflow-hidden'
             >
                 <EventsView @opened='onEventOpened' />
@@ -218,7 +301,7 @@
                 />
             </div>
 
-            <!-- ── Standalone: manage (report / call types / agency) ────────────── -->
+            <!-- ── Standalone: manage the open Event (its report) ─────────────── -->
             <div
                 v-else-if='showManage && store.activeEvent'
                 class='flex-grow-1 overflow-hidden'
@@ -281,6 +364,7 @@ import PersonnelListView from './PersonnelListView.vue';
 import EventsView from './EventsView.vue';
 import ReportView from './ReportView.vue';
 import ManagePanel from './ManagePanel.vue';
+import DispatcherSettings from './DispatcherSettings.vue';
 import { getIncidentTypes, getVehicleTypes, getVehicles, getPersonnel, getRoles, getIncidentMetadata, getMissions, getSubscribedFeedGuids } from '../lib/takcad-client.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
 import type { IncidentTypeRef, VehicleType, VehicleRef, PersonRef, Role } from '../lib/takcad-types.ts';
@@ -288,6 +372,7 @@ import { listIncidents } from '../lib/events-client.ts';
 import type { DispatcherEvent } from '../lib/events-client.ts';
 import { dispatcherStore as store, saveLastEventId } from '../lib/dispatcher-store.ts';
 import { popOutDispatcher, dockDispatcher } from '../lib/float-pane.ts';
+import { parseOperator, saveOperator, OPERATOR_MAX } from '../lib/operator.ts';
 
 // floating: this instance lives inside the floating pane (DispatcherFloat) rather than
 // the anchored menu route.
@@ -326,6 +411,7 @@ onErrorCaptured((err) => {
 const activeTab        = ref<TabKey>('incidents');
 const showReport       = ref(false);
 const showManage       = ref(false);
+const showSettings     = ref(false);
 const activeCount      = ref(0);
 const connectionStatus = ref('');
 const incidentTypes    = ref<IncidentTypeRef[]>([]);
@@ -416,6 +502,30 @@ watch(() => store.serverMode, (mode) => {
         if (activeTab.value !== 'incidents') activeTab.value = 'incidents';
     }
 });
+
+// ── Operator (employee number at this terminal; see lib/operator.ts) ──────────
+// Sign in: type the number, Sign in (or Enter). Sign out: clears it; the next person signs in.
+const operatorShown = computed(() => store.serverMode === 'standalone' && store.operatorNumbers);
+const signedIn = computed(() => operatorShown.value && !!store.operator);
+const signInInput = ref('');
+const signInError = ref('');
+
+function signIn() {
+    const id = parseOperator(signInInput.value);
+    if (!id) {
+        signInError.value = `Digits only, up to ${OPERATOR_MAX}.`;
+        return;
+    }
+    store.operator = id;
+    saveOperator(id);
+    signInInput.value = '';
+    signInError.value = '';
+}
+
+function signOut() {
+    store.operator = null;
+    saveOperator(null);
+}
 
 function forceStandalone() {
     store.forcedMode = 'standalone';

@@ -70,6 +70,10 @@ interface IncidentRow {
     // How the incident ended, set when it is closed (see <disposition-pure>); NULL while active.
     disposition: string | null;
     disposition_note: string | null;
+    // Employee numbers (see <operator-pure>), only recorded while the admin switch is on. NULL otherwise.
+    created_by_no: string | null;
+    initial_dispatcher_no: string | null;
+    closed_by_no: string | null;
 }
 
 // drizzle's execute() returns the driver RowList; cast to the row shape we SELECTed.
@@ -127,19 +131,142 @@ function normDisposition(disposition: string | undefined, note: string | undefin
 function closeNote(disposition: string, note: string | null): string {
     return `Closed: ${note ? `${disposition} — ${note}` : disposition}`;
 }
+
+// Reopening a closed incident needs a reason, written as a note ("Reopened: caller called back"), so the
+// record says why it came back. With employee numbers on, the note also says who.
+const REOPEN_REASON_MAX = 120;
+
+function normReopenReason(v: unknown): string {
+    const t = typeof v === 'string' ? v.trim() : '';
+    if (!t) throw new Err(400, null, 'Enter a reason to reopen the incident');
+    if (t.length > REOPEN_REASON_MAX) throw new Err(400, null, `Reopen reason is too long (${REOPEN_REASON_MAX} characters max)`);
+    return t;
+}
+
+function reopenNote(reason: string): string {
+    return `Reopened: ${reason}`;
+}
+
+// The reason belongs to the Employee Numbers feature: asked for only while that admin switch is on, so
+// agencies that leave it off (and browsers still running an older bundle) reopen exactly as before.
+function reopenNeedsReason(numbersOn: boolean, from: string, to: string): boolean {
+    return numbersOn && from === 'closed' && to === 'active';
+}
 // </disposition-pure>
+
+// ── Employee numbers (who did it) ──────────────────────────────────────────────
+// Optional, OFF by default: a CloudTAK system admin turns it on in Manage (setting `operator_numbers`).
+// Off, nothing here runs and the Dispatcher behaves as before (the `dispatcher` column is the CloudTAK
+// callsign the browser sends at create). On, for desks that share one CloudTAK login: each terminal
+// enters an employee number once (plugin/lib/operator.ts) and sends it as `operator` on every write.
+// The server records it, next to the unchanged `dispatcher` column:
+//   - `created_by_no`: the operator who created the incident, set once at create;
+//   - `taken_by` on each caller: who took that call, set once when the caller is added (the New
+//     Incident form's first caller takes the form's number);
+//   - `initial_dispatcher_no`: the operator of the first unit assignment, set once;
+//   - `closed_by_no`: who closed it; reopening clears it, closing again sets it again;
+//   - `by` on every note written by that request, so each step on the record shows who did it.
+// The number is a record, not a proof, like a signature on a paper log. No number = nothing stamped;
+// the Dispatcher never refuses work over it. Pure (no database) so plugin/test/operator-server.test.ts
+// can run it.
+// <operator-pure>
+const OPERATOR_SETTING = 'operator_numbers';
+const OPERATOR_MAX = 16;
+
+// The admin switch as read from dispatcher_settings: only true turns it on (missing, an older database,
+// anything else = off). A raw read hands jsonb back as a JSON string, sometimes double-encoded (see
+// asArray), so `true` arrives as the text 'true': unwrap it first, like the GET settings route does.
+// The PUT only ever stores a boolean (normOperatorSetting), so unwrapping cannot turn on a stray string.
+function operatorNumbersOn(value: unknown): boolean {
+    let x: unknown = value;
+    for (let i = 0; i < 4 && typeof x === 'string'; i++) {
+        try {
+            x = JSON.parse(x);
+        } catch {
+            return false;
+        }
+    }
+    return x === true;
+}
+
+// Value an admin may store under the switch.
+function normOperatorSetting(value: unknown): boolean {
+    if (typeof value !== 'boolean') throw new Err(400, null, `${OPERATOR_SETTING} must be true or false`);
+    return value;
+}
+
+// An employee number: digits only, trimmed, 1 to OPERATOR_MAX. Absent or empty = none (null).
+function normOperator(v: unknown): string | null {
+    if (v === undefined || v === null) return null;
+    if (typeof v !== 'string') throw new Err(400, null, 'Employee number must be digits only');
+    const t = v.trim();
+    if (!t) return null;
+    if (!/^[0-9]+$/.test(t)) throw new Err(400, null, 'Employee number must be digits only');
+    if (t.length > OPERATOR_MAX) throw new Err(400, null, `Employee number is too long (${OPERATOR_MAX} digits max)`);
+    return t;
+}
+
+// The operator for one request: read only while the switch is on, so with it off a stray number is ignored.
+function requestOperator(on: boolean, v: unknown): string | null {
+    return on ? normOperator(v) : null;
+}
+
+// Notes the server writes for this request, each stamped with the operator (unchanged when none).
+function withBy<T extends { text: string; time: string }>(notes: T[], operator: string | null): (T & { by?: string })[] {
+    return operator ? notes.map(n => ({ ...n, by: operator })) : notes;
+}
+
+// The note list after a PATCH (switch on): notes already on the incident keep their `by`; every note added
+// by this request (past the first prevCount) is stamped with the operator, and any `by` the browser sent
+// on a new note is dropped, so a new note always says who sent it.
+function stampNewNotes(prevCount: number, notes: unknown[], operator: string | null): unknown[] {
+    return notes.map((n, i) => {
+        if (i < prevCount || !n || typeof n !== 'object') return n;
+        const { by: _sent, ...rest } = n as Record<string, unknown>;
+        void _sent;
+        return operator ? { ...rest, by: operator } : rest;
+    });
+}
+
+// The dispatcher's number after a unit assignment: set once, by the first assignment that added a unit
+// while an operator was set. Never moved afterwards.
+function dispatcherAfterAssign(current: string | null, added: number, operator: string | null): string | null {
+    return current ?? (added > 0 ? operator : null);
+}
+// Who closed the incident, after a PATCH: set by the request that closes it, cleared when it is reopened
+// (like the disposition), otherwise unchanged. The "Closed: …" note keeps each closer in the log.
+function closedByAfter(current: string | null, closing: boolean, active: boolean, operator: string | null): string | null {
+    if (closing) return operator;
+    return active ? null : current;
+}
+// </operator-pure>
+
+// Whether the admin switch is on right now (read per write, so turning it off takes effect at once).
+async function operatorNumbersEnabled(config: ConfigStateless): Promise<boolean> {
+    try {
+        const rows = await query<{ value: unknown }>(config, sql`
+            SELECT value FROM dispatcher_settings WHERE key = ${OPERATOR_SETTING}
+        `);
+        return operatorNumbersOn(rows[0]?.value);
+    } catch {
+        return false;
+    }
+}
 
 // ── CJIS reminder ───────────────────────────────────────────────────────────────
 // A one-line reminder shown at the top of every standalone incident (default on) telling the
 // dispatcher not to paste CJIS data into the Dispatcher. Both settings are shared per CloudTAK and
 // may only be changed by a CloudTAK system admin (the account CloudTAK creates on first launch);
 // every signed-in user still reads them, so the line shows for everyone. The custom call type list
-// (incident_types) is admin-only the same way. Pure (no database) so plugin/test/cjis-server.test.ts
-// can run it.
+// (incident_types) and the broadcast closed-marker window (closed_marker_minutes, whole minutes
+// 0..1440, default 60; see plugin/lib/closed-window.ts) are admin-only the same way. Pure (no
+// database) so plugin/test/cjis-server.test.ts and closed-window.test.ts can run it.
 // <cjis-pure>
 const CJIS_REMINDER_DEFAULT_TEXT = 'Information derived from CJIS sources must not be entered into incident records.';
 const CJIS_REMINDER_TEXT_MAX = 300;
-const ADMIN_ONLY_KEYS = new Set(['cjis_reminder_enabled', 'cjis_reminder_text', 'incident_types']);
+const CLOSED_MARKER_MINUTES_MIN = 0;
+const CLOSED_MARKER_MINUTES_MAX = 1440;
+const ADMIN_ONLY_KEYS = new Set(['cjis_reminder_enabled', 'cjis_reminder_text', 'incident_types', 'closed_marker_minutes']);
 
 // True for the settings keys only a system admin may write.
 function isAdminOnlySetting(key: string): boolean {
@@ -158,6 +285,12 @@ function normCjisSetting(key: string, value: unknown): unknown {
         const t = String(value ?? '').trim();
         if (t.length > CJIS_REMINDER_TEXT_MAX) throw new Err(400, null, `Reminder text is too long (${CJIS_REMINDER_TEXT_MAX} characters max)`);
         return t || CJIS_REMINDER_DEFAULT_TEXT;
+    }
+    if (key === 'closed_marker_minutes') {
+        if (typeof value !== 'number' || !Number.isInteger(value) || value < CLOSED_MARKER_MINUTES_MIN || value > CLOSED_MARKER_MINUTES_MAX) {
+            throw new Err(400, null, `closed_marker_minutes must be a whole number of minutes from ${CLOSED_MARKER_MINUTES_MIN} to ${CLOSED_MARKER_MINUTES_MAX}`);
+        }
+        return value;
     }
     return value;
 }
@@ -183,6 +316,9 @@ interface CallerEntry {
     note: string | null;
     time: string;      // when the call was received (ISO)
     primary: boolean;
+    // Employee number of who took this call (employee numbers on; see <operator-pure>). Set once when
+    // the caller is added, never by an edit. Absent on callers added without one.
+    taken_by?: string;
 }
 
 // Free text from the call taker: trim, cap the length, store empty as NULL.
@@ -212,6 +348,7 @@ function normalizeCallers(v: unknown): CallerEntry[] {
             note: typeof c.note === 'string' && c.note ? c.note : null,
             time: typeof c.time === 'string' && !Number.isNaN(new Date(c.time).getTime()) ? c.time : new Date(0).toISOString(),
             primary: c.primary === true,
+            ...(typeof c.taken_by === 'string' && /^[0-9]{1,16}$/.test(c.taken_by) ? { taken_by: c.taken_by } : {}),
             i,
         }))
         .sort((a, b) => (new Date(a.time).getTime() - new Date(b.time).getTime()) || (a.i - b.i));
@@ -227,15 +364,16 @@ interface CallerInput {
     primary?: boolean;
 }
 
-// Add a caller (the first one is always primary). A caller needs a name or a phone.
-function addCallerTo(list: CallerEntry[], b: CallerInput): CallerEntry[] {
+// Add a caller (the first one is always primary). A caller needs a name or a phone. takenBy: the
+// employee number of who took the call (already checked by normOperator), or null.
+function addCallerTo(list: CallerEntry[], b: CallerInput, takenBy: string | null = null): CallerEntry[] {
     const name = normCaller(b.name, CALLER_NAME_MAX, 'Caller name');
     const phone = normCaller(b.phone, CALLER_PHONE_MAX, 'Caller phone');
     const note = normCaller(b.note, CALLER_NOTE_MAX, 'Caller note');
     if (!name && !phone) throw new Err(400, null, 'Enter a caller name or phone number');
     if (list.length >= CALLERS_MAX) throw new Err(400, null, `An incident can have at most ${CALLERS_MAX} callers`);
     const primary = b.primary === true || list.length === 0;
-    const entry: CallerEntry = { id: randomUUID(), name, phone, note, time: normCallTime(b.time), primary };
+    const entry: CallerEntry = { id: randomUUID(), name, phone, note, time: normCallTime(b.time), primary, ...(takenBy ? { taken_by: takenBy } : {}) };
     return [...list.map(c => (primary ? { ...c, primary: false } : c)), entry];
 }
 
@@ -268,11 +406,11 @@ function removeCallerFrom(list: CallerEntry[], id: string): CallerEntry[] {
 }
 
 // A single caller from the New Incident form (or the old caller_name / caller_phone fields).
-function firstCaller(nameIn: string | undefined, phoneIn: string | undefined): CallerEntry[] {
+function firstCaller(nameIn: string | undefined, phoneIn: string | undefined, takenBy: string | null = null): CallerEntry[] {
     const name = normCaller(nameIn, CALLER_NAME_MAX, 'Caller name');
     const phone = normCaller(phoneIn, CALLER_PHONE_MAX, 'Caller phone');
     return (name || phone)
-        ? [{ id: randomUUID(), name, phone, note: null, time: new Date().toISOString(), primary: true }]
+        ? [{ id: randomUUID(), name, phone, note: null, time: new Date().toISOString(), primary: true, ...(takenBy ? { taken_by: takenBy } : {}) }]
         : [];
 }
 // </callers-pure>
@@ -421,7 +559,7 @@ async function editCallers(
             UPDATE dispatcher_incidents SET callers = ${JSON.stringify(next)}::jsonb
             WHERE id = ${incidentid}
             RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                      report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note
+                      report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note, created_by_no, initial_dispatcher_no, closed_by_no
         `) as unknown as IncidentRow[];
         return mapIncident(rows[0]);
     });
@@ -430,26 +568,35 @@ async function editCallers(
 // Lock the incident row, apply `edit` to its units (and the notes it returns) and write both back in
 // one transaction, so two dispatchers pressing buttons at the same moment can't overwrite each
 // other and the note and the time always agree. Units can't change on a closed incident.
+// `operator` (employee numbers switch on) stamps the notes; `assigning` lets the first assignment
+// record the dispatcher's number. Both default to off, which is the behaviour from before.
 async function editUnits(
     config: ConfigStateless,
     incidentid: string,
     edit: (list: UnitEntry[], now: string) => { list: UnitEntry[]; notes: UnitNote[] },
+    operator: string | null = null,
+    assigning = false,
 ): Promise<IncidentRow> {
     return await config.pg.transaction(async (tx) => {
         const locked = await tx.execute(sql`
-            SELECT assigned, notes, status FROM dispatcher_incidents WHERE id = ${incidentid} FOR UPDATE
-        `) as unknown as { assigned: unknown; notes: unknown; status: string }[];
+            SELECT assigned, notes, status, initial_dispatcher_no FROM dispatcher_incidents WHERE id = ${incidentid} FOR UPDATE
+        `) as unknown as { assigned: unknown; notes: unknown; status: string; initial_dispatcher_no: string | null }[];
         if (!locked.length) throw new Err(404, null, 'Incident not found');
         if (locked[0].status !== 'active') throw new Err(400, null, 'This incident is closed. Reopen it to change its units.');
         const now = new Date().toISOString();
         const out = edit(normalizeUnits(locked[0].assigned), now);
-        const notes = [...asArray(locked[0].notes), ...out.notes];
+        const notes = [...asArray(locked[0].notes), ...withBy(out.notes, operator)];
+        // An assignment writes one note per unit added, so the note count is the number added.
+        const initialDispatcherNo = assigning
+            ? dispatcherAfterAssign(locked[0].initial_dispatcher_no, out.notes.length, operator)
+            : locked[0].initial_dispatcher_no;
         const rows = await tx.execute(sql`
             UPDATE dispatcher_incidents
-            SET assigned = ${JSON.stringify(out.list)}::jsonb, notes = ${JSON.stringify(notes)}::jsonb
+            SET assigned = ${JSON.stringify(out.list)}::jsonb, notes = ${JSON.stringify(notes)}::jsonb,
+                initial_dispatcher_no = ${initialDispatcherNo}
             WHERE id = ${incidentid}
             RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                      report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note
+                      report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note, created_by_no, initial_dispatcher_no, closed_by_no
         `) as unknown as IncidentRow[];
         return mapIncident(rows[0]);
     });
@@ -635,6 +782,17 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         await config.pg.execute(sql`
             ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS disposition_note TEXT
         `);
+        // Employee numbers (standalone, admin switch `operator_numbers`): who created the incident, who
+        // assigned its first unit, who closed it. Nullable: empty while the switch is off and on older rows.
+        await config.pg.execute(sql`
+            ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS created_by_no TEXT
+        `);
+        await config.pg.execute(sql`
+            ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS initial_dispatcher_no TEXT
+        `);
+        await config.pg.execute(sql`
+            ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS closed_by_no TEXT
+        `);
     } catch (err) {
         console.error('[dispatcher] table bootstrap failed', err);
     }
@@ -673,11 +831,13 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             let value: unknown = req.body.value;
-            if (isAdminOnlySetting(req.params.key)) {
+            if (isAdminOnlySetting(req.params.key) || req.params.key === OPERATOR_SETTING) {
                 // Auth.as_user re-reads the profile for session tokens, so this is the live flag.
                 const user = await Auth.as_user(config, req);
                 if (!user.is_admin()) throw new Err(403, null, 'Only a CloudTAK system admin can change this setting');
-                value = normCjisSetting(req.params.key, value);
+                value = req.params.key === OPERATOR_SETTING
+                    ? normOperatorSetting(value)
+                    : normCjisSetting(req.params.key, value);
             } else {
                 await Auth.is_auth(config, req);
             }
@@ -847,7 +1007,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             await requireEventAccess(config, user.email, req.params.eventid);
             const incidents = await query<IncidentRow>(config, sql`
                 SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
-                       report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note
+                       report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note, created_by_no, initial_dispatcher_no, closed_by_no
                 FROM dispatcher_incidents WHERE event_id = ${req.params.eventid}
                 ORDER BY created_at ASC
             `);
@@ -868,6 +1028,9 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             lat: Type.Number(),
             lon: Type.Number(),
             dispatcher: Type.Optional(Type.String()),
+            // Employee number of the person creating it (digits); stored as `created_by_no` while the
+            // employee numbers switch is on, ignored while it is off.
+            operator: Type.Optional(Type.String()),
             details: Type.Optional(Type.String()),
             report_number: Type.Optional(Type.String()),
             caller_name: Type.Optional(Type.String()),
@@ -879,8 +1042,9 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             const user = await Auth.as_user(config, req);
             await requireEventAccess(config, user.email, req.params.eventid);
             const reportNumber = normReportNumber(req.body.report_number);
+            const operator = requestOperator(await operatorNumbersEnabled(config), req.body.operator);
             // The New Incident form records the first caller; more are added from the incident.
-            const callers = firstCaller(req.body.caller_name, req.body.caller_phone);
+            const callers = firstCaller(req.body.caller_name, req.body.caller_phone, operator);
 
             // Atomically claim the next sequence number for this event.
             const bumped = await query<{ seq: number; prefix: string }>(config, sql`
@@ -899,15 +1063,15 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             if (reportNumber) seedNotes.push({ text: `Report number: ${reportNumber}`, time: now });
             const incidents = await query<IncidentRow>(config, sql`
                 INSERT INTO dispatcher_incidents
-                    (id, event_id, number, type, address, lat, lon, dispatcher, details, report_number, callers, notes)
+                    (id, event_id, number, type, address, lat, lon, dispatcher, created_by_no, details, report_number, callers, notes)
                 VALUES
                     (${id}, ${req.params.eventid}, ${number}, ${req.body.type ?? null},
                      ${req.body.address ?? null}, ${req.body.lat}, ${req.body.lon},
-                     ${req.body.dispatcher ?? null}, ${req.body.details ?? null}, ${reportNumber},
+                     ${req.body.dispatcher ?? null}, ${operator}, ${req.body.details ?? null}, ${reportNumber},
                      ${JSON.stringify(callers)}::jsonb,
-                     ${JSON.stringify(seedNotes)}::jsonb)
+                     ${JSON.stringify(withBy(seedNotes, operator))}::jsonb)
                 RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                          report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note
+                          report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note, created_by_no, initial_dispatcher_no, closed_by_no
             `);
             res.json({ incident: mapIncident(incidents[0]) });
         } catch (err) {
@@ -926,6 +1090,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             lat: Type.Optional(Type.Number()),
             lon: Type.Optional(Type.Number()),
             dispatcher: Type.Optional(Type.String()),
+            // Employee number of the person making this change (switch on only); stamps every note it adds.
+            operator: Type.Optional(Type.String()),
             details: Type.Optional(Type.String()),
             report_number: Type.Optional(Type.String()),
             core_event_id: Type.Optional(Type.String()),
@@ -933,6 +1099,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             // Read only when status goes active → closed (required then); see <disposition-pure>.
             disposition: Type.Optional(Type.String()),
             disposition_note: Type.Optional(Type.String()),
+            // Read only when status goes closed → active (required then); written as a "Reopened: …" note.
+            reopen_reason: Type.Optional(Type.String()),
             assigned: Type.Optional(Type.Array(Type.Any())),
             notes: Type.Optional(Type.Array(Type.Any())),
         }),
@@ -942,13 +1110,15 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             const user = await Auth.as_user(config, req);
             // Checked before the lock: it asks TAK Server, which must not be waited on with the row held.
             await requireIncidentAccess(config, user.email, req.params.incidentid);
+            const numbersOn = await operatorNumbersEnabled(config);
+            const operator = requestOperator(numbersOn, req.body.operator);
 
             // Read-modify-write under a row lock: merge the patch over the current row, then write
             // all columns. The lock keeps a unit button pressed at the same moment from being lost.
             const incident = await config.pg.transaction(async (tx) => {
                 const current = await tx.execute(sql`
                     SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
-                           report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note
+                           report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note, created_by_no, initial_dispatcher_no, closed_by_no
                     FROM dispatcher_incidents WHERE id = ${req.params.incidentid} FOR UPDATE
                 `) as unknown as IncidentRow[];
                 if (!current.length) throw new Err(404, null, 'Incident not found');
@@ -1010,11 +1180,19 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                     disposition = null;
                     dispositionNote = null;
                 }
+                const closedByNo = closedByAfter(cur.closed_by_no, closing, next.status === 'active', operator);
+                // Reopening with employee numbers on: the reason is required and goes on the record as a
+                // note. Off, reopen works as it always did (no reason asked, none written).
+                if (reopenNeedsReason(numbersOn, cur.status, next.status)) {
+                    next.notes = [...next.notes, { text: reopenNote(normReopenReason(b.reopen_reason)), time: now }];
+                }
                 if (closing) {
                     const cleared = clearAllUnits(next.assigned, closedAt as string);
                     next.assigned = cleared.list;
                     next.notes = [...next.notes, ...cleared.notes];
                 }
+                // Employee numbers on: every note this request added says who.
+                if (numbersOn) next.notes = stampNewNotes(asArray(cur.notes).length, next.notes, operator);
 
                 const incidents = await tx.execute(sql`
                     UPDATE dispatcher_incidents SET
@@ -1031,10 +1209,11 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                         notes      = ${JSON.stringify(next.notes)}::jsonb,
                         closed_at  = ${closedAt},
                         disposition = ${disposition},
-                        disposition_note = ${dispositionNote}
+                        disposition_note = ${dispositionNote},
+                        closed_by_no = ${closedByNo}
                     WHERE id = ${req.params.incidentid}
                     RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
-                              report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note
+                              report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note, created_by_no, initial_dispatcher_no, closed_by_no
                 `) as unknown as IncidentRow[];
                 return mapIncident(incidents[0]);
             });
@@ -1055,13 +1234,16 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         params: Type.Object({ incidentid: Type.String() }),
         body: Type.Object({
             units: Type.Array(Type.Object({ uid: Type.String(), callsign: Type.String() })),
+            operator: Type.Optional(Type.String()),
         }),
         res: Type.Any(),
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
             await requireIncidentAccess(config, user.email, req.params.incidentid);
-            const incident = await editUnits(config, req.params.incidentid, (list, now) => assignUnitsTo(list, req.body.units, now));
+            const numbersOn = await operatorNumbersEnabled(config);
+            const operator = requestOperator(numbersOn, req.body.operator);
+            const incident = await editUnits(config, req.params.incidentid, (list, now) => assignUnitsTo(list, req.body.units, now), operator, numbersOn);
             res.json({ incident });
         } catch (err) {
             Err.respond(err, res);
@@ -1073,13 +1255,17 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         group: 'Dispatcher',
         description: 'Mark a unit On Scene or Cleared (the server stamps the time)',
         params: Type.Object({ incidentid: Type.String(), uid: Type.String() }),
-        body: Type.Object({ status: Type.Union([Type.Literal('on_scene'), Type.Literal('cleared')]) }),
+        body: Type.Object({
+            status: Type.Union([Type.Literal('on_scene'), Type.Literal('cleared')]),
+            operator: Type.Optional(Type.String()),
+        }),
         res: Type.Any(),
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
             await requireIncidentAccess(config, user.email, req.params.incidentid);
-            const incident = await editUnits(config, req.params.incidentid, (list, now) => advanceUnit(list, req.params.uid, req.body.status, now));
+            const operator = requestOperator(await operatorNumbersEnabled(config), req.body.operator);
+            const incident = await editUnits(config, req.params.incidentid, (list, now) => advanceUnit(list, req.params.uid, req.body.status, now), operator);
             res.json({ incident });
         } catch (err) {
             Err.respond(err, res);
@@ -1118,13 +1304,16 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             note: Type.Optional(Type.String()),
             time: Type.Optional(Type.String()),
             primary: Type.Optional(Type.Boolean()),
+            // Employee number of who took this call (employee numbers on); stored as `taken_by`.
+            operator: Type.Optional(Type.String()),
         }),
         res: Type.Any(),
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
             await requireIncidentAccess(config, user.email, req.params.incidentid);
-            const incident = await editCallers(config, req.params.incidentid, list => addCallerTo(list, req.body));
+            const takenBy = requestOperator(await operatorNumbersEnabled(config), req.body.operator);
+            const incident = await editCallers(config, req.params.incidentid, list => addCallerTo(list, req.body, takenBy));
             res.json({ incident });
         } catch (err) {
             Err.respond(err, res);

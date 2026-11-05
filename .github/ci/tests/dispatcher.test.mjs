@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 
 const fd = await import('../../../plugin/lib/field-delivery.ts')
 const mm = await import('../../../plugin/lib/map-marker.ts')
+const cw = await import('../../../plugin/lib/closed-window.ts')
 
 const MINUTE = 60 * 1000
 const incident = (over = {}) => ({
@@ -127,6 +128,33 @@ test('close: name starts with CLOSED and ended is closed time + 60 minutes', asy
     assert.equal(patch.body.ended, new Date(Date.parse(closedAt) + 60 * MINUTE).toISOString())
 })
 
+test('close: the admin-set window (closed_marker_minutes) replaces the 60 minutes; 0 ends a minute from now', async () => {
+    const closedAt = '2026-11-01T21:00:00.000Z'
+    try {
+        cw.setClosedMarkerMinutes(cw.closedMarkerMinutesFrom({ closed_marker_minutes: 15 }))
+        await fd.closeIncidentInField(mapStore(), incident({ coreEventId: 'core-2a', closedAt }))
+        assert.equal(writes().find(c => c.url === '/api/core/event/core-2a').body.ended,
+            new Date(Date.parse(closedAt) + 15 * MINUTE).toISOString())
+
+        cw.setClosedMarkerMinutes(1440)
+        await fd.closeIncidentInField(mapStore(), incident({ coreEventId: 'core-2b', closedAt }))
+        assert.equal(writes().find(c => c.url === '/api/core/event/core-2b').body.ended,
+            new Date(Date.parse(closedAt) + 1440 * MINUTE).toISOString())
+
+        const t0 = Date.now()
+        cw.setClosedMarkerMinutes(0)
+        await fd.closeIncidentInField(mapStore(), incident({ coreEventId: 'core-2c', closedAt }))
+        const ended = Date.parse(writes().find(c => c.url === '/api/core/event/core-2c').body.ended)
+        assert.ok(ended >= t0 + 59 * 1000 && ended <= Date.now() + 61 * 1000, 'about a minute out, not in the past')
+
+        // a withdraw of that 0-minute close must not push `ended` back out
+        await fd.withdrawIncident(mapStore(), incident({ coreEventId: 'core-2c', closedAt }))
+        assert.equal(writes().filter(c => c.url === '/api/core/event/core-2c').length, 1)
+    } finally {
+        cw.setClosedMarkerMinutes(cw.CLOSED_MARKER_MINUTES_DEFAULT)
+    }
+})
+
 test('close with no closedAt yet stamps now, so ended is about an hour out', async () => {
     const t0 = Date.now()
     await fd.closeIncidentInField(mapStore(), incident({ coreEventId: 'core-3' }))
@@ -165,6 +193,29 @@ test('withdraw never pushes a closed incident\'s end time later', async () => {
     const longClosed = new Date(Date.now() - 5 * MINUTE).toISOString()   // ends in 55 minutes: pull it in
     await fd.withdrawIncident(mapStore(), incident({ coreEventId: 'core-6', closedAt: longClosed }))
     assert.equal(writes().length, 1)
+})
+
+test('withdraw goes by the end time the Core Event really has, not by today\'s window', async () => {
+    // closed 10 minutes ago under a 5-minute window, so its marker ended 5 minutes ago; the admin has
+    // since set the window to 60 minutes. A recomputed end time (closed + 60) would look "later
+    // than a minute from now" and pull the dead marker back onto devices for a minute.
+    const closedAt = new Date(Date.now() - 10 * MINUTE).toISOString()
+    const stored = new Date(Date.parse(closedAt) + 5 * MINUTE).toISOString()
+    globalThis.__respond = (url, opts) => url === '/api/core/event/core-7' && opts.method === 'GET' ? { ended: stored } : respond(url, opts)
+    await fd.withdrawIncident(mapStore(), incident({ coreEventId: 'core-7', closedAt }))
+    assert.equal(writes().length, 0, 'an already-ended marker is left alone')
+
+    // stored end time is far out (closed a minute ago under a 60-minute window): still pulled in
+    const closedNow = new Date(Date.now() - MINUTE).toISOString()
+    const farOut = new Date(Date.parse(closedNow) + 60 * MINUTE).toISOString()
+    globalThis.__respond = (url, opts) => url === '/api/core/event/core-8' && opts.method === 'GET' ? { ended: farOut } : respond(url, opts)
+    await fd.withdrawIncident(mapStore(), incident({ coreEventId: 'core-8', closedAt: closedNow }))
+    assert.equal(writes().filter(c => c.url === '/api/core/event/core-8').length, 1)
+
+    // CloudTAK can't be read: fall back to the end time the current window gives
+    globalThis.__respond = (url, opts) => { if (opts.method === 'GET') throw new Error('offline'); return respond(url, opts) }
+    await fd.withdrawIncident(mapStore(), incident({ coreEventId: 'core-9', closedAt: new Date(Date.now() - 59 * MINUTE).toISOString() }))
+    assert.equal(writes().filter(c => c.url === '/api/core/event/core-9').length, 0)
 })
 
 test('withdraw with no Core Event does nothing', async () => {

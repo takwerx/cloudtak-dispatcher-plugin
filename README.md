@@ -4,7 +4,7 @@ A dispatcher plugin for [CloudTAK](https://github.com/dfpc-coe/CloudTAK) — cre
 incidents on the map, organize them under named **Events**, assign responders, and notify them
 via mission chat and direct GeoChat.
 
-**Current version: 1.4.0.** What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+**Current version: 1.5.0.** What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 ## Modes
 
@@ -21,7 +21,7 @@ Standalone incidents keep a list of **callers** (name, phone, optional note, tim
 Incident form records the first caller; add more, edit them, or pick the **primary** caller from the
 incident at any time, active or closed. Every caller is listed in the incident marker's remarks, and a
 dialable copy of the primary caller's number goes in the marker's `<contact phone>` so field clients can
-offer a call. **Manage → Caller Details** turns that off for the whole CloudTAK (default on): with it off,
+offer a call. **Dispatcher Settings → Caller Details** turns that off for the whole CloudTAK (default on): with it off,
 no caller name, phone or note reaches a field device. Every caller is included in the after-action report
 and CSV. A database from the earlier single-caller version moves its caller into the list on start.
 
@@ -44,15 +44,50 @@ Closing an incident asks for a **disposition**, how the call ended: pick a prese
 beside it, then press **Close Incident**. The list is `plugin/lib/dispositions.ts`; the server stores the text
 it is sent, so changing the list needs no server change. The disposition is written as a `Closed: …` note,
 shown on the closed incident's card and detail, in the report and CSV, and on the `INCIDENT CLOSED` feed-log
-line. Reopening clears it (the note stays); closing again asks again. There is no editing it in place.
+line. With Employee Numbers on, **Reopen** asks for a reason (required, 120 characters) and writes it as a
+`Reopened: …` note with the employee number; the feed log's `INCIDENT REOPENED:` line ends with it. With it
+off, Reopen works as before: no reason asked, none written.
+Reopening clears the disposition (the `Closed:` note stays); closing again asks again. There is no editing
+it in place.
 
 ### CJIS reminder (standalone)
 
 Every standalone incident opens with a one-line **CJIS reminder** ("Information derived from CJIS sources
-must not be entered into incident records.", default on). **Manage → CJIS Reminder** turns it off or changes
+must not be entered into incident records.", default on). **Dispatcher Settings → CJIS Reminder** turns it off or changes
 the wording for the whole CloudTAK; only the CloudTAK system admin account (the one CloudTAK creates on
-first launch) can change it, and the server refuses the change for anyone else. **Manage → Custom Call
+first launch) can change it, and the server refuses the change for anyone else. **Dispatcher Settings → Custom Call
 Types** is locked to the same admin account.
+
+### Dispatcher Settings and Manage (standalone)
+
+Settings shared by every event and every dispatcher on the CloudTAK are under **Dispatcher Settings**, the
+gear in the Dispatcher's top bar, which opens with or without an event: the report header, caller details
+on markers, the CJIS reminder, employee numbers and custom call types. The gear on an open event is
+**Manage**, for that event only: its after-action report.
+
+### Employee numbers: who took, dispatched and closed each call (standalone, optional)
+
+Off by default; with it off the Dispatcher works exactly as before. For desks that share one CloudTAK
+login, the CloudTAK system admin can turn on **Dispatcher Settings → Employee Numbers**. Then a yellow bar
+under the Dispatcher's header reads **Sign in with your employee number** (digits only; type it and press
+**Sign in** or Enter). Nothing is blocked while no one is signed in. Once signed in, that line shows
+`Employee #<number>`, the CloudTAK callsign, and **Sign out**; at shift change one person signs out and
+the next signs in. It is not a password login: it records who did what. It lasts until the browser tab
+closes; a reload keeps it. On the New Incident form the **Taken by #** box follows whoever is signed in
+(unless a different number was typed into it), and is outlined in yellow when empty. The number is saved:
+
+- on each caller as **Taken by #**, when the caller is added (the New Incident form's **Taken by #** box is
+  pre-filled from the header and can be changed when taking a call for someone else);
+- as the incident's **Initial Dispatcher #** when the first unit is assigned (later assignments do not
+  change it);
+- as **Closed by #** when it is closed (reopening clears it; the `Closed: …` note keeps each closer);
+- after every note (`E12 assigned · <number>`);
+- as who **created** the incident, shown on the report and in the CSV only.
+
+The detail, the printed report and the CSV (`created_by_no`, `initial_dispatcher_no`, `closed_by_no`,
+Taken by in the callers column, note authors) show them. The **Dispatcher** field and the field units'
+marker keep the CloudTAK callsign either way. With no number entered nothing is blocked; the numbers
+stay empty.
 
 ### Delivery to field units (standalone)
 
@@ -64,7 +99,13 @@ Each Event chooses how its incidents reach field devices when it is created:
   The CloudTAK server sends it to everyone in that channel and re-sends it every 10 seconds, so
   it appears on every device in the channel with nothing to subscribe to, including devices that
   connect later. It is one way (field users can't edit it), and a closed incident is marked
-  `CLOSED` and drops off devices 60 minutes after closing. Needs a CloudTAK with Core Events and
+  `CLOSED` and goes stale on devices after a set time: **Dispatcher Settings → Broadcast Mode Incident Closed
+  Marker Retention** offers 0, 5, 10, 15, 30 or 60 minutes (default 60; 0 drops the marker within
+  about a minute). Only the CloudTAK system admin account can change it. The time is applied when
+  an incident is closed, so changing it does not move incidents that are already closed. TAK clients
+  drop the marker at that time; the CloudTAK web map first greys it out and removes it per the
+  user's own **Settings → Display → Remove Stale Elements** (Immediate, 10 Minutes, 30 Minutes,
+  1 Hour or Never). Needs a CloudTAK with Core Events and
   its Admin Connection connected. The incidents also appear in CloudTAK's own Core Events list.
 
 ## Layout

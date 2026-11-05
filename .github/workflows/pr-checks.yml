@@ -1,15 +1,16 @@
 name: PR checks
 
-# Automatic checks on every PR (ops #329, same shape as infra-TAK's PR checks). No Claude involved.
+# Automatic checks on every PR, whatever branch it is aimed at, so stacked PRs get checked too
+# (ops #329, #466; same shape as infra-TAK's PR checks). No Claude involved. Do not add a `branches:`
+# filter back: .github/ci/check_pr_trigger.py (run by static_checks.sh) fails the PR if it returns.
 # A red check blocks the merge once `checks-ok` is made a required check. Run the same things locally:
 #   bash .github/ci/static_checks.sh      (needs shellcheck and PyYAML)
 #   CI_TOOLS=<folder with typescript and vue installed> node .github/ci/syntax_ts_vue.mjs
 #   node --test plugin/test/*.test.ts
 #   node --import ./.github/ci/tests/register.mjs --test .github/ci/tests/dispatcher.test.mjs   (node 24)
-#   node --test .github/ci/tests/upgrade-db.test.mjs   (needs an empty Postgres; see the file's header)
+#   node --test --test-concurrency=1 .github/ci/tests/upgrade-db*.test.mjs   (needs an empty Postgres; see the file's header)
 on:
   pull_request:
-    branches: [dev, main]
     types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
@@ -84,7 +85,7 @@ jobs:
           node-version: '24'
       - run: node --import ./.github/ci/tests/register.mjs --test .github/ci/tests/dispatcher.test.mjs
 
-  # Updating a v1.3.0 database (with data) to this version, and rolling back (ops #468): the server's
+  # Updating a v1.3.0 and a v1.4.0 database (with data) to this version, and rolling back (ops #468, #501): the server's
   # schema bootstrap runs against a real Postgres, twice, and the old rows must still load.
   upgrade-db:
     runs-on: ubuntu-24.04
@@ -104,7 +105,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
-      - run: node --test .github/ci/tests/upgrade-db.test.mjs
+      # One file at a time: both start by dropping the same three tables.
+      - run: node --test --test-concurrency=1 .github/ci/tests/upgrade-db.test.mjs .github/ci/tests/upgrade-db-1.4.test.mjs
         env:
           PGHOST: localhost
           PGUSER: postgres
