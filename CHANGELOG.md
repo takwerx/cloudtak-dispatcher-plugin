@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.1
+
+- **install.sh no longer drops other CloudTAK plugins.** On a box with more than one web plugin (TAK Sim, LiveWX Radar),
+  the build-context file install.sh wrote kept only the Dispatcher, so the others were on disk but missing from the
+  rebuilt image and their menu items disappeared. It now keeps every installed plugin folder in the build, and
+  leaves a `Dockerfile.dockerignore` written by infra-TAK alone.
+
 ## 1.5.0
 
 - **Employee numbers (optional, off by default).** The CloudTAK admin can turn on **Employee Numbers** in the

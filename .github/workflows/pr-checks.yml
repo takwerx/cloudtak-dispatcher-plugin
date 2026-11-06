@@ -9,6 +9,7 @@ name: PR checks
 #   node --test plugin/test/*.test.ts
 #   node --import ./.github/ci/tests/register.mjs --test .github/ci/tests/dispatcher.test.mjs   (node 24)
 #   node --test --test-concurrency=1 .github/ci/tests/upgrade-db*.test.mjs   (needs an empty Postgres; see the file's header)
+#   node --test .github/ci/tests/install-dockerignore.test.mjs   (install.sh against a throwaway CloudTAK folder)
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -113,10 +114,24 @@ jobs:
           PGPASSWORD: postgres
           PGDATABASE: postgres
 
+  # install.sh against a throwaway CloudTAK folder: the Dockerfile.dockerignore it writes must keep every
+  # installed plugin in the image build, and must leave an infra-TAK-written one alone (ops #504).
+  installer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: node --test .github/ci/tests/install-dockerignore.test.mjs
+
   # One stable name to require in branch protection. A failed or cancelled job fails it.
   checks-ok:
     if: always()
-    needs: [static, syntax, unit, tests, upgrade-db]
+    needs: [static, syntax, unit, tests, upgrade-db, installer]
     runs-on: ubuntu-24.04
     steps:
       - env:
