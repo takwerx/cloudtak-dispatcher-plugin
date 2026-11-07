@@ -6,7 +6,14 @@
             v-if='floatedElsewhere'
             class='p-3 text-center text-muted small d-flex flex-column align-items-center gap-2'
         >
-            <span>Dispatcher is floating over the map.</span>
+            <span>{{ store.floatingWindow ? 'Dispatcher is open in its workspace window.' : 'Dispatcher is floating over the map.' }}</span>
+            <button
+                v-if='store.floatingWindow'
+                class='btn btn-sm btn-outline-secondary'
+                @click='focusWorkspace()'
+            >
+                Show workspace
+            </button>
             <button
                 class='btn btn-sm btn-outline-warning'
                 @click='dockDispatcher()'
@@ -23,25 +30,12 @@
             <div class='fw-bold mb-1'>Dispatcher error:</div>{{ setupError }}
         </div>
         <template v-else>
-            <!-- Header -->
+            <!-- Header: the title, TAK-CAD, Settings, and Pop out (Workspace in Multi-Monitor Mode). Labelled buttons,
+                 so nothing is a bare icon to guess at. -->
             <div class='d-flex align-items-center px-3 py-2 border-bottom flex-shrink-0 gap-2'>
                 <IconHeadset :size='18' class='text-warning' />
                 <span class='fw-semibold'>Dispatcher</span>
-                <span
-                    v-if='activeCount > 0'
-                    class='badge bg-danger'
-                >{{ activeCount }}</span>
-                <!-- The CloudTAK callsign, as always. With Employee Numbers on and someone signed in, it moves to the
-                     signed-in line under the header (next to the employee number), so it is not shown twice. -->
-                <span
-                    v-if='!signedIn'
-                    class='text-muted ms-auto small'
-                    :title='`Dispatcher: ${store.dispatcherName}`'
-                >{{ store.dispatcherName }}</span>
-                <span
-                    v-else
-                    class='ms-auto'
-                />
+                <span class='ms-auto' />
                 <!-- TAK-CAD connection toggle -->
                 <button
                     v-if='store.serverMode === "takcad"'
@@ -64,33 +58,56 @@
                 <!-- Dispatcher Settings: shared by every event (standalone only; reachable with no event open) -->
                 <button
                     v-if='store.serverMode === "standalone"'
-                    class='btn btn-sm btn-link p-0'
-                    :class='showSettings ? "text-warning" : "text-muted"'
-                    title='Dispatcher Settings — shared by every event'
-                    aria-label='Dispatcher Settings'
-                    @click='showSettings = !showSettings; showManage = false'
+                    class='btn btn-sm d-inline-flex align-items-center gap-1 text-nowrap py-0 px-2 small'
+                    :class='showSettings ? "btn-warning" : "btn-outline-secondary"'
+                    title='Dispatcher Settings, shared by every event'
+                    data-test='open-settings'
+                    @click='showSettings = !showSettings'
                 >
                     <IconSettings
-                        :size='16'
-                        stroke='1.5'
+                        :size='14'
+                        stroke='1'
                     />
+                    Settings
                 </button>
                 <button
                     v-if='!floating'
-                    class='btn btn-sm btn-link p-0 text-muted'
-                    title='Pop out — float the Dispatcher over the map'
+                    class='btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1 text-nowrap py-0 px-2 small'
+                    :title='store.displayMode === "multi" ? "Open the Dispatcher workspace window, for another monitor" : "Float the Dispatcher over the map"'
+                    data-test='pop-out'
                     @click='popOutDispatcher()'
                 >
                     <IconPictureInPictureOn
-                        :size='16'
-                        stroke='1.5'
+                        :size='14'
+                        stroke='1'
                     />
+                    {{ store.displayMode === 'multi' ? 'Workspace' : 'Pop out' }}
                 </button>
             </div>
 
-            <!-- ── Employee Numbers on (Dispatcher Settings), standalone. One line under the header, on every screen:
-                 not signed in = the yellow Sign in bar; signed in = who is on this desk, with Sign out. Never
-                 blocks: everything below stays usable. Not a password login: it records who did what. ── -->
+            <!-- Who is on this desk: the CloudTAK callsign; with Employee Numbers on and someone signed in, their
+                 number sits beside Sign out (signing out ends that number's session at this desk). -->
+            <div
+                class='px-3 py-1 border-bottom flex-shrink-0 d-flex align-items-center column-gap-2 small'
+                data-test='operator-signed-in'
+            >
+                <span
+                    class='text-truncate'
+                    :title='`CloudTAK callsign: ${store.dispatcherName}`'
+                ><span class='text-muted'>Callsign</span> <span class='fw-semibold'>{{ store.dispatcherName }}</span></span>
+                <template v-if='signedIn'>
+                    <span class='ms-auto text-nowrap'><span class='text-muted'>Employee</span> <span class='fw-semibold'>#{{ store.operator }}</span></span>
+                    <button
+                        type='button'
+                        class='btn btn-link btn-sm p-0 text-decoration-none text-nowrap'
+                        title='Sign out of this desk (shift change). The next person signs in with their number.'
+                        @click='signOut'
+                    >Sign out</button>
+                </template>
+            </div>
+
+            <!-- ── Employee Numbers on (Dispatcher Settings), standalone, nobody signed in: the yellow Sign in bar.
+                 Never blocks: everything below stays usable. Not a password login: it records who did what. ── -->
             <form
                 v-if='operatorShown && !store.operator'
                 class='px-3 py-2 border-bottom flex-shrink-0 d-flex flex-wrap align-items-center gap-2'
@@ -124,23 +141,6 @@
                     class='w-100 small text-warning'
                 >{{ signInError }}</div>
             </form>
-            <div
-                v-else-if='signedIn'
-                class='px-3 py-1 border-bottom flex-shrink-0 d-flex flex-wrap align-items-center column-gap-3 small'
-                data-test='operator-signed-in'
-            >
-                <span class='text-nowrap'><span class='text-muted'>Employee</span> <span class='fw-semibold'>#{{ store.operator }}</span></span>
-                <span
-                    class='text-nowrap text-truncate'
-                    :title='`CloudTAK callsign: ${store.dispatcherName}`'
-                ><span class='text-muted'>Callsign</span> {{ store.dispatcherName }}</span>
-                <button
-                    type='button'
-                    class='btn btn-link btn-sm p-0 ms-auto text-decoration-none'
-                    title='Sign out of this desk (shift change). The next person signs in with their number.'
-                    @click='signOut'
-                >Sign out</button>
-            </div>
 
             <!-- ── TAK-CAD mode: DataSync feed picker (markers/log routing) ─────── -->
             <div
@@ -191,70 +191,76 @@
                     <span class='text-truncate flex-grow-1'>{{ takcadFeed.name }}</span>
                     <button
                         class='btn btn-link btn-sm p-0 text-muted text-decoration-none'
+                        title='Choose another feed'
+                        aria-label='Choose another feed'
                         @click='takcadFeed = null; feeds = []; feedsFetched = false'
                     >
-                        ✕
+                        <IconX
+                            :size='16'
+                            stroke='1'
+                        />
                     </button>
                 </div>
             </div>
 
-            <!-- ── Standalone mode: Event bar (when an Event is open) ───────────── -->
+            <!-- ── Standalone mode: the open Event. "Event: NAME" with Switch event (back to the list of events; the
+                 event stays open for everyone), then how its incidents reach the field with its Event report. ── -->
             <div
                 v-else-if='store.serverMode === "standalone" && store.activeEvent'
-                class='px-3 py-2 border-bottom flex-shrink-0 d-flex align-items-center gap-2 small'
+                class='border-bottom flex-shrink-0'
+                data-test='event-bar'
             >
-                <span class='badge bg-primary text-white'>Event</span>
-                <div class='flex-grow-1 text-truncate'>
-                    <span class='fw-semibold'>{{ store.activeEvent.name }}</span>
+                <div class='px-3 pt-2 pb-1 d-flex align-items-center gap-2'>
                     <span
-                        v-if='activeEventChannel'
-                        class='badge ms-1'
-                        style='background:#64748b;color:#fff'
-                        :title='`Visible to channel ${activeEventChannel}`'
-                    >{{ activeEventChannel }}</span>
+                        class='text-truncate flex-grow-1'
+                        :title='store.activeEvent.name'
+                    ><span class='text-muted'>Event:</span> <span class='fw-semibold'>{{ store.activeEvent.name }}</span></span>
                     <span
-                        v-if='store.activeEvent.delivery === "broadcast"'
-                        class='ms-2'
+                        v-if='store.activeEvent.status === "archived"'
+                        class='badge bg-secondary'
+                    >Archived</span>
+                    <button
+                        class='btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1 text-nowrap py-0 px-2 small'
+                        title='Go to the list of events to open a different one. This event stays open for everyone.'
+                        data-test='switch-event'
+                        @click='closeEvent'
                     >
-                        <span
-                            class='badge bg-primary text-white'
-                            title='Incidents are broadcast to the channel as CloudTAK Core Events — nothing for field users to subscribe to'
-                        >Broadcast</span>
-                    </span>
-                    <span
-                        v-else
-                        class='ms-2'
-                    >
-                        <span class='badge bg-primary text-white'>DataSync</span>
-                        <span class='fw-semibold'>{{ store.activeEvent.feed_name }}</span>
-                        <span
-                            v-if='feedSubscribed'
-                            class='text-success fw-bold'
-                            title='Subscribed to this feed — markers will render'
-                        >✓</span>
-                    </span>
+                        <IconArrowsExchange
+                            :size='14'
+                            stroke='1'
+                        />
+                        Switch event
+                    </button>
                 </div>
-                <span
-                    v-if='store.activeEvent.status === "archived"'
-                    class='badge bg-secondary'
-                >Archived</span>
-                <button
-                    class='btn btn-link btn-sm p-0 text-muted'
-                    title='Manage — report for this event'
-                    @click='showSettings = false; showManage = true'
-                >
-                    <IconSettings
-                        :size='16'
-                        stroke='1.5'
-                    />
-                </button>
-                <button
-                    class='btn btn-link btn-sm p-0 text-muted text-decoration-none'
-                    title='Back to events'
-                    @click='closeEvent'
-                >
-                    ✕
-                </button>
+                <div class='px-3 pb-2 d-flex align-items-center gap-2 small'>
+                    <span class='text-muted text-truncate flex-grow-1'>
+                        <template v-if='store.activeEvent.delivery === "broadcast"'>
+                            <span title='Incidents are broadcast to the channel as CloudTAK Core Events — nothing for field users to subscribe to'>Broadcast:</span>&nbsp;<span class='fw-semibold text-body'>{{ activeEventChannel || '—' }}</span>
+                        </template>
+                        <template v-else>
+                            DataSync: <span class='fw-semibold text-body'>{{ store.activeEvent.feed_name }}</span>
+                            <IconCheck
+                                v-if='feedSubscribed'
+                                :size='16'
+                                stroke='1'
+                                class='text-success'
+                                title='Subscribed to this feed — markers will render'
+                            />
+                        </template>
+                    </span>
+                    <button
+                        class='btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1 text-nowrap py-0 px-2'
+                        title='After-action report for this event: call counts, narrative, PDF / CSV'
+                        data-test='event-report'
+                        @click='showSettings = false; showReport = true'
+                    >
+                        <IconFileText
+                            :size='14'
+                            stroke='1'
+                        />
+                        Event report
+                    </button>
+                </div>
             </div>
 
             <!-- Open Event but not subscribed to its feed → markers will silently not render -->
@@ -301,26 +307,20 @@
                 />
             </div>
 
-            <!-- ── Standalone: manage the open Event (its report) ─────────────── -->
-            <div
-                v-else-if='showManage && store.activeEvent'
-                class='flex-grow-1 overflow-hidden'
-            >
-                <ManagePanel
-                    @close='showManage = false'
-                    @report='showManage = false; showReport = true'
-                />
-            </div>
-
             <!-- ── Otherwise: tabs + incident/vehicle/personnel views ──────────── -->
             <template v-else>
-                <!-- Tab nav — Vehicles/Personnel only in TAK-CAD mode -->
-                <div class='d-flex border-bottom flex-shrink-0'>
+                <!-- Tab nav — Vehicles/Personnel only in TAK-CAD mode. Standalone: just the "Incidents" title, which
+                     runs on into the incident list's tabs below on one band, marked by a thin orange line on top. -->
+                <div
+                    class='d-flex flex-shrink-0'
+                    :class='{ "border-bottom": store.serverMode !== "standalone" }'
+                    :style='store.serverMode === "standalone" ? "background:var(--tblr-bg-surface, #1f2937); border-top:3px solid var(--tblr-warning, #f59f00)" : ""'
+                >
                     <button
                         v-for='tab in visibleTabs'
                         :key='tab.key'
                         class='flex-fill btn btn-sm rounded-0 py-2 border-0'
-                        :class='activeTab === tab.key ? "bg-warning text-dark fw-semibold" : "text-muted"'
+                        :class='store.serverMode === "standalone" ? "text-body fw-semibold pb-1" : activeTab === tab.key ? "bg-warning text-dark fw-semibold" : "text-muted"'
                         @click='activeTab = tab.key'
                     >
                         {{ tab.label }}
@@ -336,7 +336,6 @@
                         :vehicles='vehicles'
                         :personnel='personnel'
                         :takcad-feed='takcadFeed'
-                        @active-count='activeCount = $event'
                         @status='connectionStatus = $event'
                     />
                     <VehicleListView
@@ -357,13 +356,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onErrorCaptured, watch } from 'vue';
 import ProfileConfig from '../../../src/base/profile.ts';
-import { IconHeadset, IconPictureInPictureOn, IconSettings } from '@tabler/icons-vue';
+import { IconHeadset, IconPictureInPictureOn, IconSettings, IconArrowsExchange, IconFileText, IconX, IconCheck } from '@tabler/icons-vue';
 import IncidentListView from './IncidentListView.vue';
 import VehicleListView  from './VehicleListView.vue';
 import PersonnelListView from './PersonnelListView.vue';
 import EventsView from './EventsView.vue';
 import ReportView from './ReportView.vue';
-import ManagePanel from './ManagePanel.vue';
 import DispatcherSettings from './DispatcherSettings.vue';
 import { getIncidentTypes, getVehicleTypes, getVehicles, getPersonnel, getRoles, getIncidentMetadata, getMissions, getSubscribedFeedGuids } from '../lib/takcad-client.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
@@ -371,7 +369,7 @@ import type { IncidentTypeRef, VehicleType, VehicleRef, PersonRef, Role } from '
 import { listIncidents } from '../lib/events-client.ts';
 import type { DispatcherEvent } from '../lib/events-client.ts';
 import { dispatcherStore as store, saveLastEventId } from '../lib/dispatcher-store.ts';
-import { popOutDispatcher, dockDispatcher } from '../lib/float-pane.ts';
+import { popOutDispatcher, dockDispatcher, focusWorkspace } from '../lib/float-pane.ts';
 import { parseOperator, saveOperator, OPERATOR_MAX } from '../lib/operator.ts';
 
 // floating: this instance lives inside the floating pane (DispatcherFloat) rather than
@@ -410,9 +408,7 @@ onErrorCaptured((err) => {
 
 const activeTab        = ref<TabKey>('incidents');
 const showReport       = ref(false);
-const showManage       = ref(false);
 const showSettings     = ref(false);
-const activeCount      = ref(0);
 const connectionStatus = ref('');
 const incidentTypes    = ref<IncidentTypeRef[]>([]);
 const vehicleTypes     = ref<VehicleType[]>([]);
@@ -466,17 +462,19 @@ function selectFeed(f: MissionRef) {
 async function onEventOpened(event: DispatcherEvent) {
     saveLastEventId(event.id);
     activeTab.value = 'incidents';
-    try { store.incidents = await listIncidents(event.id); }
-    catch { store.incidents = []; }
+    store.incidents = [];   // never show (or restore windows against) another Event's list meanwhile
+    try {
+        const list = await listIncidents(event.id);
+        // Switched again before the list came back: it belongs to the other Event.
+        if (store.activeEvent?.id === event.id) store.incidents = list;
+    } catch { /* the board's poll fills it in */ }
 }
 
 function closeEvent() {
     store.activeEvent = null;
     store.incidents = [];
     saveLastEventId(null);
-    activeCount.value = 0;
     showReport.value = false;
-    showManage.value = false;
 }
 
 async function detect() {
@@ -495,12 +493,9 @@ async function detect() {
     }
 }
 
-// Reset badge and tab when disconnecting from TAK-CAD
+// Reset the tab when disconnecting from TAK-CAD
 watch(() => store.serverMode, (mode) => {
-    if (mode === 'standalone') {
-        activeCount.value = 0;
-        if (activeTab.value !== 'incidents') activeTab.value = 'incidents';
-    }
+    if (mode === 'standalone' && activeTab.value !== 'incidents') activeTab.value = 'incidents';
 });
 
 // ── Operator (employee number at this terminal; see lib/operator.ts) ──────────

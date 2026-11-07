@@ -1,6 +1,6 @@
 <!-- Dispatcher Settings: everything shared by every event and every dispatcher on this CloudTAK
-     (stored in dispatcher_settings). Opened from the gear in the Dispatcher's top bar, with or without
-     an event open. Things that belong to one event (its report) stay in that event's Manage panel. -->
+     (stored in dispatcher_settings). Opened from the Settings button in the Dispatcher's top bar, with or without
+     an event open. Things that belong to one event (its report) open from that event's Event report button. -->
 <template>
     <div class='d-flex flex-column h-100 overflow-hidden'>
         <div class='d-flex align-items-center px-3 py-2 border-bottom flex-shrink-0 gap-2'>
@@ -61,9 +61,14 @@
                             <button
                                 v-if='agency.logo'
                                 class='btn btn-sm btn-link text-danger p-0 text-decoration-none'
+                                title='Remove logo'
+                                aria-label='Remove logo'
                                 @click='agency.logo = null'
                             >
-                                ✕
+                                <IconX
+                                    :size='16'
+                                    stroke='1'
+                                />
                             </button>
                         </div>
                         <div
@@ -81,7 +86,12 @@
                                 <span
                                     v-if='savingAgency'
                                     class='spinner-border spinner-border-sm me-1'
-                                />{{ agencySaved ? 'Saved ✓' : 'Save header' }}
+                                /><IconCheck
+                                    v-if='agencySaved'
+                                    :size='16'
+                                    stroke='1'
+                                    class='me-1'
+                                />{{ agencySaved ? 'Saved' : 'Save header' }}
                             </button>
                         </div>
                     </div>
@@ -178,7 +188,12 @@
                                 <span
                                     v-if='savingCjis'
                                     class='spinner-border spinner-border-sm me-1'
-                                />{{ cjisSaved ? 'Saved ✓' : 'Save text' }}
+                                /><IconCheck
+                                    v-if='cjisSaved'
+                                    :size='16'
+                                    stroke='1'
+                                    class='me-1'
+                                />{{ cjisSaved ? 'Saved' : 'Save text' }}
                             </button>
                             <span class='text-muted small'>Blank resets to the default wording.</span>
                         </div>
@@ -243,6 +258,59 @@
 
             <hr class='my-1'>
 
+            <!-- Display Mode: one monitor (windows over the map) or several (the workspace window). Per computer:
+                 any dispatcher sets it, it is remembered in this browser and changes nothing for anyone else. -->
+            <div>
+                <div class='small text-muted fw-semibold text-uppercase mb-1 d-flex align-items-center gap-2'>
+                    Display Mode
+                    <span
+                        class='badge bg-info text-dark fw-normal'
+                        title='Remembered in this browser on this computer; it does not change anyone else'
+                    >This computer only</span>
+                </div>
+                <div class='card border'>
+                    <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
+                        <div
+                            v-for='m in displayModeChoices'
+                            :key='m.value'
+                            class='form-check mb-0'
+                        >
+                            <input
+                                :id='`displayMode-${m.value}`'
+                                v-model='displayMode'
+                                class='form-check-input'
+                                type='radio'
+                                name='displayMode'
+                                :value='m.value'
+                                :data-test='`display-mode-${m.value}`'
+                                @change='saveMode'
+                            >
+                            <label
+                                class='form-check-label'
+                                :for='`displayMode-${m.value}`'
+                            >
+                                <span class='fw-semibold'>{{ m.label }}</span>
+                                <span class='d-block text-muted'>{{ m.help }}</span>
+                            </label>
+                        </div>
+                        <span class='text-muted'>
+                            Changing it closes the open incident windows, and a popped-out Dispatcher returns to the
+                            menu. In Single Monitor Mode the incidents reopen over the map when you go back to the
+                            list; in Multi-Monitor Mode they reopen when you press Workspace.
+                        </span>
+                        <span
+                            v-if='displayModeSaved'
+                            class='text-muted d-inline-flex align-items-center gap-1'
+                        ><IconCheck
+                            :size='16'
+                            stroke='1'
+                        />Saved on this computer</span>
+                    </div>
+                </div>
+            </div>
+
+            <hr class='my-1'>
+
             <!-- Broadcast mode: how long a closed incident's marker stays on field devices. CloudTAK system admin only. -->
             <div>
                 <div class='small text-muted fw-semibold text-uppercase mb-1 d-flex align-items-center flex-wrap gap-2'>
@@ -278,8 +346,11 @@
                             />
                             <span
                                 v-else-if='closedSaved'
-                                class='text-muted'
-                            >Saved ✓</span>
+                                class='text-muted d-inline-flex align-items-center gap-1'
+                            ><IconCheck
+                                :size='16'
+                                stroke='1'
+                            />Saved</span>
                         </div>
                         <div class='text-muted small'>
                             Markers for closed incidents go stale after the set time and are no longer visible on the map.
@@ -322,7 +393,10 @@
                                     title='Remove custom type'
                                     @click='removeCustomType(t)'
                                 >
-                                    ✕
+                                    <IconX
+                                        :size='12'
+                                        stroke='1'
+                                    />
                                 </button>
                             </span>
                             <span
@@ -370,6 +444,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue';
+import { IconX, IconCheck } from '@tabler/icons-vue';
 import { getDispatcherSettings, putDispatcherSetting } from '../lib/events-client.ts';
 import type { AgencySettings } from '../lib/events-client.ts';
 import { dispatcherStore, applyOperatorNumbers } from '../lib/dispatcher-store.ts';
@@ -379,6 +454,8 @@ import {
     CLOSED_MARKER_MINUTE_CHOICES, closedMarkerMinutes, closedMarkerMinutesFrom, isClosedMarkerMinutes,
     setClosedMarkerMinutes,
 } from '../lib/closed-window.ts';
+import { saveDisplayMode } from '../lib/display-mode.ts';
+import type { DisplayMode } from '../lib/display-mode.ts';
 
 const emit = defineEmits<{
     (e: 'close'): void;
@@ -509,6 +586,31 @@ async function saveCjisText() {
     } finally {
         savingCjis.value = false;
     }
+}
+
+// ── Display Mode (per computer: remembered in this browser; default Single Monitor; anyone can set it) ──
+const displayModeChoices: { value: DisplayMode; label: string; help: string }[] = [
+    {
+        value: 'single',
+        label: 'Single Monitor Mode (default)',
+        help:  'Undock opens an incident in a window over the map, inside CloudTAK. Best for one screen.',
+    },
+    {
+        value: 'multi',
+        label: 'Multi-Monitor Mode',
+        help:  'The Dispatcher pop-out opens a workspace window to drag onto another monitor and maximize: '
+             + 'the Dispatcher pinned on its right, undocked incidents opening in the space beside it, the map '
+             + 'staying on the first monitor. It closes if the CloudTAK tab is closed or reloaded (one click '
+             + 'reopens it). The browser may ask once to allow pop-ups for this site.',
+    },
+];
+const displayMode      = ref<DisplayMode>(dispatcherStore.displayMode);
+const displayModeSaved = ref(false);
+
+function saveMode() {
+    dispatcherStore.displayMode = displayMode.value = saveDisplayMode(displayMode.value);
+    displayModeSaved.value = true;
+    setTimeout(() => { displayModeSaved.value = false; }, 2000);
 }
 
 // ── Closed-marker retention (deployment-shared; broadcast mode; CloudTAK system admin only) ──

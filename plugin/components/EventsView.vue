@@ -184,9 +184,14 @@
                             >{{ existingChannelOptions[0] }}</span>
                             <button
                                 class='btn btn-link btn-sm p-0 text-muted text-decoration-none'
+                                title='Choose another feed'
+                                aria-label='Choose another feed'
                                 @click='selectedFeed = null; feeds = []; feedsFetched = false'
                             >
-                                ✕
+                                <IconX
+                                    :size='16'
+                                    stroke='1'
+                                />
                             </button>
                         </div>
                         <template v-if='existingChannelOptions.length > 1'>
@@ -260,7 +265,7 @@
                 >
                     <IconRefresh
                         :size='16'
-                        stroke='1.5'
+                        stroke='1'
                         :class='refreshing ? "opacity-50" : ""'
                     />
                 </button>
@@ -352,7 +357,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, watch, onMounted, onUnmounted } from 'vue';
-import { IconRefresh } from '@tabler/icons-vue';
+import { IconRefresh, IconX } from '@tabler/icons-vue';
 import { useMapStore } from '../../../src/stores/map.ts';
 import { getMissions, getUserChannels, createFeed, feedChannels } from '../lib/takcad-client.ts';
 import OverlayManager from '../../../src/base/overlay.ts';
