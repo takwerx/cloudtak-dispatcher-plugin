@@ -4,6 +4,7 @@ import type { CjisReminder } from './cjis-reminder.ts';
 import { CJIS_REMINDER_DEFAULT_TEXT } from './cjis-reminder.ts';
 import { loadOperator, saveOperator } from './operator.ts';
 import { loadDisplayMode } from './display-mode.ts';
+import { loadForcedMode } from './panel-state.ts';
 import type { DisplayMode } from './display-mode.ts';
 
 export type ServerMode = 'detecting' | 'takcad' | 'standalone';
@@ -58,7 +59,7 @@ interface DispatcherState {
 
 export const dispatcherStore = reactive<DispatcherState>({
     serverMode:     'detecting',
-    forcedMode:     null,
+    forcedMode:     loadForcedMode(),
     dispatcherName: '',
     operatorNumbers: false,
     operator:       loadOperator(),
