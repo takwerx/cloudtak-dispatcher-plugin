@@ -3,8 +3,25 @@ import type { DispatcherEvent, DispatcherIncident } from './events-client.ts';
 import type { CjisReminder } from './cjis-reminder.ts';
 import { CJIS_REMINDER_DEFAULT_TEXT } from './cjis-reminder.ts';
 import { loadOperator, saveOperator } from './operator.ts';
+import { loadDisplayMode } from './display-mode.ts';
+import type { DisplayMode } from './display-mode.ts';
 
 export type ServerMode = 'detecting' | 'takcad' | 'standalone';
+
+// One undocked incident inside the Multi-Monitor workspace window (position relative to its card area).
+// While `auto`, it shares the workspace with the other auto cards (undock.ts workspaceTileRect), in the order
+// of `slot` (the order they were undocked); once the dispatcher drags or resizes it, it keeps the
+// x / y / w / h they gave it.
+export interface WorkspaceCard {
+    id:   string;
+    slot: number;
+    auto: boolean;
+    x:    number;
+    y:    number;
+    w:    number;
+    h:    number;
+    z:    number;
+}
 
 interface DispatcherState {
     serverMode:     ServerMode;
@@ -18,6 +35,17 @@ interface DispatcherState {
     // anchored menu view collapses to a dock-back placeholder so the board isn't
     // mounted (and polling) twice.
     floating:       boolean;
+    // Multi-Monitor Mode: the detached Dispatcher is in the workspace window rather than a pane.
+    floatingWindow: boolean;
+    // Incident ids currently undocked into their own window (opening order): a pane over the map in
+    // Single Monitor Mode, a browser window in Multi-Monitor Mode.
+    undocked:       string[];
+    // This computer's Display Mode (Dispatcher Settings; remembered in this browser): 'single' (default) or 'multi'.
+    displayMode:    DisplayMode;
+    // Multi-Monitor Mode: the browser refused a new window, so the last undock fell back to a pane.
+    windowBlocked:  boolean;
+    // Multi-Monitor Mode: incident cards open in the workspace window, with their place and size there.
+    workspaceCards: WorkspaceCard[];
     // Standalone Event→Incident model (server-backed; shared across dispatchers on this CloudTAK).
     events:         DispatcherEvent[];
     activeEvent:    DispatcherEvent | null;
@@ -35,6 +63,11 @@ export const dispatcherStore = reactive<DispatcherState>({
     operatorNumbers: false,
     operator:       loadOperator(),
     floating:       false,
+    floatingWindow: false,
+    undocked:       [],
+    displayMode:    loadDisplayMode(),
+    windowBlocked:  false,
+    workspaceCards: [],
     events:         [],
     activeEvent:    null,
     incidents:      [],

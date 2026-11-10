@@ -24,6 +24,29 @@ export function boardState(units: AssignedContact[] | undefined): BoardState {
     return live.some(u => unitStatus(u) === 'on_scene') ? 'on_scene' : 'dispatched';
 }
 
+// Which list an incident is in. Multi-Monitor Mode splits the open incidents into Unassigned (no unit on
+// it, including one whose units have all cleared: it needs a unit again) and Active (at least one unit
+// Assigned or On Scene); Single Monitor Mode keeps one Active list of every open incident.
+export type IncidentQueue = 'unassigned' | 'active' | 'closed';
+
+export function incidentQueue(inc: Pick<DispatcherIncident, 'status' | 'assigned'>, splitUnassigned: boolean): IncidentQueue {
+    if (inc.status === 'closed') return 'closed';
+    if (!splitUnassigned) return 'active';
+    return boardState(inc.assigned) === 'unassigned' ? 'unassigned' : 'active';
+}
+
+// The units an incident list card names: the callsigns still on the incident (cleared units have left it),
+// in the order they were assigned. Status is left to the incident itself, so a big call stays one short line.
+export function rowUnits(units: AssignedContact[] | undefined): string[] {
+    return (units ?? []).filter(u => unitStatus(u) !== 'cleared').map(u => u.callsign);
+}
+
+// Bootstrap classes for the board badge (list rows, detail, undocked cards).
+export function boardBadgeClass(units: AssignedContact[] | undefined): string {
+    const b = boardState(units);
+    return b === 'on_scene' ? 'bg-warning text-dark' : b === 'dispatched' ? 'bg-info text-dark' : 'bg-light text-dark border';
+}
+
 // The marker remarks line: `Responding: E12 (on scene), M4`. Cleared units drop off the line.
 export function respondingLine(units: AssignedContact[] | undefined): string {
     const live = (units ?? []).filter(u => unitStatus(u) !== 'cleared');

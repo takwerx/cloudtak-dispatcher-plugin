@@ -94,8 +94,8 @@ test('removing the only phone-bearing primary clears the marker phone', () => {
     assert.equal(stored.contact.phone, undefined);
 });
 
-test('the incident list screen sends no callers to the marker when Caller Details is off', () => {
-    const src = readFileSync(new URL('../components/IncidentListView.vue', import.meta.url), 'utf8');
+test('the incident detail (panel and undocked cards) sends no callers to the marker when Caller Details is off', () => {
+    const src = readFileSync(new URL('../components/IncidentDetail.vue', import.meta.url), 'utf8');
     assert.match(src, /callers:\s+dispatcherStore\.callerOnMarkers \? \(inc\.callers \?\? \[\]\) : \[\]/);
 });
 
