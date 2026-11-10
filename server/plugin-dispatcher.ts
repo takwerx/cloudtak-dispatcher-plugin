@@ -420,6 +420,8 @@ function firstCaller(nameIn: string | undefined, phoneIn: string | undefined, ta
 // Only the dispatcher presses the buttons, and the SERVER stamps the time, so a browser can't
 // back-date one. A Cleared unit stays on the incident (the record shows who worked the call);
 // the ✕ (removeUnitFrom) is for a unit assigned by mistake and drops it from the record.
+// A unit sent back to an incident it cleared from gets a second row (a second trip): the first keeps
+// its times. A unit has at most one row still working (not Cleared) per incident; the buttons act on it.
 // Older rows hold { uid, callsign } only: they read as Assigned with no time.
 // The list logic below is pure (no database) so plugin/test/units-server.test.ts can run it.
 // <units-pure>
@@ -442,16 +444,17 @@ function unitTime(v: unknown): string | null {
     return typeof v === 'string' && !Number.isNaN(new Date(v).getTime()) ? v : null;
 }
 
-// Normalize a stored list: drop junk and duplicates, give old { uid, callsign } rows a status.
+// Normalize a stored list: drop junk and duplicates (a second row for a unit that is already
+// working, or the same trip twice), give old { uid, callsign } rows a status.
 function normalizeUnits(v: unknown): UnitEntry[] {
-    const seen = new Set<string>();
     const out: UnitEntry[] = [];
     for (const u of asArray(v)) {
         if (!u || typeof u !== 'object') continue;
         const r = u as Record<string, unknown>;
-        if (typeof r.uid !== 'string' || !r.uid || seen.has(r.uid)) continue;
-        seen.add(r.uid);
+        if (typeof r.uid !== 'string' || !r.uid) continue;
         const status: UnitStatus = r.status === 'on_scene' || r.status === 'cleared' ? r.status : 'assigned';
+        const at = unitTime(r.assigned_at);
+        if (out.some(o => o.uid === r.uid && ((status !== 'cleared' && o.status !== 'cleared') || o.assigned_at === at))) continue;
         out.push({
             uid: r.uid,
             callsign: typeof r.callsign === 'string' ? r.callsign : r.uid,
@@ -464,7 +467,13 @@ function normalizeUnits(v: unknown): UnitEntry[] {
     return out;
 }
 
-// Assign units (skips any already on the incident). Returns the new list and the notes to log.
+// The row a unit is working on this incident (not Cleared), if any.
+function liveUnit(list: UnitEntry[], uid: string): UnitEntry | undefined {
+    return list.find(u => u.uid === uid && u.status !== 'cleared');
+}
+
+// Assign units (skips any still working the incident; one that cleared from it starts a second
+// trip, a new row). Returns the new list and the notes to log.
 function assignUnitsTo(list: UnitEntry[], add: { uid?: string; callsign?: string }[], now: string): { list: UnitEntry[]; notes: UnitNote[] } {
     const next = [...list];
     const notes: UnitNote[] = [];
@@ -473,7 +482,7 @@ function assignUnitsTo(list: UnitEntry[], add: { uid?: string; callsign?: string
         const callsign = (a.callsign ?? '').trim();
         if (!uid || !callsign) throw new Err(400, null, 'A unit needs a uid and a callsign');
         if (callsign.length > 64) throw new Err(400, null, 'Unit callsign is too long (64 characters max)');
-        if (next.some(u => u.uid === uid)) continue;
+        if (liveUnit(next, uid)) continue;
         if (next.length >= UNITS_MAX) throw new Err(400, null, `An incident can have at most ${UNITS_MAX} units`);
         next.push({ uid, callsign, status: 'assigned', assigned_at: now, on_scene_at: null, cleared_at: null });
         notes.push({ text: `${callsign} assigned`, time: now });
@@ -484,23 +493,32 @@ function assignUnitsTo(list: UnitEntry[], add: { uid?: string; callsign?: string
 // Move one unit forward: Assigned -> On Scene -> Cleared. Never backwards, never twice.
 // A unit that clears without ever being marked On Scene keeps no on-scene time.
 function advanceUnit(list: UnitEntry[], uid: string, to: 'on_scene' | 'cleared', now: string): { list: UnitEntry[]; notes: UnitNote[] } {
-    const unit = list.find(u => u.uid === uid);
-    if (!unit) throw new Err(404, null, 'Unit not found on this incident');
-    if (unit.status === 'cleared') throw new Err(400, null, `${unit.callsign} is already cleared`);
+    const unit = liveUnit(list, uid);
+    if (!unit) {
+        const done = list.find(u => u.uid === uid);
+        if (!done) throw new Err(404, null, 'Unit not found on this incident');
+        throw new Err(400, null, `${done.callsign} is already cleared`);
+    }
     if (to === 'on_scene' && unit.status !== 'assigned') throw new Err(400, null, `${unit.callsign} is already on scene`);
     const stamped: UnitEntry = to === 'on_scene'
         ? { ...unit, status: 'on_scene', on_scene_at: now }
         : { ...unit, status: 'cleared', cleared_at: now };
     return {
-        list: list.map(u => (u.uid === uid ? stamped : u)),
+        list: list.map(u => (u === unit ? stamped : u)),
         notes: [{ text: `${unit.callsign} ${to === 'on_scene' ? 'on scene' : 'cleared'}`, time: now }],
     };
 }
 
 // The ✕: the unit was assigned by mistake, so it leaves the record (no note).
-function removeUnitFrom(list: UnitEntry[], uid: string): UnitEntry[] {
-    if (!list.some(u => u.uid === uid)) throw new Err(404, null, 'Unit not found on this incident');
-    return list.filter(u => u.uid !== uid);
+// `at` (the row's assigned time, '' for an old row with none) picks one trip. Without it (older
+// plugin builds, which show one row per unit) the trip still working goes, so an earlier cleared
+// trip keeps its times; a unit with no trip working loses its rows, as before.
+function removeUnitFrom(list: UnitEntry[], uid: string, at?: string): UnitEntry[] {
+    const live = at === undefined ? liveUnit(list, uid) : undefined;
+    const hit = (u: UnitEntry) => u.uid === uid
+        && (live ? u === live : at === undefined || (u.assigned_at ?? '') === at);
+    if (!list.some(hit)) throw new Err(404, null, 'Unit not found on this incident');
+    return list.filter(u => !hit(u));
 }
 
 // Closing an incident clears every unit still on it, stamped with the close time.
@@ -516,15 +534,89 @@ function clearAllUnits(list: UnitEntry[], now: string): { list: UnitEntry[]; not
 
 // A client that still sends the whole list (older plugin builds): keep what the server already
 // knows about each unit, stamp any new one as Assigned now, drop the ones that are gone. Status
-// and times in the request are never read, so they can't be forged.
+// and times in the request are never read, so they can't be forged. Such a client sends its cleared
+// units back too, so a unit already on the record never starts a second trip this way.
 function mergeAssignedFrom(current: UnitEntry[], sent: unknown, now: string): UnitEntry[] {
     const wanted = asArray(sent)
         .filter((u): u is Record<string, unknown> => !!u && typeof u === 'object' && typeof (u as { uid?: unknown }).uid === 'string')
         .map(u => ({ uid: String(u.uid), callsign: typeof u.callsign === 'string' ? u.callsign : String(u.uid) }));
     const kept = current.filter(u => wanted.some(w => w.uid === u.uid));
-    return assignUnitsTo(kept, wanted, now).list;
+    return assignUnitsTo(kept, wanted.filter(w => !current.some(u => u.uid === w.uid)), now).list;
+}
+
+// One incident per unit: a unit still Assigned or On Scene on another active incident of the same
+// Event can't be assigned until it is Cleared there. The units this request puts to work (a new
+// unit, or a second trip for one that had cleared from this incident), uids only.
+function addedUnits(before: UnitEntry[], after: UnitEntry[]): string[] {
+    return after.filter(u => u.status !== 'cleared' && !liveUnit(before, u.uid)).map(u => u.uid);
+}
+
+// The incident number without the Event prefix: `26-014` -> `014`. Every incident on the board
+// shares the prefix, so the count alone says which one.
+function shortNumber(number: string): string {
+    const i = number.lastIndexOf('-');
+    return i === -1 ? number : number.slice(i + 1);
+}
+
+// The units among `uids` still working (Assigned or On Scene) one of `others`, the other active
+// incidents of the Event, with that incident's number. `assigned` is read the same forgiving way as
+// everywhere else (it can come back as a JSON string, even double-encoded), so no SQL reads the jsonb.
+function heldElsewhere(others: { number: string; assigned: unknown }[], uids: string[]): { callsign: string; number: string }[] {
+    const held: { callsign: string; number: string }[] = [];
+    for (const inc of others) {
+        for (const u of normalizeUnits(inc.assigned)) {
+            if (u.status !== 'cleared' && uids.includes(u.uid)) held.push({ callsign: u.callsign, number: inc.number });
+        }
+    }
+    return held;
+}
+
+// The refusal for the units found busy elsewhere (null = none): `E12 is on 014. Clear it there first.`
+// `requested` = how many units the press asked for: with more than one, it also says none went out
+// (the request is all or nothing, so a free unit picked beside a busy one was not assigned either).
+function busyRefusal(held: { callsign: string; number: string }[], requested: number): string | null {
+    const lines: string[] = [];
+    for (const h of held) {
+        const line = `${h.callsign} is on ${shortNumber(h.number)}`;
+        if (!lines.includes(line)) lines.push(line);
+    }
+    if (!lines.length) return null;
+    const text = lines.length === 1
+        ? `${lines[0]}. Clear it there first.`
+        : `${lines.join(', ')}. Clear them there first.`;
+    return requested > 1 ? `${text} Nothing was assigned.` : text;
 }
 // </units-pure>
+
+// A transaction (or the pool): anything that runs raw SQL.
+type Tx = Pick<ConfigStateless['pg'], 'execute'>;
+
+// Lock the incident's Event row. Taken BEFORE the incident row by every request that can add a
+// unit, so two dispatchers assigning the same unit to two incidents of one Event go one at a time
+// and the second sees the first. Locking only the incidents that hold the unit would not work: the
+// first assignment of a unit has no row to lock.
+async function lockEventOf(tx: Tx, incidentid: string): Promise<void> {
+    await tx.execute(sql`
+        SELECT 1 FROM dispatcher_events
+        WHERE id = (SELECT event_id FROM dispatcher_incidents WHERE id = ${incidentid})
+        FOR UPDATE
+    `);
+}
+
+// Refuse (409) when any of `uids` is still working another active incident of this one's Event.
+// Runs inside the transaction, after lockEventOf. Old rows with no status read as Assigned.
+async function refuseBusyUnits(tx: Tx, incidentid: string, uids: string[]): Promise<void> {
+    if (!uids.length) return;
+    const others = await tx.execute(sql`
+        SELECT number, assigned FROM dispatcher_incidents
+        WHERE event_id = (SELECT event_id FROM dispatcher_incidents WHERE id = ${incidentid})
+          AND id <> ${incidentid}
+          AND status = 'active'
+        ORDER BY created_at
+    `) as unknown as { number: string; assigned: unknown }[];
+    const refusal = busyRefusal(heldElsewhere(others, uids), uids.length);
+    if (refusal) throw new Err(409, null, refusal);
+}
 
 // Normalize an incident row's jsonb fields to arrays before sending it to the client, and
 // derive caller_name / caller_phone from the primary caller.
@@ -568,26 +660,35 @@ async function editCallers(
 // Lock the incident row, apply `edit` to its units (and the notes it returns) and write both back in
 // one transaction, so two dispatchers pressing buttons at the same moment can't overwrite each
 // other and the note and the time always agree. Units can't change on a closed incident.
-// `operator` (employee numbers switch on) stamps the notes; `assigning` lets the first assignment
-// record the dispatcher's number. Both default to off, which is the behaviour from before.
+// Options, all off by default (the behaviour from before): `operator` (employee numbers switch on)
+// stamps the notes; `stampDispatcher` lets the first assignment record the dispatcher's number;
+// `checkBusy` (the assign route) locks the Event first and refuses a unit still working another incident.
+interface EditUnitsOptions {
+    operator?: string | null;
+    stampDispatcher?: boolean;
+    checkBusy?: boolean;
+}
+
 async function editUnits(
     config: ConfigStateless,
     incidentid: string,
     edit: (list: UnitEntry[], now: string) => { list: UnitEntry[]; notes: UnitNote[] },
-    operator: string | null = null,
-    assigning = false,
+    { operator = null, stampDispatcher = false, checkBusy = false }: EditUnitsOptions = {},
 ): Promise<IncidentRow> {
     return await config.pg.transaction(async (tx) => {
+        if (checkBusy) await lockEventOf(tx, incidentid);
         const locked = await tx.execute(sql`
             SELECT assigned, notes, status, initial_dispatcher_no FROM dispatcher_incidents WHERE id = ${incidentid} FOR UPDATE
         `) as unknown as { assigned: unknown; notes: unknown; status: string; initial_dispatcher_no: string | null }[];
         if (!locked.length) throw new Err(404, null, 'Incident not found');
         if (locked[0].status !== 'active') throw new Err(400, null, 'This incident is closed. Reopen it to change its units.');
         const now = new Date().toISOString();
-        const out = edit(normalizeUnits(locked[0].assigned), now);
+        const before = normalizeUnits(locked[0].assigned);
+        const out = edit(before, now);
+        if (checkBusy) await refuseBusyUnits(tx, incidentid, addedUnits(before, out.list));
         const notes = [...asArray(locked[0].notes), ...withBy(out.notes, operator)];
         // An assignment writes one note per unit added, so the note count is the number added.
-        const initialDispatcherNo = assigning
+        const initialDispatcherNo = stampDispatcher
             ? dispatcherAfterAssign(locked[0].initial_dispatcher_no, out.notes.length, operator)
             : locked[0].initial_dispatcher_no;
         const rows = await tx.execute(sql`
@@ -1116,6 +1217,9 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             // Read-modify-write under a row lock: merge the patch over the current row, then write
             // all columns. The lock keeps a unit button pressed at the same moment from being lost.
             const incident = await config.pg.transaction(async (tx) => {
+                // An older plugin build sending the whole unit list can add units: same Event lock and
+                // busy check as the assign route, the Event first so the lock order is the same.
+                if (req.body.assigned !== undefined) await lockEventOf(tx, req.params.incidentid);
                 const current = await tx.execute(sql`
                     SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
                            report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note, created_by_no, initial_dispatcher_no, closed_by_no
@@ -1186,6 +1290,9 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 if (reopenNeedsReason(numbersOn, cur.status, next.status)) {
                     next.notes = [...next.notes, { text: reopenNote(normReopenReason(b.reopen_reason)), time: now }];
                 }
+                if (b.assigned !== undefined && next.status === 'active') {
+                    await refuseBusyUnits(tx, req.params.incidentid, addedUnits(normalizeUnits(cur.assigned), next.assigned));
+                }
                 if (closing) {
                     const cleared = clearAllUnits(next.assigned, closedAt as string);
                     next.assigned = cleared.list;
@@ -1243,7 +1350,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             await requireIncidentAccess(config, user.email, req.params.incidentid);
             const numbersOn = await operatorNumbersEnabled(config);
             const operator = requestOperator(numbersOn, req.body.operator);
-            const incident = await editUnits(config, req.params.incidentid, (list, now) => assignUnitsTo(list, req.body.units, now), operator, numbersOn);
+            const incident = await editUnits(config, req.params.incidentid, (list, now) => assignUnitsTo(list, req.body.units, now),
+                { operator, stampDispatcher: numbersOn, checkBusy: true });
             res.json({ incident });
         } catch (err) {
             Err.respond(err, res);
@@ -1265,7 +1373,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             const user = await Auth.as_user(config, req);
             await requireIncidentAccess(config, user.email, req.params.incidentid);
             const operator = requestOperator(await operatorNumbersEnabled(config), req.body.operator);
-            const incident = await editUnits(config, req.params.incidentid, (list, now) => advanceUnit(list, req.params.uid, req.body.status, now), operator);
+            const incident = await editUnits(config, req.params.incidentid, (list, now) => advanceUnit(list, req.params.uid, req.body.status, now), { operator });
             res.json({ incident });
         } catch (err) {
             Err.respond(err, res);
@@ -1277,12 +1385,17 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         group: 'Dispatcher',
         description: 'Take a unit off the incident record (for a unit assigned by mistake)',
         params: Type.Object({ incidentid: Type.String(), uid: Type.String() }),
+        query: Type.Object({
+            // Which trip: that row's assigned time ('' for an old row with none). Left out, every row
+            // of the unit goes (older plugin builds, where a unit had one row).
+            at: Type.Optional(Type.String()),
+        }),
         res: Type.Any(),
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
             await requireIncidentAccess(config, user.email, req.params.incidentid);
-            const incident = await editUnits(config, req.params.incidentid, list => ({ list: removeUnitFrom(list, req.params.uid), notes: [] }));
+            const incident = await editUnits(config, req.params.incidentid, list => ({ list: removeUnitFrom(list, req.params.uid, req.query.at), notes: [] }));
             res.json({ incident });
         } catch (err) {
             Err.respond(err, res);

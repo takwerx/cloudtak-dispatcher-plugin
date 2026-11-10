@@ -152,7 +152,7 @@ test('the route file wires it in behind the switch and leaves the dispatcher fie
     // Every write reads the switch; with it off the operator is null and nothing is stamped.
     assert.equal((src.match(/requestOperator\((await operatorNumbersEnabled\(config\)|numbersOn), req\.body\.operator\)/g) ?? []).length, 5, 'create, patch, assign, unit status, add caller');
     assert.match(src, /if \(numbersOn\) next\.notes = stampNewNotes\(asArray\(cur\.notes\)\.length, next\.notes, operator\);/);
-    assert.match(src, /assignUnitsTo\(list, req\.body\.units, now\), operator, numbersOn\)/);
+    assert.match(src, /assignUnitsTo\(list, req\.body\.units, now\),\s+\{ operator, stampDispatcher: numbersOn, checkBusy: true \}\)/);
     assert.match(src, /SELECT assigned, notes, status, initial_dispatcher_no FROM dispatcher_incidents WHERE id = \$\{incidentid\} FOR UPDATE/);
     // Only a system admin may flip the switch.
     assert.match(src, /isAdminOnlySetting\(req\.params\.key\) \|\| req\.params\.key === OPERATOR_SETTING/);
