@@ -68,9 +68,9 @@ test('old incidents still load with the current query, new columns empty, nothin
     assert.equal(b.status, 'closed');
     assert.ok(b.closed_at);
     assert.equal(b.disposition, null);
-    // A list stored as a JSON string comes back as that string, intact, for the readers to unwrap.
-    assert.deepEqual(JSON.parse(c.assigned).map(u => u.callsign), ['X1']);
-    assert.equal(JSON.parse(c.notes)[0].text, 'Tow requested');
+    // A list v1.3.0 stored as a JSON string is unwrapped into the list by the bootstrap (upgrade-db-jsonb.test.mjs).
+    assert.deepEqual(c.assigned.map(u => u.callsign), ['X1']);
+    assert.equal(c.notes[0].text, 'Tow requested');
     assert.deepEqual(c.callers, []);
 });
 

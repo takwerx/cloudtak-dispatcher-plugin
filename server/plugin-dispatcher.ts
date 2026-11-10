@@ -82,9 +82,17 @@ async function query<T>(config: ConfigStateless, statement: ReturnType<typeof sq
     return result as unknown as T[];
 }
 
-// jsonb columns can come back from the driver as a (possibly double-encoded) JSON string.
-// Unwrap to a real array so the UI can map/spread it, and so a read-modify-write never
-// re-JSON.stringifies an already-stringified value (which double-encodes the column).
+// A value for a jsonb column. The JSON goes in as text and Postgres turns the text into jsonb.
+// Casting the parameter straight to jsonb makes CloudTAK's driver (postgres-js) treat it as jsonb
+// and JSON-encode the text a second time, so the column held a JSON string, not the list, and
+// SQL that looks inside the column found nothing. The bootstrap unwraps rows written that way.
+function toJsonb(value: unknown) {
+    return sql`${jsonbText(value)}::text::jsonb`;
+}
+
+// Rows written before toJsonb (and by an older plugin after a rollback) hold a JSON string,
+// sometimes double-encoded. Unwrap to a real array so the UI can map/spread it, and so a
+// read-modify-write never re-JSON.stringifies an already-stringified value.
 function asArray(v: unknown): unknown[] {
     let x: unknown = v;
     for (let i = 0; i < 4 && typeof x === 'string'; i++) {
@@ -96,6 +104,47 @@ function asArray(v: unknown): unknown[] {
     }
     return Array.isArray(x) ? x : [];
 }
+
+// Storing jsonb. Pure (no database) so plugin/test/jsonb-server.test.ts can run it.
+// <jsonb-pure>
+// Postgres refuses two things in jsonb that JSON.stringify can produce: the NUL character and half of an
+// emoji (a lone surrogate, as left by a paste or a cut). The old text shape took them, so the whole save
+// would now fail, and keep failing for an incident whose notes already hold one. Drop them; the bootstrap
+// drops them the same way when it converts old rows.
+const JSONB_UNSAFE = /\u0000|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+
+// The JSON text toJsonb sends.
+function jsonbText(value: unknown): string {
+    return JSON.stringify(value ?? null, (_key, v: unknown) => typeof v === 'string' ? v.replace(JSONB_UNSAFE, '') : v);
+}
+
+// Parse a stored JSON string up to `times` times; stop at the first text that is not JSON and return it.
+function unwrapJson(v: unknown, times: number): unknown {
+    let x = v;
+    for (let i = 0; i < times && typeof x === 'string'; i++) {
+        try {
+            x = JSON.parse(x);
+        } catch {
+            break;
+        }
+    }
+    return x;
+}
+
+// Settings (dispatcher_settings.value). Objects, lists, true/false and numbers are stored as real jsonb.
+// A text setting is stored as before: a jsonb string that holds the JSON of the text ('"Agency"'), so a
+// text that looks like JSON ("123", "true") stays text, and an older plugin reads it the same way.
+function settingToStore(value: unknown): unknown {
+    return typeof value === 'string' ? JSON.stringify(value) : value;
+}
+
+// A stored setting back to its value. Exactly one unwrap, because a text setting "123" and a number 123
+// wrapped twice are the same bytes. Text that is not JSON (typed in by hand) comes back as it is rather
+// than failing the read.
+function settingFromStore(v: unknown): unknown {
+    return unwrapJson(v, 1);
+}
+// </jsonb-pure>
 
 // Report numbers are free text from the agency's records system. Trim, cap the length,
 // and store an empty value as NULL so "cleared" and "never set" read the same.
@@ -174,19 +223,11 @@ const OPERATOR_SETTING = 'operator_numbers';
 const OPERATOR_MAX = 16;
 
 // The admin switch as read from dispatcher_settings: only true turns it on (missing, an older database,
-// anything else = off). A raw read hands jsonb back as a JSON string, sometimes double-encoded (see
-// asArray), so `true` arrives as the text 'true': unwrap it first, like the GET settings route does.
-// The PUT only ever stores a boolean (normOperatorSetting), so unwrapping cannot turn on a stray string.
+// anything else = off). A row saved before toJsonb holds the text 'true', sometimes wrapped twice (seen
+// live), so unwrap up to 4 times. Settings in general unwrap once (see settingFromStore); a switch can
+// unwrap further because only true counts and the PUT only ever stores a boolean (normOperatorSetting).
 function operatorNumbersOn(value: unknown): boolean {
-    let x: unknown = value;
-    for (let i = 0; i < 4 && typeof x === 'string'; i++) {
-        try {
-            x = JSON.parse(x);
-        } catch {
-            return false;
-        }
-    }
-    return x === true;
+    return unwrapJson(value, 4) === true;
 }
 
 // Value an admin may store under the switch.
@@ -556,7 +597,7 @@ async function editCallers(
         if (!locked.length) throw new Err(404, null, 'Incident not found');
         const next = normalizeCallers(edit(normalizeCallers(locked[0].callers)));
         const rows = await tx.execute(sql`
-            UPDATE dispatcher_incidents SET callers = ${JSON.stringify(next)}::jsonb
+            UPDATE dispatcher_incidents SET callers = ${toJsonb(next)}
             WHERE id = ${incidentid}
             RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
                       report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note, created_by_no, initial_dispatcher_no, closed_by_no
@@ -592,7 +633,7 @@ async function editUnits(
             : locked[0].initial_dispatcher_no;
         const rows = await tx.execute(sql`
             UPDATE dispatcher_incidents
-            SET assigned = ${JSON.stringify(out.list)}::jsonb, notes = ${JSON.stringify(notes)}::jsonb,
+            SET assigned = ${toJsonb(out.list)}, notes = ${toJsonb(notes)},
                 initial_dispatcher_no = ${initialDispatcherNo}
             WHERE id = ${incidentid}
             RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
@@ -793,6 +834,80 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         await config.pg.execute(sql`
             ALTER TABLE dispatcher_incidents ADD COLUMN IF NOT EXISTS closed_by_no TEXT
         `);
+        // Lists written before the fix in toJsonb hold a JSON string, not the list (some twice over).
+        // Unwrap each one until it is a list, dropping NUL and half emoji the way jsonbText does (chr(92)
+        // is a backslash: the pattern keeps an escaped backslash and a whole emoji pair and drops the
+        // escape for NUL and for half a pair). A value that never becomes a list (not JSON) is stored as
+        // an empty list, which is what the readers already showed, so SQL over these columns can rely on
+        // lists. One scan, only rows still holding a string, so later starts change nothing, and the
+        // update is skipped for a row a dispatcher changed in the meantime.
+        try {
+            await config.pg.execute(sql`
+                DO $$
+                DECLARE
+                    b text := chr(92);
+                    unsafe text;
+                    keep text;
+                    r record;
+                    vals jsonb[];
+                    v jsonb;
+                    k int;
+                    i int;
+                BEGIN
+                    unsafe := '(' || b || b || b || b || ')|(' || b || b || 'u[dD][89abAB][0-9a-fA-F]{2}'
+                        || b || b || 'u[dD][c-fC-F][0-9a-fA-F]{2})|' || b || b || 'u0000|'
+                        || b || b || 'u[dD][89a-fA-F][0-9a-fA-F]{2}';
+                    keep := b || '1' || b || '2';
+                    FOR r IN SELECT id, assigned, notes, callers FROM dispatcher_incidents
+                             WHERE jsonb_typeof(assigned) = 'string' OR jsonb_typeof(notes) = 'string'
+                                OR jsonb_typeof(callers) = 'string'
+                    LOOP
+                        vals := ARRAY[r.assigned, r.notes, r.callers];
+                        FOR k IN 1..3 LOOP
+                            CONTINUE WHEN jsonb_typeof(vals[k]) <> 'string';
+                            v := vals[k];
+                            i := 0;
+                            WHILE jsonb_typeof(v) = 'string' AND i < 4 LOOP
+                                BEGIN
+                                    v := regexp_replace(v #>> '{}', unsafe, keep, 'g')::jsonb;
+                                EXCEPTION WHEN others THEN
+                                    v := NULL;
+                                END;
+                                i := i + 1;
+                            END LOOP;
+                            vals[k] := CASE WHEN jsonb_typeof(v) = 'array' THEN v ELSE '[]'::jsonb END;
+                        END LOOP;
+                        UPDATE dispatcher_incidents SET assigned = vals[1], notes = vals[2], callers = vals[3]
+                        WHERE id = r.id AND assigned = r.assigned AND notes = r.notes AND callers = r.callers;
+                    END LOOP;
+                END $$
+            `);
+        } catch (err) {
+            console.error('[dispatcher] converting old incident lists failed', err);
+        }
+        // Settings written before the fix: unwrap once when that gives an object, list, true/false or
+        // number. A text setting ('"Agency"', see settingToStore) stays as it is, and so does one that
+        // fails to unwrap (settingFromStore still reads it; nothing looks inside settings with SQL).
+        try {
+            await config.pg.execute(sql`
+                DO $$
+                DECLARE r record; v jsonb;
+                BEGIN
+                    FOR r IN SELECT key, value FROM dispatcher_settings WHERE jsonb_typeof(value) = 'string' LOOP
+                        BEGIN
+                            v := (r.value #>> '{}')::jsonb;
+                        EXCEPTION WHEN others THEN
+                            CONTINUE;
+                        END;
+                        IF jsonb_typeof(v) <> 'string' THEN
+                            UPDATE dispatcher_settings SET value = v WHERE key = r.key AND value = r.value;
+                        END IF;
+                    END LOOP;
+                END $$
+            `);
+        } catch (err) {
+            console.error('[dispatcher] converting old settings failed', err);
+        }
     } catch (err) {
         console.error('[dispatcher] table bootstrap failed', err);
     }
@@ -812,8 +927,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             `);
             const settings: Record<string, unknown> = {};
             for (const r of rows) {
-                // Same jsonb normalize as asArray: a raw read can hand back a string.
-                settings[r.key] = typeof r.value === 'string' ? JSON.parse(r.value) : r.value;
+                settings[r.key] = settingFromStore(r.value);
             }
             res.json({ settings });
         } catch (err) {
@@ -847,8 +961,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             if (encoded.length > 400_000) throw new Err(400, null, 'Setting too large (400KB max)');
             await config.pg.execute(sql`
                 INSERT INTO dispatcher_settings (key, value)
-                VALUES (${req.params.key}, ${encoded}::jsonb)
-                ON CONFLICT (key) DO UPDATE SET value = ${encoded}::jsonb
+                VALUES (${req.params.key}, ${toJsonb(settingToStore(value))})
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
             `);
             res.json({ ok: true });
         } catch (err) {
@@ -1068,8 +1182,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                     (${id}, ${req.params.eventid}, ${number}, ${req.body.type ?? null},
                      ${req.body.address ?? null}, ${req.body.lat}, ${req.body.lon},
                      ${req.body.dispatcher ?? null}, ${operator}, ${req.body.details ?? null}, ${reportNumber},
-                     ${JSON.stringify(callers)}::jsonb,
-                     ${JSON.stringify(withBy(seedNotes, operator))}::jsonb)
+                     ${toJsonb(callers)},
+                     ${toJsonb(withBy(seedNotes, operator))})
                 RETURNING id, event_id, number, type, address, lat, lon, dispatcher, details,
                           report_number, callers, core_event_id, status, assigned, notes, created_at, closed_at, disposition, disposition_note, created_by_no, initial_dispatcher_no, closed_by_no
             `);
@@ -1205,8 +1319,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                         report_number = ${reportNumber},
                         core_event_id = ${coreEventId},
                         status     = ${next.status},
-                        assigned   = ${JSON.stringify(next.assigned)}::jsonb,
-                        notes      = ${JSON.stringify(next.notes)}::jsonb,
+                        assigned   = ${toJsonb(next.assigned)},
+                        notes      = ${toJsonb(next.notes)},
                         closed_at  = ${closedAt},
                         disposition = ${disposition},
                         disposition_note = ${dispositionNote},
