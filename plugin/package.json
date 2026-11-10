@@ -1,6 +1,6 @@
 {
     "name": "cloudtak-plugin-dispatcher",
-    "version": "1.5.1",
+    "version": "1.6.0",
     "type": "module",
     "description": "CloudTAK Dispatcher plugin — Events, incidents, responders, after-action reports",
     "scripts": {

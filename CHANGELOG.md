@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.6.0
+
+- **Multi-Monitor Mode and Undock** (contributed by Sentinel6Systems). Open an incident in its own window with
+  the new window button; the panel goes back to the list. The window is the full incident (callers, notes,
+  units, close and reopen). **Close all** clears every undocked window. In **Dispatcher Settings → Display Mode**
+  each computer picks Single or Multi-Monitor. The default is Single, so nothing moves unless a desk opts in.
+- **Workspace for a second monitor.** In Multi-Monitor Mode the **Pop out** button becomes **Workspace**: one
+  window to drag onto another monitor, with the Dispatcher pinned on its right and undocked incidents sharing
+  the rest. Crowded spots share space with tabs. The map stays on the first monitor.
+- **Unassigned / Active / Closed tabs** in Multi-Monitor Mode, so calls with no unit on them stand apart from
+  the ones being worked. Single Monitor Mode keeps Active and Closed.
+- **Shorter list and a clearer header.** The list shows number, time, type, address and units. The header has
+  labelled **Settings** and **Pop out** buttons, callsign and **Sign out** on one line, **Switch event**, and
+  **Event report** opens the report directly.
+- **Reload keeps the Dispatcher open.** After you reload the page, the Dispatcher comes back instead of
+  dropping you on the map, until you close it. If you switched TAK-CAD off, it stays off after a reload.
+- Build-time security fix: updated `minimatch` (Dependabot alert 28). It is not part of what runs in CloudTAK.
+
 ## 1.5.1
 
 - **install.sh no longer drops other CloudTAK plugins.** On a box with more than one web plugin (TAK Sim, LiveWX Radar),
