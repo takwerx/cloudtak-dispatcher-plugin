@@ -6,6 +6,7 @@ import { IconHeadset } from '@tabler/icons-vue';
 import CadMain from './components/CadMain.vue';
 import { dockDispatcher } from './lib/float-pane.ts';
 import { closeAllUndocked } from './lib/undock-panes.ts';
+import { loadPanelOpen, shouldReopenPanel } from './lib/panel-state.ts';
 
 const MENU_KEY   = 'plugin-tak-dispatcher';
 const ROUTE_NAME = 'home-menu-tak-dispatcher';
@@ -35,6 +36,14 @@ export default class DispatcherPlugin implements PluginInstance {
             description: 'Dispatch incidents on the map — works standalone or with TAK-CAD server plugin',
             icon:        markRaw(IconHeadset) as unknown as MenuItemIconType,
         } as MenuItemConfig);
+        // A reload of the Dispatcher page lands on the map (CloudTAK adds plugin pages after the page loads), so open
+        // it again if it was open. Only once the route exists; a failed push leaves the map showing.
+        try {
+            const router = this.api.router;
+            if (shouldReopenPanel(loadPanelOpen(), router.currentRoute.value.name, ROUTE_NAME) && router.hasRoute(ROUTE_NAME)) {
+                await router.push({ name: ROUTE_NAME });
+            }
+        } catch { /* stay on the map */ }
     }
 
     async disable(): Promise<void> {

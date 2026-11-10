@@ -354,7 +354,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onErrorCaptured, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, onErrorCaptured, watch } from 'vue';
 import ProfileConfig from '../../../src/base/profile.ts';
 import { IconHeadset, IconPictureInPictureOn, IconSettings, IconArrowsExchange, IconFileText, IconX, IconCheck } from '@tabler/icons-vue';
 import IncidentListView from './IncidentListView.vue';
@@ -371,6 +371,7 @@ import type { DispatcherEvent } from '../lib/events-client.ts';
 import { dispatcherStore as store, saveLastEventId } from '../lib/dispatcher-store.ts';
 import { popOutDispatcher, dockDispatcher, focusWorkspace } from '../lib/float-pane.ts';
 import { parseOperator, saveOperator, OPERATOR_MAX } from '../lib/operator.ts';
+import { savePanelOpen, saveForcedMode } from '../lib/panel-state.ts';
 
 // floating: this instance lives inside the floating pane (DispatcherFloat) rather than
 // the anchored menu route.
@@ -524,13 +525,20 @@ function signOut() {
 
 function forceStandalone() {
     store.forcedMode = 'standalone';
+    saveForcedMode('standalone');   // stays off across reloads until the dispatcher switches it on
     store.serverMode = 'standalone';
 }
 
 async function retryDetection() {
     store.forcedMode = null;
+    saveForcedMode(null);
     await detect();
 }
+
+// The panel opened from the menu (not the copy inside the floating pane) is "open" while this page shows; the plugin
+// reopens it after a reload (index.ts). Leaving the page by any route change clears it. A reload does not unmount.
+onMounted(() => { if (!props.floating) savePanelOpen(true); });
+onBeforeUnmount(() => { if (!props.floating) savePanelOpen(false); });
 
 onMounted(async () => {
     // Dispatcher identity = the user's CloudTAK callsign (no separate prompt). Same callsign
