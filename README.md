@@ -4,7 +4,7 @@ A dispatcher plugin for [CloudTAK](https://github.com/dfpc-coe/CloudTAK) — cre
 incidents on the map, organize them under named **Events**, assign responders, and notify them
 via mission chat and direct GeoChat.
 
-**Current version: 1.5.1.** What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+**Current version: 1.6.0.** What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 ## Modes
 
@@ -58,12 +58,22 @@ the wording for the whole CloudTAK; only the CloudTAK system admin account (the 
 first launch) can change it, and the server refuses the change for anyone else. **Dispatcher Settings → Custom Call
 Types** is locked to the same admin account.
 
-### Dispatcher Settings and Manage (standalone)
+### The Dispatcher header and Dispatcher Settings (standalone)
 
-Settings shared by every event and every dispatcher on the CloudTAK are under **Dispatcher Settings**, the
-gear in the Dispatcher's top bar, which opens with or without an event: the report header, caller details
-on markers, the CJIS reminder, employee numbers and custom call types. The gear on an open event is
-**Manage**, for that event only: its after-action report.
+From the top, the Dispatcher shows:
+
+- **Dispatcher**, the TAK-CAD switch, **Settings** and **Pop out** (**Workspace** in Multi-Monitor Mode, below).
+  **Settings** opens Dispatcher Settings, shared by every event and every dispatcher on the CloudTAK, with or
+  without an event open: the report header, caller details on markers, the CJIS reminder, employee numbers and
+  custom call types. One setting there is per computer instead: the display mode (below).
+- **Callsign** (the CloudTAK callsign), and with Employee Numbers on and someone signed in, **Employee #** beside
+  **Sign out**.
+- **Event:** the open event's name, with **Switch event** to go to the list of events and open another (the
+  event stays open for everyone).
+- **Broadcast:** the channel, or **DataSync:** the feed (✓ when subscribed), with **Event report**, the open
+  event's after-action report.
+- **Incidents**, with its tabs (**Active | Closed**, or **Unassigned | Active | Closed** in Multi-Monitor Mode)
+  and **+ New** on one band, marked by a thin orange line on top.
 
 ### Employee numbers: who took, dispatched and closed each call (standalone, optional)
 
@@ -88,6 +98,55 @@ The detail, the printed report and the CSV (`created_by_no`, `initial_dispatcher
 Taken by in the callers column, note authors) show them. The **Dispatcher** field and the field units'
 marker keep the CloudTAK callsign either way. With no number entered nothing is blocked; the numbers
 stay empty.
+
+### Undocked incidents and Display Mode (standalone)
+
+The Dispatcher panel shows one incident at a time. Press **Undock** (the window icon next to **Back**
+on an incident) and that incident opens in its own window; the panel goes back to the list, so several
+incidents can be open and worked at once. Each window is the same incident view with everything in it
+(callers, notes, units, close, reopen). **✕** closes the window; the incident stays on the board, and
+clicking its row opens it in the panel again. The list marks undocked incidents and shows how many are out,
+with **Close all**. The windows stay live while the panel is on another incident, the list, or closed, and
+edits made in a window go through the same server calls as the panel. They close when the Event is closed.
+
+Where the window opens is the **Display Mode** in **Dispatcher Settings**. It is a per-computer choice:
+any dispatcher sets it, it is remembered in that browser across sessions and reloads, and it changes nothing
+for anyone else (it describes the desk, one monitor or several, and desks often share a CloudTAK login):
+
+- **Single Monitor Mode** (the default; a computer that never chooses gets this): the window
+  floats over the map inside the CloudTAK page, draggable by its grip and resizable. New windows open side
+  by side while they fit left of the panel, then step down and right. After a page reload they come back
+  when the Dispatcher is opened on that Event again.
+- **Multi-Monitor Mode**: the Dispatcher's pop-out button opens the **Dispatcher workspace**, one browser
+  window of its own to drag onto another monitor and maximize, like CloudTAK's video wall. The Dispatcher is
+  pinned to its right edge at full height; undocked incidents share the space to its left. One fills it, two
+  split it in half, three in thirds, and so on, until a window would be smaller than an incident's default
+  size (420 px wide, or 600 px tall); after that each new one shares a spot with one already there, full
+  size, and the incidents in that spot are tabs along its top. A wide workspace is split side by side, the first window beside the
+  panel; a tall one (a monitor on its side) one above the other, the first at the top. Closing a window gives
+  its room back to the others, and they follow the workspace when it is resized or maximized; a window dragged
+  by its title bar or resized from its corner stays where the dispatcher put it, above the others and never
+  bigger than the workspace, until **Line up** on its title bar puts it back to share the space with them.
+  Making the workspace smaller puts the incidents that no longer fit into shared spots the same way; a tab
+  brings that incident to the front. An incident already open in a
+  window has its Undock button grayed out. The map stays full size on the
+  first monitor, and **Show on Map** moves it. Undock with the workspace closed opens it. The workspace is
+  driven by the CloudTAK tab that opened it (live, no second sign-in) and closes when that tab is closed or
+  reloaded, or when the dispatcher closes it; pressing the pop-out button again brings it back with its
+  incident windows. The first time, the browser may ask to allow pop-ups for the site; if it blocks the
+  workspace, things open over the map instead and the list says how to allow pop-ups. On a phone it behaves
+  as Single Monitor Mode.
+  Multi-Monitor Mode also splits the incident list into three tabs: **Unassigned** (open, no unit on it,
+  including one whose units have all cleared), **Active** (open, at least one unit Assigned or On Scene) and
+  **Closed**. Single Monitor Mode keeps the two tabs it always had (Active is every open incident).
+
+In both modes each incident in the list is a short card: the incident number and the time it was created,
+the type, the address, and the callsigns of the units on it (when any are assigned). Single Monitor Mode
+also shows its labels on the card (Undocked, active or closed, Unassigned / Dispatched / On Scene); in
+Multi-Monitor Mode the tab already says that, and an undocked incident is marked by a stripe on its left
+edge. The full incident (callers, notes, units, report number) is one click away.
+
+**Close all** and **✕** are remembered (per browser), so closed windows stay closed.
 
 ### Delivery to field units (standalone)
 
