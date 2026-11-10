@@ -18,6 +18,9 @@ const src = readFileSync(new URL('../../server/plugin-dispatcher.ts', import.met
 const block = src.slice(src.indexOf('// <operator-pure>'), src.indexOf('// </operator-pure>'));
 const callers = src.slice(src.indexOf('// <callers-pure>'), src.indexOf('// </callers-pure>'));
 const asArray = src.slice(src.indexOf('function asArray'), src.indexOf('\n}\n', src.indexOf('function asArray')) + 3);
+// operatorNumbersOn unwraps the switch with unwrapJson (the jsonb block).
+const jsonb = src.slice(src.indexOf('// <jsonb-pure>'), src.indexOf('// </jsonb-pure>'));
+assert.ok(jsonb.includes('function unwrapJson'), 'could not find the jsonb block in the server file');
 assert.ok(block.includes('function normOperator') && block.includes('function closedByAfter'), 'could not find the operator block in the server file');
 assert.ok(callers.includes('function addCallerTo') && asArray.includes('Array.isArray'), 'could not find the callers block in the server file');
 
@@ -27,6 +30,7 @@ writeFileSync(file, `
 import { randomUUID } from 'node:crypto';
 export class Err extends Error { status: number; constructor(status: number, _x: unknown, message: string) { super(message); this.status = status; } }
 ${asArray}
+${jsonb}
 ${block}
 ${callers}
 export { normOperator, withBy, stampNewNotes, dispatcherAfterAssign, closedByAfter, operatorNumbersOn, normOperatorSetting, requestOperator, OPERATOR_MAX, OPERATOR_SETTING };
