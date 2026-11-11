@@ -29,7 +29,7 @@ and CSV. A database from the earlier single-caller version moves its caller into
 
 Each unit on an incident is **Assigned**, then **On Scene**, then **Cleared**. The dispatcher presses the
 button (**On Scene**, **Clear**) when the unit radios in, and the server stamps the time, so nothing comes
-from the field. A cleared unit stays on the incident, greyed, with its three times; the **✕** is for a unit
+from the field. A cleared unit stays on the incident, greyed, with its three times; the **trash can** is for a unit
 assigned by mistake and removes it from the record. The board shows **Unassigned**, **Dispatched** or
 **On Scene** next to each active incident. Closing an incident clears every unit still on it with the close
 time. The marker remarks read `Responding: E12 (on scene), M4` (cleared units drop off), the feed log gets
