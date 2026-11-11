@@ -115,7 +115,8 @@ for anyone else (it describes the desk, one monitor or several, and desks often 
 
 - **Single Monitor Mode** (the default; a computer that never chooses gets this): the window
   floats over the map inside the CloudTAK page, draggable by its grip and resizable. New windows open side
-  by side while they fit left of the panel, then step down and right. After a page reload they come back
+  by side while they fit left of the panel, then step down and right, and never over a popped-out
+  Dispatcher while there is room beside it. After a page reload they come back
   when the Dispatcher is opened on that Event again.
 - **Multi-Monitor Mode**: the Dispatcher's pop-out button opens the **Dispatcher workspace**, one browser
   window of its own to drag onto another monitor and maximize, like CloudTAK's video wall. The Dispatcher is

@@ -103,20 +103,26 @@ export function cardPosition(
 
 // The first cascade slot no open card sits on, so a new card never lands exactly on top of an open
 // one (closing an earlier card frees its slot). `taken` are the open cards' top-left corners; a card
-// the dispatcher dragged away no longer holds its slot. Falls back to slot `taken.length` when every
-// slot in a full cycle is occupied.
+// the dispatcher dragged away no longer holds its slot. `keepClear` are panes a new card must not cover
+// at all (the popped-out Dispatcher, which opens where the first card would): every slot whose card
+// would overlap one is skipped, unless none is clear of them, and then they are ignored. Falls back to
+// slot `taken.length` when every slot in a full cycle is occupied.
 export function firstFreeSlot(
     taken: readonly { x: number; y: number }[],
     base: { x: number; y: number },
     viewport: { width: number; height: number },
     card: { width: number; height: number } = { width: UNDOCK_CARD_WIDTH, height: UNDOCK_CARD_HEIGHT },
+    keepClear: readonly { x: number; y: number; width: number; height: number }[] = [],
 ): { x: number; y: number } {
     const isTaken = (p: { x: number; y: number }) => taken.some(t => t.x === p.x && t.y === p.y);
+    const covers = (p: { x: number; y: number }) => keepClear.some(k =>
+        p.x < k.x + k.width && k.x < p.x + card.width && p.y < k.y + k.height && k.y < p.y + card.height);
     const cycle = Math.max(1, taken.length + 1);
     for (let n = 0; n < Math.max(cycle, 64); n++) {
         const p = cardPosition(n, base, viewport, card);
-        if (!isTaken(p)) return p;
+        if (!isTaken(p) && !covers(p)) return p;
     }
+    if (keepClear.length) return firstFreeSlot(taken, base, viewport, card);
     return cardPosition(taken.length, base, viewport, card);
 }
 
