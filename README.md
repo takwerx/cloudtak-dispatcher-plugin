@@ -29,7 +29,7 @@ and CSV. A database from the earlier single-caller version moves its caller into
 
 Each unit on an incident is **Assigned**, then **On Scene**, then **Cleared**. The dispatcher presses the
 button (**On Scene**, **Clear**) when the unit radios in, and the server stamps the time, so nothing comes
-from the field. A cleared unit stays on the incident, greyed, with its three times; the **✕** is for a unit
+from the field. A cleared unit stays on the incident, greyed, with its three times; the **trash can** is for a unit
 assigned by mistake and removes it from the record. The board shows **Unassigned**, **Dispatched** or
 **On Scene** next to each active incident. Closing an incident clears every unit still on it with the close
 time. The marker remarks read `Responding: E12 (on scene), M4` (cleared units drop off), the feed log gets
@@ -115,7 +115,8 @@ for anyone else (it describes the desk, one monitor or several, and desks often 
 
 - **Single Monitor Mode** (the default; a computer that never chooses gets this): the window
   floats over the map inside the CloudTAK page, draggable by its grip and resizable. New windows open side
-  by side while they fit left of the panel, then step down and right. After a page reload they come back
+  by side while they fit left of the panel, then step down and right, and never over a popped-out
+  Dispatcher while there is room beside it. After a page reload they come back
   when the Dispatcher is opened on that Event again.
 - **Multi-Monitor Mode**: the Dispatcher's pop-out button opens the **Dispatcher workspace**, one browser
   window of its own to drag onto another monitor and maximize, like CloudTAK's video wall. The Dispatcher is

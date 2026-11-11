@@ -9,6 +9,7 @@ import {
 import type { Draft } from './undock.ts';
 import {
     multiMonitor, workspaceArea, showWorkspace, onWorkspaceClosed, workspaceOpen, dockDispatcher,
+    dispatcherPaneRect,
 } from './float-pane.ts';
 
 // Where an undocked incident goes depends on the shared Display Mode (display-mode.ts):
@@ -171,7 +172,10 @@ export function undockIncident(incidentId: string): void {
             .map(id => floats.panes.get(paneUidFor(id)))
             .filter((p): p is NonNullable<typeof p> => !!p)
             .map(p => ({ x: p.x, y: p.y }));
-        const pos = firstFreeSlot(taken, paneBase(), viewport());
+        // A popped-out Dispatcher opens where the first window would: new windows keep clear of it.
+        const dispatcher = dispatcherPaneRect();
+        const pos = firstFreeSlot(taken, paneBase(), viewport(),
+            { width: UNDOCK_CARD_WIDTH, height: UNDOCK_CARD_HEIGHT }, dispatcher ? [dispatcher] : []);
         floats.add({
             uid,
             name:      'Incident',
