@@ -37,6 +37,17 @@ time. The marker remarks read `Responding: E12 (on scene), M4` (cleared units dr
 with its times plus the incident's first on-scene time. Units assigned before this version show as Assigned
 with no times.
 
+A unit works one incident at a time. While it is Assigned or On Scene on an active incident, the assign
+search and the contacts picker show it greyed with that incident's number (`E12 · on 014`, the number
+without the Event prefix), and it can't be picked. Clear it there first; then it can be assigned here. The
+server checks too, so two dispatchers assigning the same unit at the same moment can't both win: the second
+gets `E12 is on 014. Clear it there first.` (it clears after 10 seconds; with several units picked it adds
+`Nothing was assigned.`, since a refused press assigns none of them).
+
+A unit that cleared from an incident can be sent back to it: assigning it again adds a second line for the
+second trip, and the first line keeps its times (the report lists both, and the incident's first on-scene
+time stays). The **✕** on a line removes that trip only.
+
 ### Disposition on close (standalone)
 
 Closing an incident asks for a **disposition**, how the call ended: pick a preset (**Cleared - No Report**,
