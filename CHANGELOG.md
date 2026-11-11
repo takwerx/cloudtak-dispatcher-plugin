@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.6.1
+
+- **One unit, one incident.** A unit that is Assigned or On Scene on an open incident can no longer be put on a
+  second incident in the same Event. It shows greyed in the assign search and the contacts picker, with the
+  incident it is on (`E12 · on 014`). Clear it there first. If two dispatchers pick the same unit at the same
+  moment, the second one is told and nothing is assigned. A unit that already cleared can go back to the same
+  incident for a second trip: the first trip keeps its times. Units already on two incidents before this update
+  stay as they are; only new assignments are checked.
+- **Address search with no internet.** When the CloudTAK server cannot reach the address service, the New
+  Incident form stays open with what you typed, and one line under the address box says address search isn't
+  available. Drop a pin and type the address.
+- **You are told when a marker, feed log or chat did not go out.** After **Create Incident**, if one of them
+  failed, the incident list shows a note ("was created, but: ...") with a dismiss button. Before, the
+  message was lost when the list opened.
+- **New incident windows open beside a popped-out Dispatcher** (Single Monitor Mode), not on top of it.
+- **Lists are saved the proper way in the database.** Units, notes, callers and settings were stored as text
+  that looks like a list. They are now stored as real lists, and old rows are fixed once when the server starts.
+  Nothing changes on screen. Going back to an older version still works. (Contributed by Sentinel6Systems.)
+- Wording: the Settings and README text now say **Event report** and **trash can**, as the buttons are called.
+- Build-time update of `vue`. It is not part of what runs in CloudTAK.
+
 ## 1.6.0
 
 - **Multi-Monitor Mode and Undock** (contributed by Sentinel6Systems). Open an incident in its own window with
