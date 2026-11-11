@@ -336,7 +336,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     (e: 'saved',            uid: string):              void;
-    (e: 'saved-standalone', inc: DispatcherIncident): void;
+    // `problems`: what did not go out after the incident was saved (marker, feed log, chat), or ''.
+    (e: 'saved-standalone', inc: DispatcherIncident, problems: string): void;
     (e: 'cancel'                          ):           void;
 }>();
 
@@ -609,11 +610,9 @@ async function submitStandalone(address: string) {
             markerErrors.push('Feed chat failed');
             console.warn('[dispatcher] feed chat failed', e);
         }
-        if (markerErrors.length) {
-            saveError.value = markerErrors.join(' · ');
-        }
 
-        emit('saved-standalone', incident);
+        // The list replaces this form now, so it shows what failed (IncidentListView).
+        emit('saved-standalone', incident, markerErrors.join(' · '));
     } catch (e) {
         saveError.value = e instanceof Error ? e.message : String(e);
     } finally {
