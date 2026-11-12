@@ -609,7 +609,7 @@
                     :incident-id='slDetailId'
                     @back='slView = "list"'
                     @undock='slUndock(slDetailId)'
-                    @closed='slView = "list"; slTab = "closed"'
+                    @closed='slView = "list"'
                     @reopened='slShowTabFor(slDetailId)'
                 />
             </template>
