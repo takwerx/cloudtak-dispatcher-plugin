@@ -151,6 +151,7 @@ for anyone else (it describes the desk, one monitor or several, and desks often 
   Multi-Monitor Mode also splits the incident list into three tabs: **Unassigned** (open, no unit on it,
   including one whose units have all cleared), **Active** (open, at least one unit Assigned or On Scene) and
   **Closed**. Single Monitor Mode keeps the two tabs it always had (Active is every open incident).
+  Closing an incident goes back to the tab it was opened from, not to Closed.
 
 In both modes each incident in the list is a short card: the incident number and the time it was created,
 the type, the address, and the callsigns of the units on it (when any are assigned). Single Monitor Mode
