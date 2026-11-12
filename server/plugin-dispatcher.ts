@@ -203,6 +203,30 @@ function reopenNeedsReason(numbersOn: boolean, from: string, to: string): boolea
 }
 // </disposition-pure>
 
+// ── Changing an incident's location ────────────────────────────────────────────
+// An incident reported at one place can turn out to belong at another. The columns hold where it
+// is now; the change is written as a note with both places (address and point), so the log, the
+// report and the CSV show where it started and where it moved to. Pure, for
+// plugin/test/location-server.test.ts.
+// <location-pure>
+interface Place { address: string | null; lat: number | null; lon: number | null }
+
+// "100 MAIN ST, Springfield, OR (44.500000, -123.200000)": what is known of the two, never blank.
+function placeText(p: Place): string {
+    const address = (p.address ?? '').trim();
+    const point = p.lat != null && p.lon != null ? `${Number(p.lat).toFixed(6)}, ${Number(p.lon).toFixed(6)}` : '';
+    return address && point ? `${address} (${point})` : address || point || 'no location';
+}
+
+// The note for a move, or null when the address and the point are what they were. A point is the
+// same to six decimals (about 0.1 m), which is how it is shown and sent.
+function locationNote(was: Place, now: Place): string | null {
+    const same = (a: number | null, b: number | null) => (a == null || b == null) ? a == b : Number(a).toFixed(6) === Number(b).toFixed(6);
+    if ((was.address ?? '').trim() === (now.address ?? '').trim() && same(was.lat, now.lat) && same(was.lon, now.lon)) return null;
+    return `Location changed: ${placeText(was)} → ${placeText(now)}`;
+}
+// </location-pure>
+
 // ── Employee numbers (who did it) ──────────────────────────────────────────────
 // Optional, OFF by default: a CloudTAK system admin turns it on in Manage (setting `operator_numbers`).
 // Off, nothing here runs and the Dispatcher behaves as before (the `dispatcher` column is the CloudTAK
@@ -1371,6 +1395,10 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                         time: now,
                     }];
                 }
+
+                // Location: a change of address or point is logged with both places (see <location-pure>).
+                const moved = locationNote(cur, next);
+                if (moved) next.notes = [...next.notes, { text: moved, time: now }];
 
                 // Core Event link: undefined = leave as is; '' = clear.
                 const coreEventId = b.core_event_id !== undefined

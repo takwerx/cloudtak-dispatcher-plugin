@@ -3,8 +3,10 @@
         class='d-flex flex-column gap-3'
         @submit.prevent='submit'
     >
+        <!-- Changing the location of an incident that already exists (prop `relocate`) shows the
+             Location block alone: the rest of an incident is edited from its own detail. -->
         <!-- Incident Number (auto, read-only) -->
-        <div v-if='incidentNumber'>
+        <div v-if='incidentNumber && !relocate'>
             <label class='form-label small text-muted mb-1'>Incident #</label>
             <input
                 :value='incidentNumber'
@@ -16,7 +18,7 @@
 
         <!-- Type — shared dropdown in both modes (custom types managed via the top
              bar's gear → Dispatcher Settings, not here mid-incident) -->
-        <div>
+        <div v-if='!relocate'>
             <label class='form-label small text-muted mb-1'>Incident Type <span class='text-danger'>*</span></label>
             <select
                 v-model='form.incidentType'
@@ -37,7 +39,7 @@
         </div>
 
         <!-- Date/Time -->
-        <div>
+        <div v-if='!relocate'>
             <label class='form-label small text-muted mb-1'>Incident Time <span class='text-danger'>*</span></label>
             <input
                 v-model='form.incidentTimeLocal'
@@ -49,7 +51,7 @@
 
         <!-- Location -->
         <div>
-            <label class='form-label small text-muted mb-1'>Location <span class='text-danger'>*</span></label>
+            <label class='form-label small text-muted mb-1'>{{ relocate ? 'New location' : 'Location' }} <span class='text-danger'>*</span></label>
             <div class='input-group mb-1'>
                 <input
                     v-model='geoQuery'
@@ -172,7 +174,7 @@
         </div>
 
         <!-- Details -->
-        <div>
+        <div v-if='!relocate'>
             <label class='form-label small text-muted mb-1'>Details</label>
             <textarea
                 v-model='form.details'
@@ -185,7 +187,7 @@
         <!-- Report number (standalone only; optional, can also be added later), and the call taker's
              employee number when Dispatcher Settings → Employee Numbers is on -->
         <div
-            v-if='serverMode === "standalone"'
+            v-if='serverMode === "standalone" && !relocate'
             class='d-flex flex-wrap gap-2'
         >
             <div class='flex-grow-1'>
@@ -225,7 +227,7 @@
         </div>
 
         <!-- Caller Info (collapsible; caller type is TAK-CAD only) -->
-        <div>
+        <div v-if='!relocate'>
             <button
                 type='button'
                 class='btn btn-sm btn-link text-muted p-0 text-decoration-none'
@@ -294,7 +296,7 @@
                     v-if='saving'
                     class='spinner-border spinner-border-sm me-1'
                 />
-                {{ uid ? 'Save Changes' : 'Create Incident' }}
+                {{ relocate ? 'Save Location' : uid ? 'Save Changes' : 'Create Incident' }}
             </button>
             <button
                 type='button'
@@ -317,6 +319,7 @@ import {
     DEFAULT_INCIDENT_TYPES,
 } from '../lib/takcad-client.ts';
 import type { GeocodeSuggestion, MissionRef } from '../lib/takcad-client.ts';
+import { joinAddress, splitAddress } from '../lib/address-form.ts';
 import type { IncidentRef, IncidentTypeRef } from '../lib/takcad-types.ts';
 import { STATUS_ACTIVE } from '../lib/takcad-types.ts';
 import { dropIncidentMarker, postMissionCallLog, postFeedChat } from '../lib/map-marker.ts';
@@ -332,12 +335,17 @@ const props = defineProps<{
     incidentTypes: IncidentTypeRef[];
     // TAK-CAD mode passes its locally-picked DataSync feed for marker/log routing.
     activeFeed?:   MissionRef | null;
+    // Standalone: the incident whose location is being changed. The form then shows the Location
+    // block alone, filled with where the incident is now, and hands the new place back (`relocated`).
+    relocate?:     DispatcherIncident | null;
 }>();
 
 const emit = defineEmits<{
     (e: 'saved',            uid: string):              void;
     // `problems`: what did not go out after the incident was saved (marker, feed log, chat), or ''.
     (e: 'saved-standalone', inc: DispatcherIncident, problems: string): void;
+    // The new place for the `relocate` incident.
+    (e: 'relocated', to: { address: string; lat: number; lon: number }): void;
     (e: 'cancel'                          ):           void;
 }>();
 
@@ -491,7 +499,11 @@ onMounted(async () => {
         catch { incidentNumber.value = ''; }
     }
 
-    if (props.uid && props.serverMode === 'takcad') {
+    if (props.relocate) {
+        const at = props.relocate;
+        Object.assign(form, splitAddress(at.address ?? ''), { lat: at.lat, lon: at.lon });
+        geoQuery.value = at.address ?? '';
+    } else if (props.uid && props.serverMode === 'takcad') {
         try {
             const inc = await getIncident(props.uid);
             form.incidentType      = inc.incidentType?.name ?? '';
@@ -525,8 +537,10 @@ async function submit() {
         saveError.value = 'Coordinates are required — use address search or enter lat/lon.';
         return;
     }
-    const address = [form.streetName, form.city, form.state].filter(Boolean).join(', ');
-    if (props.serverMode === 'standalone') {
+    const address = joinAddress(form.streetName, form.city, form.state);
+    if (props.relocate) {
+        emit('relocated', { address, lat: form.lat, lon: form.lon });
+    } else if (props.serverMode === 'standalone') {
         await submitStandalone(address);
     } else {
         await submitTakCad(address);

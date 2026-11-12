@@ -160,6 +160,13 @@ edge. The full incident (callers, notes, units, report number) is one click away
 
 **Close all** and **✕** are remembered (per browser), so closed windows stay closed.
 
+**Changing an incident's location.** When a call turns out to belong somewhere else, press **Change** beside the
+address in the incident (active or closed). The same Location box as a new incident opens, filled with where the
+incident is now: search, click the map, or correct the boxes, then **Save Location**. The marker moves, the feed
+log gets a `LOCATION CHANGED:` line, the units on the incident are messaged the new address, and the server writes
+one note with both places, `Location changed: <old address> (<lat>, <lon>) → <new address> (<lat>, <lon>)`, so the
+incident's log, the report and the CSV show where it started and where it moved to.
+
 ### Delivery to field units (standalone)
 
 Each Event chooses how its incidents reach field devices when it is created:
