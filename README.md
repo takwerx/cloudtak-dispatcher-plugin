@@ -174,7 +174,9 @@ first, with the public geocoder as the fallback:
   the top (skipped on import), what goes in each column.
 - **From a web address** — an ArcGIS Feature Service layer (`…/FeatureServer/0`, read in pages) or a
   plain GeoJSON / CSV URL, pulled again after a set number of hours (checked when a lookup arrives,
-  or with **Refresh now**).
+  or with **Refresh now**). The server reads public internet addresses only: a web address that
+  points to a private network, this server or a cloud metadata address (including through a
+  redirect) is refused. For data kept on an internal server, load it from a file.
 
 Typing in the Location box then offers **Place** (from two characters, narrowing as more is typed)
 and **Verified** results ahead of **OpenStreetMap** ones. A map click fills the nearest verified

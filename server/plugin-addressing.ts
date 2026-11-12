@@ -12,6 +12,11 @@
 import { Type } from '@sinclair/typebox';
 import { sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
+import dns from 'node:dns';
+import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
+import zlib from 'node:zlib';
 import Schema from '@openaddresses/batch-schema';
 import Err from '@openaddresses/batch-error';
 import Auth from '../../common/auth.js';
@@ -610,6 +615,130 @@ export function esriLayerUrl(url: string): string | null {
 
 // </addressing-pure>
 
+// ── Web pulls reach the public internet only ─────────────────────────────────────────────────
+// The admin types the web address a source is pulled from, and the server (inside CloudTAK's Docker
+// network, next to the database, TAK Server and the cloud metadata address) makes the request. So
+// every address a pull touches, including each redirect, must resolve to a public address. The
+// check runs when the connection is made, so a name that changes its answer after the check
+// (DNS rebinding) is refused too. (ops #699)
+// <addressing-net>
+
+const NET_MSG = 'That web address points inside a private network, which the plugin will not read. Load the data from a file instead';
+
+// True for any address that is not a public internet address. Unknown or unparseable means true.
+export function isBlockedAddress(ip: string): boolean {
+    const v4 = (a: number, b: number, c: number): boolean =>
+        a === 0 || a === 10 || a === 127 || a >= 224 ||
+        (a === 100 && b >= 64 && b <= 127) ||
+        (a === 169 && b === 254) ||
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168) ||
+        (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+        (a === 198 && (b === 18 || b === 19)) ||
+        (a === 198 && b === 51 && c === 100) ||
+        (a === 203 && b === 0 && c === 113);
+    const clean = ip.replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+    if (net.isIPv4(clean)) {
+        const [a, b, c] = clean.split('.').map(Number);
+        return v4(a, b, c);
+    }
+    if (!net.isIPv6(clean)) return true;
+    // Eight 16-bit groups; "::" fills the gap, a dotted IPv4 tail counts as two groups.
+    let text = clean.toLowerCase();
+    const tail = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(text);
+    if (tail) text = text.slice(0, tail.index) + ((Number(tail[1]) << 8) | Number(tail[2])).toString(16) + ':' + ((Number(tail[3]) << 8) | Number(tail[4])).toString(16);
+    const [head, rest] = text.split('::');
+    const h = head ? head.split(':') : [];
+    const t = rest === undefined ? [] : (rest ? rest.split(':') : []);
+    const g = rest === undefined ? h : [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
+    if (g.length !== 8) return true;
+    const w = g.map(x => parseInt(x, 16));
+    if (w.some(x => !Number.isInteger(x) || x < 0 || x > 0xffff)) return true;
+    const embedded = (hi: number, lo: number): boolean => v4(hi >> 8, hi & 255, lo >> 8);
+    // ::ffff:a.b.c.d (mapped) and 64:ff9b::a.b.c.d (NAT64): judged by the IPv4 inside.
+    if (w.slice(0, 5).every(x => x === 0) && w[5] === 0xffff) return embedded(w[6], w[7]);
+    if (w[0] === 0x64 && w[1] === 0xff9b && w.slice(2, 6).every(x => x === 0)) return embedded(w[6], w[7]);
+    if (w[0] === 0x2002) return embedded(w[1], w[2]);                 // 6to4 carries an IPv4
+    if (w[0] === 0x2001 && w[1] === 0x0db8) return true;              // documentation range
+    return !(w[0] >= 0x2000 && w[0] <= 0x3fff);                        // only global unicast is public
+}
+
+export interface SafeFetchOptions {
+    timeoutMs: number;
+    headers?: Record<string, string>;
+    maxBytes?: number;
+    maxRedirects?: number;
+    // Which addresses to refuse. Only the tests pass their own, to reach a server on this machine.
+    blocked?: (ip: string) => boolean;
+}
+
+// fetch() for an address an admin typed: http(s) only, public addresses only (checked at connect
+// time, on every redirect), a size cap, a timeout. Returns a standard Response.
+export async function safeFetch(url: string, opts: SafeFetchOptions): Promise<Response> {
+    const blocked = opts.blocked ?? isBlockedAddress;
+    const maxBytes = opts.maxBytes ?? 80 * 1024 * 1024;
+    const deadline = AbortSignal.timeout(opts.timeoutMs);
+    let current = url;
+    for (let hop = 0; hop <= (opts.maxRedirects ?? 5); hop++) {
+        let u: URL;
+        try { u = new URL(current); } catch { throw new Err(400, null, 'The web address is not valid'); }
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Err(400, null, 'The web address must start with http:// or https://');
+        const host = u.hostname.replace(/^\[|\]$/g, '');
+        if (net.isIP(host) && blocked(host)) throw new Err(400, null, NET_MSG);
+        const r = await new Promise<{ status: number; message: string; headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
+            const lib = u.protocol === 'https:' ? https : http;
+            const req = lib.request(u, {
+                method: 'GET',
+                signal: deadline,
+                headers: { 'Accept-Encoding': 'gzip, deflate, br', ...(opts.headers ?? {}) },
+                // Runs for every connection, with the address the name really resolves to.
+                lookup: ((name: string, o: any, cb: any) => {
+                    dns.lookup(name, { ...o, all: true }, (err, addrs: any) => {
+                        if (err) return cb(err);
+                        const list = Array.isArray(addrs) ? addrs : [{ address: addrs, family: 4 }];
+                        if (!list.length || list.some((a: any) => blocked(a.address))) return cb(new Err(400, null, NET_MSG));
+                        if (o && o.all) return cb(null, list);
+                        cb(null, list[0].address, list[0].family);
+                    });
+                }) as any,
+            }, (res) => {
+                let out: NodeJS.ReadableStream = res;
+                const enc = String(res.headers['content-encoding'] ?? '').toLowerCase();
+                if (enc === 'gzip') out = res.pipe(zlib.createGunzip());
+                else if (enc === 'deflate') out = res.pipe(zlib.createInflate());
+                else if (enc === 'br') out = res.pipe(zlib.createBrotliDecompress());
+                const chunks: Buffer[] = [];
+                let size = 0;
+                out.on('data', (c: Buffer) => {
+                    size += c.length;
+                    if (size > maxBytes) { req.destroy(); reject(new Err(400, null, 'The file is larger than 80 MB; load it by pages (Feature Service) instead')); return; }
+                    chunks.push(c);
+                });
+                out.on('end', () => resolve({ status: res.statusCode ?? 0, message: res.statusMessage ?? '', headers: res.headers, body: Buffer.concat(chunks) }));
+                out.on('error', reject);
+                res.on('error', reject);
+            });
+            req.on('error', (e: any) => reject(e instanceof Err ? e : (e?.cause instanceof Err ? e.cause : e)));
+            req.end();
+        });
+        const loc = r.headers.location;
+        if ([301, 302, 303, 307, 308].includes(r.status) && loc) {
+            try { current = new URL(String(loc), u).toString(); } catch { throw new Err(400, null, 'The web address redirects somewhere that is not valid'); }
+            continue;
+        }
+        const headers = new Headers();
+        for (const [k, v] of Object.entries(r.headers)) {
+            if (k === 'content-encoding' || k === 'content-length' || k === 'transfer-encoding' || v === undefined) continue;
+            headers.set(k, Array.isArray(v) ? v.join(', ') : v);
+        }
+        const noBody = r.status === 204 || r.status === 205 || r.status === 304;
+        return new Response(noBody ? null : new Uint8Array(r.body), { status: r.status, statusText: r.message, headers });
+    }
+    throw new Err(502, null, 'The web address redirects too many times');
+}
+
+// </addressing-net>
+
 // ── DB helpers ───────────────────────────────────────────────────────────────────────────────
 
 interface SourceRow {
@@ -824,7 +953,7 @@ const PULL_TIMEOUT_MS = 30000;
 const PULL_MAX_BYTES = 80 * 1024 * 1024;
 
 async function fetchText(url: string): Promise<string> {
-    const r = await fetch(url, { signal: AbortSignal.timeout(PULL_TIMEOUT_MS), headers: { 'Accept': 'application/json, text/csv, */*' } });
+    const r = await safeFetch(url, { timeoutMs: PULL_TIMEOUT_MS, maxBytes: PULL_MAX_BYTES, headers: { 'Accept': 'application/json, text/csv, */*' } });
     if (!r.ok) throw new Err(502, null, `The web address answered ${r.status}`);
     const len = Number(r.headers.get('content-length') ?? 0);
     if (len > PULL_MAX_BYTES) throw new Err(400, null, 'The file is larger than 80 MB; load it by pages (Feature Service) instead');
@@ -846,15 +975,15 @@ interface Probe {
 async function probeUrl(url: string): Promise<Probe> {
     const layer = esriLayerUrl(url);
     if (layer) {
-        const meta = await (await fetch(`${layer}?f=pjson`, { signal: AbortSignal.timeout(PULL_TIMEOUT_MS) })).json() as any;
+        const meta = await (await safeFetch(`${layer}?f=pjson`, { timeoutMs: PULL_TIMEOUT_MS })).json() as any;
         if (meta?.error) throw new Err(400, null, `The service answered: ${meta.error.message ?? 'error'}`);
         const columns = (meta.fields ?? []).map((f: any) => String(f.name));
         let count: number | null = null;
         try {
-            const c = await (await fetch(`${layer}/query?where=1%3D1&returnCountOnly=true&f=json`, { signal: AbortSignal.timeout(PULL_TIMEOUT_MS) })).json() as any;
+            const c = await (await safeFetch(`${layer}/query?where=1%3D1&returnCountOnly=true&f=json`, { timeoutMs: PULL_TIMEOUT_MS })).json() as any;
             if (typeof c?.count === 'number') count = c.count;
         } catch { /* count is a nicety */ }
-        const s = await (await fetch(`${layer}/query?where=1%3D1&outFields=*&resultRecordCount=3&f=geojson`, { signal: AbortSignal.timeout(PULL_TIMEOUT_MS) })).json() as any;
+        const s = await (await safeFetch(`${layer}/query?where=1%3D1&outFields=*&resultRecordCount=3&f=geojson`, { timeoutMs: PULL_TIMEOUT_MS })).json() as any;
         const sample = (s?.features ?? []).map((f: any) => ({ ...(f.properties ?? {}), __lon: f.geometry?.coordinates?.[0], __lat: f.geometry?.coordinates?.[1] }));
         const le = meta?.editingInfo?.lastEditDate;
         return {
@@ -904,7 +1033,7 @@ async function pullSource(config: ConfigStateless, src: SourceRow): Promise<Sour
         let dataAsOf: string | null = null;
         const layer = esriLayerUrl(src.url);
         if (layer) {
-            const meta = await (await fetch(`${layer}?f=pjson`, { signal: AbortSignal.timeout(PULL_TIMEOUT_MS) })).json() as any;
+            const meta = await (await safeFetch(`${layer}?f=pjson`, { timeoutMs: PULL_TIMEOUT_MS })).json() as any;
             if (meta?.error) throw new Err(502, null, `The service answered: ${meta.error.message ?? 'error'}`);
             const le = meta?.editingInfo?.lastEditDate;
             if (typeof le === 'number') dataAsOf = new Date(le).toISOString();
@@ -913,7 +1042,7 @@ async function pullSource(config: ConfigStateless, src: SourceRow): Promise<Sour
             let lastPage = '';
             for (let guard = 0; guard < 2000; guard++) {
                 const qs = new URLSearchParams({ where: '1=1', outFields: '*', outSR: '4326', f: 'geojson', resultOffset: String(offset), resultRecordCount: String(page) });
-                const r = await fetch(`${layer}/query?${qs.toString()}`, { signal: AbortSignal.timeout(PULL_TIMEOUT_MS) });
+                const r = await safeFetch(`${layer}/query?${qs.toString()}`, { timeoutMs: PULL_TIMEOUT_MS });
                 if (!r.ok) throw new Err(502, null, `The service answered ${r.status} while paging`);
                 const gj = await r.json() as any;
                 if (gj?.error) throw new Err(502, null, `The service answered: ${gj.error.message ?? 'error'}`);
