@@ -100,3 +100,12 @@ test('wiring: enabling the plugin reopens the panel through the router', () => {
     assert.match(idx, /shouldReopenPanel\(loadPanelOpen\(\), router\.currentRoute\.value\.name, ROUTE_NAME\)/);
     assert.match(idx, /router\.push\(\{ name: ROUTE_NAME \}\)/);
 });
+
+test('wiring: a new incident opens in the panel, with Back going to the tab it is in', () => {
+    const list = src('components/IncidentListView.vue');
+    const saved = /function onStandaloneSaved\([^)]*\) \{([^]*?)\n\}/.exec(list)?.[1] ?? '';
+    assert.match(saved, /slShowTabFor\(inc\.id\);\s*slOpenDetail\(inc\.id\);/);
+    assert.doesNotMatch(saved, /slView\.value = 'list'/, 'not back to the list');
+    // What did not go out for it (marker, feed log, chat) is said on the incident as well as on the list.
+    assert.equal(list.split(`data-test='create-problem'`).length - 1, 2);
+});
