@@ -85,6 +85,7 @@ From the top, the Dispatcher shows:
   event's after-action report.
 - **Incidents**, with its tabs (**Active | Closed**, or **Unassigned | Active | Closed** in Multi-Monitor Mode)
   and **+ New** on one band, marked by a thin orange line on top.
+  **Create Incident** opens the new incident, ready for notes, callers and units; **Back** goes to its tab.
 
 ### Employee numbers: who took, dispatched and closed each call (standalone, optional)
 

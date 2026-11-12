@@ -604,6 +604,25 @@
             <!-- Standalone incident detail -->
             <!-- Standalone incident detail (shared with undocked cards: IncidentDetail.vue) -->
             <template v-else-if='slView === "detail" && slDetailId'>
+                <!-- A new incident opens here, so what did not go out for it is said here too -->
+                <div
+                    v-if='slCreateProblem'
+                    class='px-3 py-1 border-bottom flex-shrink-0 small text-warning d-flex align-items-start gap-2'
+                    data-test='create-problem'
+                >
+                    <span class='flex-grow-1'>{{ slCreateProblem }}</span>
+                    <button
+                        class='btn btn-link btn-sm p-0 text-muted text-decoration-none'
+                        title='Dismiss'
+                        aria-label='Dismiss'
+                        @click='slCreateProblem = ""'
+                    >
+                        <IconX
+                            :size='16'
+                            stroke='1'
+                        />
+                    </button>
+                </div>
                 <IncidentDetail
                     :key='slDetailId'
                     :incident-id='slDetailId'
@@ -970,14 +989,15 @@ function slUndock(id: string) {
     slView.value = 'list';
 }
 
-// A new incident is saved before its marker, feed log and chat go out; when one of those fails, the list
-// the dispatcher lands on says so, until dismissed or the next new incident.
+// A new incident opens straight away: whoever took the call usually keeps adding to it. It is saved before
+// its marker, feed log and chat go out; when one of those fails, the incident and the list say so, until
+// dismissed or the next new incident. Back goes to the tab the incident is in.
 function onStandaloneSaved(inc: DispatcherIncident, problems: string) {
     const idx = dispatcherStore.incidents.findIndex(i => i.id === inc.id);
     if (idx === -1) dispatcherStore.incidents.push(inc);
     slCreateProblem.value = problems ? `${inc.number} was created, but: ${problems}` : '';
-    slView.value = 'list';
     slShowTabFor(inc.id);
+    slOpenDetail(inc.id);
 }
 
 // ── Polling ───────────────────────────────────────────────────────────────────
