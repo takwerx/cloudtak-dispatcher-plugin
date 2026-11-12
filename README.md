@@ -192,6 +192,13 @@ results within my coverage area** keeps typed public results inside a circle the
 **Use map centre** fills in, and a radius), with local address data on or off; a map click is not affected. The **Try it** box
 in Dispatcher Settings shows exactly what the local data returns for a typed address or a lat/lon.
 
+**Changing an incident's location.** When a call turns out to belong somewhere else, press **Change** beside the
+address in the incident (active or closed). The same Location box as a new incident opens, filled with where the
+incident is now: search, click the map, or correct the boxes, then **Save Location**. The marker moves, the feed
+log gets a `LOCATION CHANGED:` line, the units on the incident are messaged the new address, and the server writes
+one note with both places, `Location changed: <old address> (<lat>, <lon>) → <new address> (<lat>, <lon>)`, so the
+incident's log, the report and the CSV show where it started and where it moved to.
+
 ### Delivery to field units (standalone)
 
 Each Event chooses how its incidents reach field devices when it is created:

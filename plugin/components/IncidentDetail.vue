@@ -86,7 +86,16 @@
                             Address
                         </div>
                         <div class='col-8'>
+                            <!-- Changeable whether active or closed: where a call really belongs is often learned later -->
                             {{ inc.address || '—' }}
+                            <button
+                                v-if='!slRelocating'
+                                class='btn btn-link btn-sm p-0 ms-1 text-decoration-none'
+                                data-test='change-location'
+                                @click='slRelocateError = ""; slRelocating = true'
+                            >
+                                Change
+                            </button>
                         </div>
                         <div class='col-4 text-muted'>
                             Coords
@@ -177,6 +186,27 @@
                             </div>
                         </template>
                     </div>
+                </div>
+            </div>
+            <!-- Change location: the New Incident form's Location block on its own, filled with where the
+                 incident is now. Saving moves the marker and writes both places to the notes. -->
+            <div
+                v-if='slRelocating'
+                class='border rounded p-2'
+                data-test='relocate'
+            >
+                <IncidentForm
+                    server-mode='standalone'
+                    :incident-types='[]'
+                    :relocate='inc'
+                    @relocated='slSaveLocation(inc, $event)'
+                    @cancel='slRelocating = false'
+                />
+                <div
+                    v-if='slRelocateError'
+                    class='alert alert-danger py-2 small mt-2 mb-0'
+                >
+                    {{ slRelocateError }}
                 </div>
             </div>
             <!-- Callers: every call about this incident, in the order received. The primary
@@ -714,6 +744,7 @@ import { stashDraft, takeDraft } from '../lib/undock-panes.ts';
 import { ASSIGN_REFUSAL_MS, isBusyRefusal, makeFlash } from '../lib/assign-refusal.ts';
 import type { Draft } from '../lib/undock.ts';
 import { revealInScrollBox } from '../lib/reveal.ts';
+import IncidentForm from './IncidentForm.vue';
 import { BOARD_LABEL, boardState, boardBadgeClass, busyUnits, respondingLine, unitStatus, unitTimesLine, workingUids } from '../lib/unit-status.ts';
 import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, REOPEN_REASON_MAX, dispositionLabel } from '../lib/dispositions.ts';
 
@@ -742,6 +773,9 @@ const alreadyUndocked = computed(() => dispatcherStore.undocked.includes(props.i
 const slNoteInput       = ref('');
 const slReportEditing   = ref(false);
 const slReportInput     = ref('');
+// Change location: the editor is open under the facts; its own error line, since the shared one is far below.
+const slRelocating      = ref(false);
+const slRelocateError   = ref('');
 // Close chooser: open after the first press of Close Incident. The dispatcher picks a disposition
 // (highlighted), types the Other text when that is the pick, then presses Close Incident.
 const slClosing         = ref(false);
@@ -981,6 +1015,49 @@ async function slSaveReportNumber(inc: DispatcherIncident) {
         slReportEditing.value = false;
     } catch (e) {
         slDetailError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        slSaving.value = false;
+    }
+}
+
+// Change of location. Only the new place is sent: the server writes the note with both places
+// (<location-pure> in the server file), so the log shows where the incident started and where it
+// moved to. Then the marker moves, the feed log says so, and the units on the incident are told.
+async function slSaveLocation(inc: DispatcherIncident, to: { address: string; lat: number; lon: number; details: string }) {
+    if (slSaving.value) return;
+    const sameSpot = (was: number | null, now: number) => was != null && was.toFixed(6) === now.toFixed(6);
+    if (to.address === (inc.address ?? '') && sameSpot(inc.lat, to.lat) && sameSpot(inc.lon, to.lon)) {
+        slRelocating.value = false;
+        return;
+    }
+    slSaving.value = true; slRelocateError.value = '';
+    try {
+        const updated = await patchIncident(inc.id, {
+            address: to.address, lat: to.lat, lon: to.lon,
+            // A place chosen as the new location puts its name on the first line of the details.
+            ...(to.details !== (inc.details ?? '') ? { details: to.details } : {}),
+        });
+        slApplyIncident(updated);
+        slRelocating.value = false;
+
+        // An open incident's marker moves. A closed one has none in a DataSync Event; in a broadcast
+        // Event its CLOSED marker moves and still drops off when it was going to.
+        const marker = slMarkerFor(updated);
+        try { await (updated.status === 'active' ? showIncident(mapStore, marker) : closeIncidentInField(mapStore, marker)); }
+        catch { /* best-effort */ }
+
+        const where = updated.address || `${to.lat.toFixed(6)}, ${to.lon.toFixed(6)}`;
+        const feed = slEventFor(updated);
+        if (feed) {
+            try { await postMissionLog(feed.feed_name, `LOCATION CHANGED: ${updated.number} | ${where}`); }
+            catch { /* best-effort */ }
+        }
+        for (const c of (updated.assigned ?? []).filter(u => unitStatus(u) !== 'cleared')) {
+            try { await sendUpdateMessage(mapStore, c, { name: `${updated.number} ${updated.type ?? ''}` }, `Location changed to ${where}`); }
+            catch (e) { console.warn('[dispatcher] update message failed', e); }
+        }
+    } catch (e) {
+        slRelocateError.value = e instanceof Error ? e.message : String(e);
     } finally {
         slSaving.value = false;
     }

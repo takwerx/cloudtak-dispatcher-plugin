@@ -53,3 +53,19 @@ export function detailsWithPlace(details: string, placeName: string | null | und
     const line = `Common Place Name: ${placeName}`;
     return rest ? `${line}\n${rest}` : line;
 }
+
+// An incident keeps one address line, written by the form as "street, city, state". The two
+// functions below are that line's two directions. Changing an incident's location reads the line
+// back into the boxes: with a part missing they may not be the boxes it was typed in, but joining
+// them again gives the same line. A unit the form wrote as " #421" goes back to the Unit box.
+export function joinAddress(street: string, city: string, state: string): string {
+    return [street, city, state].map(p => p.trim()).filter(Boolean).join(', ');
+}
+
+export function splitAddress(address: string): { streetName: string; unit: string; city: string; state: string } {
+    const parts = address.split(',').map(p => p.trim()).filter(Boolean);
+    const [city, state] = parts.length >= 3 ? parts.slice(-2) : [parts[1] ?? '', ''];
+    const line = parts.length >= 3 ? parts.slice(0, -2).join(', ') : parts[0] ?? '';
+    const m = /^(.*\S)\s+#(\S+)$/.exec(line);
+    return { streetName: m ? m[1] : line, unit: m ? m[2] : '', city, state };
+}
