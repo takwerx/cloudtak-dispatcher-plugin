@@ -16,7 +16,7 @@
         <div class='flex-grow-1 overflow-auto p-3 d-flex flex-column gap-3'>
             <div class='text-muted small'>
                 These apply to every event and every dispatcher on this CloudTAK.
-                An event's own report is under the gear on that event.
+                An event's own report opens from its Event report button while that event is open.
             </div>
 
             <!-- Agency header + logo, printed on every event's report -->
@@ -437,7 +437,6 @@
                     </div>
                 </div>
             </div>
-
         </div>
     </div>
 </template>

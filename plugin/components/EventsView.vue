@@ -148,7 +148,10 @@
                         :disabled='loadingFeeds'
                         @click='fetchFeeds'
                     >
-                        <span v-if='loadingFeeds' class='spinner-border spinner-border-sm me-1' />
+                        <span
+                            v-if='loadingFeeds'
+                            class='spinner-border spinner-border-sm me-1'
+                        />
                         {{ loadingFeeds ? 'Loading…' : '+ Select DataSync Feed' }}
                     </button>
                     <div
@@ -239,7 +242,10 @@
                         || (delivery === "datasync" && feedMode === "existing" && !selectedFeed)'
                     @click='submitCreate'
                 >
-                    <span v-if='saving' class='spinner-border spinner-border-sm me-1' />
+                    <span
+                        v-if='saving'
+                        class='spinner-border spinner-border-sm me-1'
+                    />
                     Create Event
                 </button>
             </div>

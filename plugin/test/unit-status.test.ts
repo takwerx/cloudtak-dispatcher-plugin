@@ -2,7 +2,7 @@
 //   node --test plugin/test/*.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BOARD_LABEL, boardState, boardBadgeClass, incidentQueue, rowUnits, firstOnScene, respondingLine, unitTimesLine } from '../lib/unit-status.ts';
+import { BOARD_LABEL, boardState, boardBadgeClass, busyUnits, incidentQueue, rowUnits, firstOnScene, respondingLine, shortNumber, unitTimesLine, workingUids } from '../lib/unit-status.ts';
 import { buildCsv, buildReportHtml, buildStats, unitLine } from '../lib/report.ts';
 
 const T1 = '2026-11-02T17:15:00.000Z', T2 = '2026-11-02T17:22:00.000Z', T3 = '2026-11-02T17:39:00.000Z', T4 = '2026-11-02T17:52:00.000Z';
@@ -117,4 +117,36 @@ test('incident list cards name the units still on the incident, in assignment or
     ]), ['E12', 'M4']);
     // A unit from before unit status existed (uid + callsign only) counts as on the incident.
     assert.deepEqual(rowUnits([{ uid: 'z', callsign: 'OLD' } as never]), ['OLD']);
+});
+
+test('a unit still Assigned or On Scene on another active incident is busy, with that incident\'s short number', () => {
+    const incidents = [
+        { id: 'here', number: '26-020', status: 'active' as const, assigned: [] },
+        { id: 'x', number: '26-014', status: 'active' as const, assigned: [assignedU, clearedU] },
+        { id: 'y', number: '26-011', status: 'active' as const, assigned: [onSceneU, { uid: 'old', callsign: 'E7' }] },
+        { id: 'z', number: '26-009', status: 'closed' as const, assigned: [{ ...assignedU, uid: 'z1' }] },
+    ];
+    const busy = busyUnits(incidents, 'here');
+    assert.deepEqual([...busy.entries()].sort(), [['a', '014'], ['b', '011'], ['old', '011']]);
+    assert.equal(busy.has('c'), false, 'cleared frees the unit');
+    assert.equal(busy.has('z1'), false, 'a closed incident holds nobody');
+});
+
+test('the incident a dispatcher is assigning on does not count against its own units', () => {
+    const incidents = [{ id: 'here', number: '26-020', status: 'active' as const, assigned: [assignedU] }];
+    assert.equal(busyUnits(incidents, 'here').size, 0);
+    assert.equal(busyUnits(incidents, undefined).get('a'), '020');
+});
+
+test('the short number drops the Event prefix', () => {
+    assert.equal(shortNumber('26-014'), '014');
+    assert.equal(shortNumber('AB-26-1002'), '1002');
+    assert.equal(shortNumber('014'), '014');
+});
+
+test('a unit that cleared from this incident is free here again; a second trip is working', () => {
+    assert.deepEqual([...workingUids([assignedU, onSceneU, clearedU])].sort(), ['a', 'b']);
+    assert.equal(workingUids([clearedU]).has('c'), false);
+    assert.equal(workingUids([clearedU, { ...assignedU, uid: 'c', callsign: 'L1' }]).has('c'), true);
+    assert.equal(workingUids(undefined).size, 0);
 });

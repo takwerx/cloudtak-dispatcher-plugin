@@ -18,6 +18,9 @@ const src = readFileSync(new URL('../../server/plugin-dispatcher.ts', import.met
 const block = src.slice(src.indexOf('// <operator-pure>'), src.indexOf('// </operator-pure>'));
 const callers = src.slice(src.indexOf('// <callers-pure>'), src.indexOf('// </callers-pure>'));
 const asArray = src.slice(src.indexOf('function asArray'), src.indexOf('\n}\n', src.indexOf('function asArray')) + 3);
+// operatorNumbersOn unwraps the switch with unwrapJson (the jsonb block).
+const jsonb = src.slice(src.indexOf('// <jsonb-pure>'), src.indexOf('// </jsonb-pure>'));
+assert.ok(jsonb.includes('function unwrapJson'), 'could not find the jsonb block in the server file');
 assert.ok(block.includes('function normOperator') && block.includes('function closedByAfter'), 'could not find the operator block in the server file');
 assert.ok(callers.includes('function addCallerTo') && asArray.includes('Array.isArray'), 'could not find the callers block in the server file');
 
@@ -27,6 +30,7 @@ writeFileSync(file, `
 import { randomUUID } from 'node:crypto';
 export class Err extends Error { status: number; constructor(status: number, _x: unknown, message: string) { super(message); this.status = status; } }
 ${asArray}
+${jsonb}
 ${block}
 ${callers}
 export { normOperator, withBy, stampNewNotes, dispatcherAfterAssign, closedByAfter, operatorNumbersOn, normOperatorSetting, requestOperator, OPERATOR_MAX, OPERATOR_SETTING };
@@ -152,7 +156,7 @@ test('the route file wires it in behind the switch and leaves the dispatcher fie
     // Every write reads the switch; with it off the operator is null and nothing is stamped.
     assert.equal((src.match(/requestOperator\((await operatorNumbersEnabled\(config\)|numbersOn), req\.body\.operator\)/g) ?? []).length, 5, 'create, patch, assign, unit status, add caller');
     assert.match(src, /if \(numbersOn\) next\.notes = stampNewNotes\(asArray\(cur\.notes\)\.length, next\.notes, operator\);/);
-    assert.match(src, /assignUnitsTo\(list, req\.body\.units, now\), operator, numbersOn\)/);
+    assert.match(src, /assignUnitsTo\(list, req\.body\.units, now\),\s+\{ operator, stampDispatcher: numbersOn, checkBusy: true \}\)/);
     assert.match(src, /SELECT assigned, notes, status, initial_dispatcher_no FROM dispatcher_incidents WHERE id = \$\{incidentid\} FOR UPDATE/);
     // Only a system admin may flip the switch.
     assert.match(src, /isAdminOnlySetting\(req\.params\.key\) \|\| req\.params\.key === OPERATOR_SETTING/);

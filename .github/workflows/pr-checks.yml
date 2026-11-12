@@ -87,7 +87,8 @@ jobs:
       - run: node --import ./.github/ci/tests/register.mjs --test .github/ci/tests/dispatcher.test.mjs
 
   # Updating a v1.3.0 and a v1.4.0 database (with data) to this version, and rolling back (ops #468, #501): the server's
-  # schema bootstrap runs against a real Postgres, twice, and the old rows must still load.
+  # schema bootstrap runs against a real Postgres, twice, and the old rows must still load. upgrade-db-jsonb: lists
+  # and settings older versions stored as a JSON string are unwrapped.
   upgrade-db:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -106,8 +107,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
-      # One file at a time: both start by dropping the same three tables.
-      - run: node --test --test-concurrency=1 .github/ci/tests/upgrade-db.test.mjs .github/ci/tests/upgrade-db-1.4.test.mjs
+      # One file at a time: they all start by dropping the same three tables.
+      - run: node --test --test-concurrency=1 .github/ci/tests/upgrade-db.test.mjs .github/ci/tests/upgrade-db-1.4.test.mjs .github/ci/tests/upgrade-db-jsonb.test.mjs
         env:
           PGHOST: localhost
           PGUSER: postgres

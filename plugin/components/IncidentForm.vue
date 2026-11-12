@@ -81,6 +81,13 @@
                 </button>
             </div>
             <div
+                v-if='geoFailed'
+                class='small text-warning mb-1'
+                data-test='search-unavailable'
+            >
+                Address search isn't available. Drop a pin and type the address.
+            </div>
+            <div
                 v-if='picking'
                 class='small text-warning mb-1'
             >
@@ -329,7 +336,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     (e: 'saved',            uid: string):              void;
-    (e: 'saved-standalone', inc: DispatcherIncident): void;
+    // `problems`: what did not go out after the incident was saved (marker, feed log, chat), or ''.
+    (e: 'saved-standalone', inc: DispatcherIncident, problems: string): void;
     (e: 'cancel'                          ):           void;
 }>();
 
@@ -341,6 +349,7 @@ const mapStore       = useMapStore();
 const picking        = ref(false);
 const geoQuery       = ref('');
 const geoSuggestions = ref<GeocodeSuggestion[]>([]);
+const geoFailed      = ref(false);
 const incidentNumber = ref('');
 let geoDebounce: ReturnType<typeof setTimeout>;
 
@@ -397,11 +406,22 @@ function onGeoInput() {
     geoDebounce = setTimeout(doGeocode, 500);
 }
 
+// The server asks the public geocoder, so with no internet the search fails. Say so in one line under
+// the box and keep the form: a failure thrown from here would replace the whole Dispatcher with the error
+// (CadMain's onErrorCaptured) and lose what was typed.
 async function doGeocode() {
     if (!geoQuery.value.trim()) return;
     geocoding.value = true;
-    try { geoSuggestions.value = await geocodeAddress(geoQuery.value); }
-    finally { geocoding.value = false; }
+    try {
+        geoSuggestions.value = await geocodeAddress(geoQuery.value);
+        geoFailed.value = false;
+    } catch (e) {
+        geoSuggestions.value = [];
+        geoFailed.value = true;
+        console.warn('[dispatcher] address search failed', e);
+    } finally {
+        geocoding.value = false;
+    }
 }
 
 function applySuggestion(s: GeocodeSuggestion) {
@@ -590,11 +610,9 @@ async function submitStandalone(address: string) {
             markerErrors.push('Feed chat failed');
             console.warn('[dispatcher] feed chat failed', e);
         }
-        if (markerErrors.length) {
-            saveError.value = markerErrors.join(' · ');
-        }
 
-        emit('saved-standalone', incident);
+        // The list replaces this form now, so it shows what failed (IncidentListView).
+        emit('saved-standalone', incident, markerErrors.join(' · '));
     } catch (e) {
         saveError.value = e instanceof Error ? e.message : String(e);
     } finally {
