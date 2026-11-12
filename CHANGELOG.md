@@ -20,6 +20,7 @@
   Nothing changes on screen. Going back to an older version still works. (Contributed by Sentinel6Systems.)
 - Wording: the Settings and README text now say **Event report** and **trash can**, as the buttons are called.
 - Build-time update of `vue`. It is not part of what runs in CloudTAK.
+- Cleaner build output in CloudTAK (no behaviour change).
 
 ## 1.6.0
 
