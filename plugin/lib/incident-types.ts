@@ -27,6 +27,18 @@ export const INCIDENT_TYPE_CODE_MAX = 8;
 export const INCIDENT_TYPE_NAME_MAX = 60;
 export const INCIDENT_TYPES_MAX = 300;
 
+// The biggest CSV file the card reads. A full list (300 types of a code and a 60-character name) is about
+// 25 KB, so this leaves room for quotes and a spreadsheet's extra columns. A bigger file is refused before
+// it is read, so a wrong file (a log, a picture) cannot freeze the admin's browser tab.
+export const INCIDENT_TYPE_FILE_MAX_BYTES = 200 * 1024;
+
+// What to tell the admin about a file of `size` bytes: empty text when it can be read.
+export function incidentTypeFileProblem(size: number): string {
+    return size > INCIDENT_TYPE_FILE_MAX_BYTES
+        ? `That file is too big (over ${INCIDENT_TYPE_FILE_MAX_BYTES / 1024} KB). A list of incident types has one short line per type.`
+        : '';
+}
+
 // A code as typed, ready to store: no spaces around it, upper case.
 export function incidentTypeCode(v: string): string {
     return v.trim().toUpperCase();

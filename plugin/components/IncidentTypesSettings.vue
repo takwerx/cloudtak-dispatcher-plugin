@@ -189,7 +189,7 @@ import { downloadFile } from '../lib/report.ts';
 import {
     INCIDENT_TYPES_SETTING, INCIDENT_TYPES_ONLY_SETTING, INCIDENT_TYPE_CODE_MAX, INCIDENT_TYPE_NAME_MAX,
     INCIDENT_TYPE_EXAMPLE_CSV, INCIDENT_TYPE_EXAMPLE_NAME,
-    incidentTypeCode, incidentTypeName, incidentTypeOptions, incidentTypeProblems, incidentTypesOnly,
+    incidentTypeCode, incidentTypeFileProblem, incidentTypeName, incidentTypeOptions, incidentTypeProblems, incidentTypesOnly,
     isIncidentTypeCode, parseIncidentTypeCsv, savedIncidentTypes,
 } from '../lib/incident-types.ts';
 import type { IncidentTypeOption } from '../lib/incident-types.ts';
@@ -258,6 +258,11 @@ async function onFile(ev: Event) {
     problems.value = [];
     loaded.value = '';
     try {
+        const tooBig = incidentTypeFileProblem(file.size);
+        if (tooBig) {
+            problems.value = ['Nothing was loaded.', tooBig];
+            return;
+        }
         const read = parseIncidentTypeCsv(await file.text());
         if (read.errors.length) {
             problems.value = ['Nothing was loaded. Fix the file and load it again.', ...read.errors];
