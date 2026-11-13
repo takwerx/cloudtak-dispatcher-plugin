@@ -367,75 +367,10 @@
 
             <hr class='my-1'>
 
-            <!-- Custom call types. CloudTAK system admin only. -->
+            <!-- Incident types: the admin's own list (CSV file or typed in) and the switch that removes
+                 the built-in ones. CloudTAK system admin only. -->
             <div>
-                <div class='small text-muted fw-semibold text-uppercase mb-1 d-flex align-items-center gap-2'>
-                    Custom Call Types
-                    <span
-                        class='badge bg-secondary text-white fw-normal'
-                        title='Only a CloudTAK system admin can change this'
-                    >CloudTAK admin only</span>
-                </div>
-                <div class='card border'>
-                    <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
-                        <div class='d-flex flex-wrap gap-1'>
-                            <span
-                                v-for='t in customTypes'
-                                :key='t'
-                                class='badge bg-secondary text-white d-flex align-items-center gap-1'
-                            >
-                                {{ t }}
-                                <button
-                                    v-if='isAdmin'
-                                    class='btn btn-link p-0 text-white text-decoration-none'
-                                    style='font-size:10px;line-height:1'
-                                    type='button'
-                                    title='Remove custom type'
-                                    @click='removeCustomType(t)'
-                                >
-                                    <IconX
-                                        :size='12'
-                                        stroke='1'
-                                    />
-                                </button>
-                            </span>
-                            <span
-                                v-if='!customTypes.length'
-                                class='text-muted small'
-                            >No custom call types yet</span>
-                        </div>
-                        <div class='d-flex gap-1'>
-                            <input
-                                v-model='newTypeName'
-                                type='text'
-                                class='form-control form-control-sm border flex-grow-1'
-                                placeholder='Add call type…'
-                                data-test='call-type-input'
-                                :disabled='!isAdmin || savingTypes'
-                                @keyup.enter='addCustomType'
-                            >
-                            <button
-                                class='btn btn-sm btn-outline-secondary'
-                                type='button'
-                                :disabled='!isAdmin || !newTypeName.trim() || savingTypes'
-                                @click='addCustomType'
-                            >
-                                Add
-                            </button>
-                        </div>
-                        <div
-                            v-if='typeEditorError'
-                            class='text-danger small'
-                        >
-                            {{ typeEditorError }}
-                        </div>
-                        <div class='text-muted small'>
-                            Added to the type dropdown for every dispatcher on this CloudTAK.
-                            Built-in types can't be removed. Only the CloudTAK system admin account
-                            can add or remove call types.
-                        </div>
-                    </div>
-                </div>
+                <IncidentTypesSettings :is-admin='isAdmin' />
             </div>
 
             <hr class='my-1'>
@@ -454,6 +389,7 @@ import type { AgencySettings } from '../lib/events-client.ts';
 import { dispatcherStore, applyOperatorNumbers } from '../lib/dispatcher-store.ts';
 import { CJIS_REMINDER_DEFAULT_TEXT, cjisReminderFrom, isSystemAdmin } from '../lib/cjis-reminder.ts';
 import { OPERATOR_SETTING, operatorNumbersFrom } from '../lib/operator.ts';
+import IncidentTypesSettings from './IncidentTypesSettings.vue';
 import {
     CLOSED_MARKER_MINUTE_CHOICES, closedMarkerMinutes, closedMarkerMinutesFrom, isClosedMarkerMinutes,
     setClosedMarkerMinutes,
@@ -467,51 +403,8 @@ const emit = defineEmits<{
 }>();
 
 // CloudTAK system admin (profile flag). Gates the CJIS reminder, employee numbers, the closed-marker
-// window and the custom call types; the server refuses those writes for anyone else anyway.
+// window and the incident types (IncidentTypesSettings); the server refuses those writes for anyone else anyway.
 const isAdmin = ref(false);
-
-// ── Custom call types (deployment-shared, merged over defaults in IncidentForm; admin only) ──
-const customTypes     = ref<string[]>([]);
-const newTypeName     = ref('');
-const savingTypes     = ref(false);
-const typeEditorError = ref('');
-
-async function addCustomType() {
-    const name = newTypeName.value.trim();
-    if (!name || !isAdmin.value) return;
-    typeEditorError.value = '';
-    if (customTypes.value.some(t => t.toLowerCase() === name.toLowerCase())) {
-        typeEditorError.value = 'That call type already exists';
-        return;
-    }
-    savingTypes.value = true;
-    const prev = customTypes.value;
-    try {
-        customTypes.value = [...prev, name];
-        await putDispatcherSetting('incident_types', customTypes.value);
-        newTypeName.value = '';
-    } catch (e) {
-        customTypes.value = prev;
-        typeEditorError.value = e instanceof Error ? e.message : String(e);
-    } finally {
-        savingTypes.value = false;
-    }
-}
-
-async function removeCustomType(name: string) {
-    typeEditorError.value = '';
-    savingTypes.value = true;
-    const prev = customTypes.value;
-    try {
-        customTypes.value = prev.filter(t => t !== name);
-        await putDispatcherSetting('incident_types', customTypes.value);
-    } catch (e) {
-        customTypes.value = prev;
-        typeEditorError.value = e instanceof Error ? e.message : String(e);
-    } finally {
-        savingTypes.value = false;
-    }
-}
 
 // ── Caller details on markers (deployment-shared; default on) ──
 const callerOnMarkers = ref(true);
@@ -712,10 +605,6 @@ onMounted(async () => {
         operatorNumbers.value = operatorNumbersFrom(s);
         applyOperatorNumbers(operatorNumbers.value);
         closedMinutes.value = setClosedMarkerMinutes(closedMarkerMinutesFrom(s));
-        const list = s.incident_types;
-        if (Array.isArray(list)) {
-            customTypes.value = list.filter((t): t is string => typeof t === 'string');
-        }
         const saved = s.agency as Partial<AgencySettings> | undefined;
         if (saved) {
             agency.name = saved.name ?? '';

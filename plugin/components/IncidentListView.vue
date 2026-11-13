@@ -310,6 +310,7 @@
                     <div class='input-group'>
                         <input
                             v-model='newNote'
+                            maxlength='2000'
                             type='text'
                             class='form-control form-control-sm border'
                             placeholder='Add a note…'

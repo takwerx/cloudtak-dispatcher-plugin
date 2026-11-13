@@ -412,6 +412,7 @@
             >
                 <input
                     v-model='slNoteInput'
+                    maxlength='2000'
                     type='text'
                     class='form-control form-control-sm border flex-grow-1'
                     placeholder='Add note…'

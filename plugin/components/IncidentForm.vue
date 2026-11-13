@@ -30,10 +30,10 @@
                 </option>
                 <option
                     v-for='t in typeOptions'
-                    :key='t'
-                    :value='t'
+                    :key='t.name'
+                    :value='t.name'
                 >
-                    {{ t }}
+                    {{ incidentTypeLabel(t) }}
                 </option>
             </select>
         </div>
@@ -418,7 +418,6 @@ import {
     getIncident, insertIncident, updateIncident,
     geocodeAddress, reverseGeocode,
     getNextIncidentNumber,
-    DEFAULT_INCIDENT_TYPES,
 } from '../lib/takcad-client.ts';
 import type { GeocodeSuggestion, MissionRef } from '../lib/takcad-client.ts';
 import { suggestAddress, reverseAddress, getAddressSettings, badgeFor, distanceText } from '../lib/addressing.ts';
@@ -428,6 +427,8 @@ import type { IncidentRef, IncidentTypeRef } from '../lib/takcad-types.ts';
 import { STATUS_ACTIVE } from '../lib/takcad-types.ts';
 import { dropIncidentMarker, postMissionCallLog, postFeedChat } from '../lib/map-marker.ts';
 import { showIncident } from '../lib/field-delivery.ts';
+import { incidentTypeOptions, incidentTypeLabel } from '../lib/incident-types.ts';
+import type { IncidentTypeOption } from '../lib/incident-types.ts';
 import { createIncident, getDispatcherSettings } from '../lib/events-client.ts';
 import type { DispatcherIncident } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
@@ -500,19 +501,14 @@ const match = ref<Match | null>(null);
 // Shared type list: TAK-CAD server types (names only) or default list
 // Custom call types (standalone only): deployment-shared via dispatcher_settings,
 // merged over the built-in defaults; edited in DispatcherSettings (top bar gear).
-// TAK-CAD mode keeps its server-provided list.
-const customTypes = ref<string[]>([]);
-
-const typeOptions = computed<string[]>(() => {
+// TAK-CAD mode keeps its server-provided list. The standalone list (built-in types, the admin's
+// own, and the admin's "use only these" switch; lib/incident-types.ts) is kept in the shared store,
+// so it is known the moment the form opens; on an older server it is the built-in types.
+const typeOptions = computed<IncidentTypeOption[]>(() => {
     if (props.serverMode === 'takcad' && props.incidentTypes.length) {
-        return props.incidentTypes.map(t => t.name);
+        return props.incidentTypes.map(t => ({ code: '', name: t.name }));
     }
-    const extra = customTypes.value
-        .filter(t => !DEFAULT_INCIDENT_TYPES.includes(t))
-        .sort();
-    // Keep 'Other' at the bottom, custom types above it.
-    const base = DEFAULT_INCIDENT_TYPES.filter(t => t !== 'Other');
-    return [...base, ...extra, 'Other'];
+    return props.serverMode === 'standalone' ? dispatcherStore.incidentTypes : incidentTypeOptions({});
 });
 
 const form = reactive({
@@ -528,6 +524,14 @@ const form = reactive({
     callerName:  '',
     callerPhone: '',
     callerType:  '',
+});
+
+// Standalone: the list is refreshed in the background when the form opens. If that takes the selected
+// type away (the admin switched the built-in types off, or loaded another file), move to the first
+// type still offered, so a new incident can never be created with a type the admin removed.
+watch(typeOptions, (list) => {
+    if (props.serverMode !== 'standalone' || !form.incidentType || !list.length) return;
+    if (!list.some(t => t.name === form.incidentType)) form.incidentType = list[0].name;
 });
 
 // Taken by # follows whoever is signed in while this form is open (sign in, sign out, the next person
@@ -726,10 +730,7 @@ onMounted(async () => {
     // just leaves the defaults.
     if (props.serverMode === 'standalone') {
         getDispatcherSettings().then((s) => {
-            const list = s.incident_types;
-            if (Array.isArray(list)) {
-                customTypes.value = list.filter((t): t is string => typeof t === 'string');
-            }
+            dispatcherStore.incidentTypes = incidentTypeOptions(s);
             dispatcherStore.callerOnMarkers = s.caller_on_markers !== false;
         }).catch(() => { /* defaults only */ });
         getAddressSettings().then((s) => {
@@ -772,8 +773,9 @@ onMounted(async () => {
         } catch (e) {
             saveError.value = e instanceof Error ? e.message : String(e);
         }
-    } else if (typeOptions.value.length) {
-        form.incidentType = typeOptions.value[0];
+    } else if (!typeOptions.value.some(t => t.name === form.incidentType)) {
+        // Preselect the first type, unless one the list offers is already set.
+        form.incidentType = typeOptions.value[0]?.name ?? '';
     }
 
     // Opened by the command line (N type, address): the type is set, the address is already being
