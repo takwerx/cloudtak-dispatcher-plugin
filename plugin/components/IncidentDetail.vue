@@ -965,10 +965,14 @@ async function slSaveReportNumber(inc: DispatcherIncident) {
 // Change of location. Only the new place is sent: the server writes the note with both places
 // (<location-pure> in the server file), so the log shows where the incident started and where it
 // moved to. Then the marker moves, the feed log says so, and the units on the incident are told.
-async function slSaveLocation(inc: DispatcherIncident, to: { address: string; lat: number; lon: number }) {
+async function slSaveLocation(inc: DispatcherIncident, to: { address: string; lat: number; lon: number; details: string }) {
     if (slSaving.value) return;
     const sameSpot = (was: number | null, now: number) => was != null && was.toFixed(6) === now.toFixed(6);
-    if (to.address === (inc.address ?? '') && sameSpot(inc.lat, to.lat) && sameSpot(inc.lon, to.lon)) {
+    const moved = !(to.address === (inc.address ?? '') && sameSpot(inc.lat, to.lat) && sameSpot(inc.lon, to.lon));
+    // A place loaded without a point of its own sits on its address's point: choosing it for an
+    // incident already at that address changes only the details.
+    const named = to.details !== (inc.details ?? '');
+    if (!moved && !named) {
         slRelocating.value = false;
         return;
     }
@@ -977,7 +981,7 @@ async function slSaveLocation(inc: DispatcherIncident, to: { address: string; la
         const updated = await patchIncident(inc.id, {
             address: to.address, lat: to.lat, lon: to.lon,
             // A place chosen as the new location puts its name on the first line of the details.
-            ...(to.details !== (inc.details ?? '') ? { details: to.details } : {}),
+            ...(named ? { details: to.details } : {}),
         });
         applyIncident(updated);
         slRelocating.value = false;
@@ -987,6 +991,8 @@ async function slSaveLocation(inc: DispatcherIncident, to: { address: string; la
         const marker = slMarkerFor(updated);
         try { await (updated.status === 'active' ? showIncident(mapStore, marker) : closeIncidentInField(mapStore, marker)); }
         catch { /* best-effort */ }
+        // Only the place's name is new: the marker carries it, and nothing moved to announce.
+        if (!moved) return;
 
         const where = updated.address || `${to.lat.toFixed(6)}, ${to.lon.toFixed(6)}`;
         const feed = slEventFor(updated);
