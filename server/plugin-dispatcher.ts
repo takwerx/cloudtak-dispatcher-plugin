@@ -203,6 +203,30 @@ function reopenNeedsReason(numbersOn: boolean, from: string, to: string): boolea
 }
 // </disposition-pure>
 
+// ── Changing an incident's location ────────────────────────────────────────────
+// An incident reported at one place can turn out to belong at another. The columns hold where it
+// is now; the change is written as a note with both places (address and point), so the log, the
+// report and the CSV show where it started and where it moved to. Pure, for
+// plugin/test/location-server.test.ts.
+// <location-pure>
+interface Place { address: string | null; lat: number | null; lon: number | null }
+
+// "100 MAIN ST, Springfield, OR (44.500000, -123.200000)": what is known of the two, never blank.
+function placeText(p: Place): string {
+    const address = (p.address ?? '').trim();
+    const point = p.lat != null && p.lon != null ? `${Number(p.lat).toFixed(6)}, ${Number(p.lon).toFixed(6)}` : '';
+    return address && point ? `${address} (${point})` : address || point || 'no location';
+}
+
+// The note for a move, or null when the address and the point are what they were. A point is the
+// same to six decimals (about 0.1 m), which is how it is shown and sent.
+function locationNote(was: Place, now: Place): string | null {
+    const same = (a: number | null, b: number | null) => (a == null || b == null) ? a == b : Number(a).toFixed(6) === Number(b).toFixed(6);
+    if ((was.address ?? '').trim() === (now.address ?? '').trim() && same(was.lat, now.lat) && same(was.lon, now.lon)) return null;
+    return `Location changed: ${placeText(was)} → ${placeText(now)}`;
+}
+// </location-pure>
+
 // ── Employee numbers (who did it) ──────────────────────────────────────────────
 // Optional, OFF by default: a CloudTAK system admin turns it on in Manage (setting `operator_numbers`).
 // Off, nothing here runs and the Dispatcher behaves as before (the `dispatcher` column is the CloudTAK
@@ -299,7 +323,8 @@ async function operatorNumbersEnabled(config: ConfigStateless): Promise<boolean>
 // dispatcher not to paste CJIS data into the Dispatcher. Both settings are shared per CloudTAK and
 // may only be changed by a CloudTAK system admin (the account CloudTAK creates on first launch);
 // every signed-in user still reads them, so the line shows for everyone. The custom call type list
-// (incident_types) and the broadcast closed-marker window (closed_marker_minutes, whole minutes
+// (incident_types), its "only these" switch (incident_types_only; both are checked in the incident
+// types block below) and the broadcast closed-marker window (closed_marker_minutes, whole minutes
 // 0..1440, default 60; see plugin/lib/closed-window.ts) are admin-only the same way. Pure (no
 // database) so plugin/test/cjis-server.test.ts and closed-window.test.ts can run it.
 // <cjis-pure>
@@ -307,7 +332,7 @@ const CJIS_REMINDER_DEFAULT_TEXT = 'Information derived from CJIS sources must n
 const CJIS_REMINDER_TEXT_MAX = 300;
 const CLOSED_MARKER_MINUTES_MIN = 0;
 const CLOSED_MARKER_MINUTES_MAX = 1440;
-const ADMIN_ONLY_KEYS = new Set(['cjis_reminder_enabled', 'cjis_reminder_text', 'incident_types', 'closed_marker_minutes']);
+const ADMIN_ONLY_KEYS = new Set(['cjis_reminder_enabled', 'cjis_reminder_text', 'incident_types', 'incident_types_only', 'closed_marker_minutes']);
 
 // True for the settings keys only a system admin may write.
 function isAdminOnlySetting(key: string): boolean {
@@ -336,6 +361,89 @@ function normCjisSetting(key: string, value: unknown): unknown {
     return value;
 }
 // </cjis-pure>
+
+// ── Notes ───────────────────────────────────────────────────────────────────────
+// A dispatcher's note is sent as its text alone (`note_add`) and added here to the notes the incident
+// has NOW, under the row lock. A browser's copy of the list can be up to a poll old, so sending the
+// whole list back (`notes`, still accepted from older plugin builds) could drop a note another
+// dispatcher or a unit button wrote in between. Pure (no database) so plugin/test/notes-server.test.ts
+// can run it.
+// <notes-pure>
+// A note is at most NOTE_TEXT_MAX characters, and an incident keeps at most NOTES_MAX notes (the notes
+// log also holds the lines the server writes itself, such as unit changes). Without a limit one
+// request could put megabytes into the incident row, which every poll then sends to every dispatcher.
+// A refused note says why, in words the dispatcher can act on.
+const NOTE_TEXT_MAX = 2000;
+const NOTES_MAX = 500;
+
+function withAddedNote(notes: unknown[], text: unknown, now: string): unknown[] {
+    const t = typeof text === 'string' ? text.trim() : '';
+    if (!t) return notes;
+    if (t.length > NOTE_TEXT_MAX) throw new Err(400, null, `That note is too long (${NOTE_TEXT_MAX} characters max). Split it into two notes.`);
+    if (notes.length >= NOTES_MAX) throw new Err(400, null, `This incident has the most notes it can keep (${NOTES_MAX}). Close it and open a new incident for what follows.`);
+    return [...notes, { text: t, time: now }];
+}
+
+// An older plugin build sends the whole list back as `notes`: it may not be longer than the cap either.
+function checkNotesList(list: unknown[] | undefined): void {
+    if (list && list.length > NOTES_MAX) throw new Err(400, null, `Too many notes (${NOTES_MAX} max)`);
+}
+// </notes-pure>
+
+// ── Incident types ──────────────────────────────────────────────────────────────
+// The admin's own incident types (setting incident_types) and the switch that hides the built-in
+// ones (incident_types_only), set in Dispatcher Settings → Incident Types. A type is a name with an
+// optional short code; the list is stored as [{ code, name }] with '' for no code. A list of plain
+// names, which is what older plugins sent and what an older database holds, is accepted and read as
+// names with no code. An incident stores its type's name as text, as before: the code never leaves
+// this list. Same rules as plugin/lib/incident-types.ts, which names the rows of a bad file before
+// anything is sent; this is the check nobody can skip. Pure (no database) so
+// plugin/test/incident-types-server.test.ts can run it.
+// <incident-types-pure>
+const INCIDENT_TYPE_CODE_MAX = 8;
+const INCIDENT_TYPE_NAME_MAX = 60;
+const INCIDENT_TYPES_MAX = 300;
+const INCIDENT_TYPE_KEYS = new Set(['incident_types', 'incident_types_only']);
+
+interface IncidentTypeEntry {
+    code: string;   // upper case letters and digits, or '' for none
+    name: string;
+}
+
+// Value a client may store under one of the incident type keys. The switch must be a boolean. The
+// list: every type needs a name, a code is letters and digits only, and no code or name may be in
+// the list twice (ignoring case). One bad type refuses the whole list.
+function normIncidentTypeSetting(key: string, value: unknown): unknown {
+    if (key === 'incident_types_only') {
+        if (typeof value !== 'boolean') throw new Err(400, null, 'incident_types_only must be true or false');
+        return value;
+    }
+    if (!Array.isArray(value)) throw new Err(400, null, 'incident_types must be a list');
+    if (value.length > INCIDENT_TYPES_MAX) throw new Err(400, null, `Too many incident types (${INCIDENT_TYPES_MAX} max)`);
+    const list: IncidentTypeEntry[] = [];
+    const codes = new Set<string>();
+    const names = new Set<string>();
+    for (const t of value) {
+        const o = (t && typeof t === 'object' ? t : { name: t }) as { code?: unknown; name?: unknown };
+        if (typeof o.name !== 'string' || (o.code !== undefined && o.code !== null && typeof o.code !== 'string')) {
+            throw new Err(400, null, 'Each incident type needs a name, and its code must be text');
+        }
+        const name = o.name.replace(/\s+/g, ' ').trim();
+        const code = String(o.code ?? '').trim().toUpperCase();
+        if (!name) throw new Err(400, null, 'An incident type has no name');
+        if (name.length > INCIDENT_TYPE_NAME_MAX) throw new Err(400, null, `Incident type "${name.slice(0, 30)}…" is too long (${INCIDENT_TYPE_NAME_MAX} characters max)`);
+        if (code && (code.length > INCIDENT_TYPE_CODE_MAX || !/^[A-Z0-9]+$/.test(code))) {
+            throw new Err(400, null, `Code "${code.slice(0, 30)}" must be letters and digits only, no spaces, ${INCIDENT_TYPE_CODE_MAX} at most`);
+        }
+        if (names.has(name.toLowerCase())) throw new Err(400, null, `Incident type "${name}" is in the list twice`);
+        if (code && codes.has(code)) throw new Err(400, null, `Code ${code} is used twice`);
+        names.add(name.toLowerCase());
+        if (code) codes.add(code);
+        list.push({ code, name });
+    }
+    return list;
+}
+// </incident-types-pure>
 
 // ── Callers ─────────────────────────────────────────────────────────────────────
 // An incident keeps a list of callers (several calls about one crash, each with the time of the
@@ -1050,9 +1158,9 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 // Auth.as_user re-reads the profile for session tokens, so this is the live flag.
                 const user = await Auth.as_user(config, req);
                 if (!user.is_admin()) throw new Err(403, null, 'Only a CloudTAK system admin can change this setting');
-                value = req.params.key === OPERATOR_SETTING
-                    ? normOperatorSetting(value)
-                    : normCjisSetting(req.params.key, value);
+                if (req.params.key === OPERATOR_SETTING) value = normOperatorSetting(value);
+                else if (INCIDENT_TYPE_KEYS.has(req.params.key)) value = normIncidentTypeSetting(req.params.key, value);
+                else value = normCjisSetting(req.params.key, value);
             } else {
                 await Auth.is_auth(config, req);
             }
@@ -1318,6 +1426,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             reopen_reason: Type.Optional(Type.String()),
             assigned: Type.Optional(Type.Array(Type.Any())),
             notes: Type.Optional(Type.Array(Type.Any())),
+            // One note to add to the incident's current notes (see <notes-pure>).
+            note_add: Type.Optional(Type.String({ maxLength: NOTE_TEXT_MAX * 2 })),
         }),
         res: Type.Any(),
     }, async (req, res) => {
@@ -1343,6 +1453,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 const cur = current[0];
                 const b = req.body;
                 const now = new Date().toISOString();
+                checkNotesList(b.notes);
 
                 const next = {
                     type: b.type ?? cur.type,
@@ -1355,7 +1466,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                     assigned: b.assigned !== undefined
                         ? mergeAssignedFrom(normalizeUnits(cur.assigned), b.assigned, now)
                         : normalizeUnits(cur.assigned),
-                    notes: b.notes ?? asArray(cur.notes),
+                    notes: withAddedNote(b.notes ?? asArray(cur.notes), b.note_add, now),
                 };
                 // Report number: undefined = leave as is; '' = clear. A change is logged as a
                 // timestamped note here on the server, so the history survives even though the
@@ -1371,6 +1482,10 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                         time: now,
                     }];
                 }
+
+                // Location: a change of address or point is logged with both places (see <location-pure>).
+                const moved = locationNote(cur, next);
+                if (moved) next.notes = [...next.notes, { text: moved, time: now }];
 
                 // Core Event link: undefined = leave as is; '' = clear.
                 const coreEventId = b.core_event_id !== undefined

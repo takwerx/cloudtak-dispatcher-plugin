@@ -66,25 +66,52 @@ it in place.
 Every standalone incident opens with a one-line **CJIS reminder** ("Information derived from CJIS sources
 must not be entered into incident records.", default on). **Dispatcher Settings → CJIS Reminder** turns it off or changes
 the wording for the whole CloudTAK; only the CloudTAK system admin account (the one CloudTAK creates on
-first launch) can change it, and the server refuses the change for anyone else. **Dispatcher Settings → Custom Call
+first launch) can change it, and the server refuses the change for anyone else. **Dispatcher Settings → Incident
 Types** is locked to the same admin account.
+
+### Incident types (standalone)
+
+The **Incident Type** list on a new incident starts as the plugin's built-in types. **Dispatcher Settings →
+Incident Types** (CloudTAK system admin only) holds the agency's own types, each a **name** with an optional
+short **code** (`MVA` for `Traffic Accident`):
+
+- **Load from a CSV file**: two columns, code then name, one type per row (`MVA,Traffic Accident`). The code can
+  be left empty (`,Welfare Check`), a header row (`code,name`, or `name` over a list of names) is skipped, and a
+  name with a comma in it goes in quotes. A file with semicolons or tabs between the two columns is read the
+  same way. **Download example CSV** gives a file to start from. Loading a file replaces the list. If a code or
+  a name is in the file twice (upper and lower case count as the same), or a code is malformed, nothing is
+  loaded and the rows at fault are named, numbered as a spreadsheet numbers them.
+- **Add** one type by hand with the Code and name boxes, or remove one with its trash can.
+- A code is letters and digits only, no spaces, 8 at most, and is stored in upper case.
+- **Use only these incident types**: on, the built-in types are removed and dispatchers pick from the agency's
+  list only, in the order of the list (the first one is preselected). Off (the default), the agency's types are
+  added to the built-in ones, as before; a type named like a built-in one gives that one its code. With the
+  switch on and an empty list, the built-in types stay, so the list is never empty.
+
+The list shows the code beside the name (`MVA - Traffic Accident`). An incident stores the **name**, as before,
+so markers, the feed log and reports show the name and never the code, and incidents created earlier keep the
+type they have. A change reaches each dispatcher the next time they start a new incident: the list is read
+again when the board starts, when an incident is opened and when the New Incident form opens. A list saved by
+an older version (names only) keeps working, as names with no code. TAK-CAD mode keeps the types from its server.
 
 ### The Dispatcher header and Dispatcher Settings (standalone)
 
 From the top, the Dispatcher shows:
 
-- **Dispatcher**, the TAK-CAD switch, **Settings** and **Pop out** (**Workspace** in Multi-Monitor Mode, below).
+- **Dispatcher**, with **Settings** and **Pop out** (**Workspace** in Multi-Monitor Mode, below).
   **Settings** opens Dispatcher Settings, shared by every event and every dispatcher on the CloudTAK, with or
   without an event open: the report header, caller details on markers, the CJIS reminder, employee numbers and
-  custom call types. One setting there is per computer instead: the display mode (below).
-- **Callsign** (the CloudTAK callsign), and with Employee Numbers on and someone signed in, **Employee #** beside
-  **Sign out**.
-- **Event:** the open event's name, with **Switch event** to go to the list of events and open another (the
-  event stays open for everyone).
-- **Broadcast:** the channel, or **DataSync:** the feed (✓ when subscribed), with **Event report**, the open
-  event's after-action report.
+  incident types. One setting there is per computer instead: the display mode (below).
+- **Callsign** (the CloudTAK callsign) and, with Employee Numbers on and someone signed in, **Employee #**. At
+  the right of that line, as links: **Sign out**, and **TAK-CAD**, which connects to a TAK-CAD server (green
+  with a dot while connected; press it again to disconnect).
+- **Event**, the open event's name, and beside it **Broadcast** with the channel, or **DataSync** with the feed
+  (✓ when subscribed). Under them, three buttons of equal width: **Switch** goes to the list of events to open
+  another (the event stays open for everyone), **Report** is the open event's after-action report, and
+  **Commands** shows or hides the command line (below).
 - **Incidents**, with its tabs (**Active | Closed**, or **Unassigned | Active | Closed** in Multi-Monitor Mode)
   and **+ New** on one band, marked by a thin orange line on top.
+  **Create Incident** opens the new incident, ready for notes, callers and units; **Back** goes to its tab.
 
 ### Employee numbers: who took, dispatched and closed each call (standalone, optional)
 
@@ -151,6 +178,7 @@ for anyone else (it describes the desk, one monitor or several, and desks often 
   Multi-Monitor Mode also splits the incident list into three tabs: **Unassigned** (open, no unit on it,
   including one whose units have all cleared), **Active** (open, at least one unit Assigned or On Scene) and
   **Closed**. Single Monitor Mode keeps the two tabs it always had (Active is every open incident).
+  Closing an incident goes back to the tab it was opened from, not to Closed.
 
 In both modes each incident in the list is a short card: the incident number and the time it was created,
 the type, the address, and the callsigns of the units on it (when any are assigned). Single Monitor Mode
@@ -159,6 +187,105 @@ Multi-Monitor Mode the tab already says that, and an undocked incident is marked
 edge. The full incident (callers, notes, units, report number) is one click away.
 
 **Close all** and **✕** are remembered (per browser), so closed windows stay closed.
+### Local address data (standalone)
+
+By default the incident form's address search and map-click lookup use the public OpenStreetMap
+geocoder. **Dispatcher Settings → Local Address Data** (CloudTAK system admin only) lets an admin load the agency's
+own **address points**, **street intersections** and **common place names** so those are searched
+first, with the public geocoder as the fallback:
+
+- **From a file** — a CSV or GeoJSON upload of point data; the kind (addresses, intersections or places) is
+  read from the column names and can be changed, the admin maps the file's columns to the plugin's fields
+  (guessed automatically for the usual names), sets a "data as of" date, and the rows are checked and
+  swapped in only when the whole load succeeds. Replace the file any time. **Download example CSV**
+  gives a sample file for the selected kind with the column names the mapping recognises and, in note rows at
+  the top (skipped on import), what goes in each column.
+- **From a web address** — an ArcGIS Feature Service layer (`…/FeatureServer/0`, read in pages) or a
+  plain GeoJSON / CSV URL, pulled again after a set number of hours (checked when a lookup arrives,
+  or with **Refresh now**). The server reads public internet addresses only: a web address that
+  points to a private network, this server or a cloud metadata address (including through a
+  redirect) is refused. For data kept on an internal server, load it from a file.
+
+Typing in the Location box then offers **Place** (from two characters, narrowing as more is typed)
+and **Verified** results ahead of **OpenStreetMap** ones. A map click fills the nearest verified
+address point or intersection within the configured
+distances (defaults 60 m / 40 m) and shows how far it is from the click, with up to three alternates.
+The incident point stays where the dispatcher clicked: the click chooses the address, not the other way round.
+Beyond the give-up distance (150 m) the public geocoder answers as before.
+An address with units offers up to six of them as buttons (the nearest ones after a map click); typing in the
+**Unit** box narrows the buttons. For a typed address, a unit the data knows puts the point on that unit. Any
+other unit is typed by hand and goes on the address line as written (a bare `421` becomes `#421`).
+Choosing a place also writes `Common Place Name: <place>` at the top of the incident details. A place or
+intersection with no city, state or ZIP of its own takes them from the verified address point it sits at, and
+**Default country** fills the Country box of every local result (local files rarely carry one). **Only show OpenStreetMap
+results within my coverage area** keeps typed public results inside a circle the admin sets (a centre, which
+**Use map centre** fills in, and a radius), with local address data on or off; a map click is not affected. The **Try it** box
+in Dispatcher Settings shows exactly what the local data returns for a typed address or a lat/lon.
+
+**Changing an incident's location.** When a call turns out to belong somewhere else, press **Change** beside the
+address in the incident (active or closed). The same Location box as a new incident opens, filled with where the
+incident is now: search, click the map, or correct the boxes, then **Save Location**. The marker moves, the feed
+log gets a `LOCATION CHANGED:` line, the units on the incident are messaged the new address, and the server writes
+one note with both places, `Location changed: <old address> (<lat>, <lon>) → <new address> (<lat>, <lon>)`, so the
+incident's log, the report and the CSV show where it started and where it moved to.
+
+### Command line (standalone)
+
+For dispatchers who would rather type than click. With an event open, press **F2** (or **Commands** under the
+event's name) and a one-line box opens under it; **F2** always puts the cursor in it, **Esc** leaves it.
+It is remembered per computer, like Display Mode, and it is off until a desk turns it on. In Multi-Monitor Mode
+it is in the workspace window, where the Dispatcher is.
+
+A line is `[incident] COMMAND [units or text]`, then **Enter**:
+
+- **The incident number comes first and is optional.** `14 T caller called back` is a note on incident 014.
+  Left out, the command is for the incident named at the left of the box: the one last opened, clicked in or
+  brought to the front. A window that came back by itself after a reload does not count until it is clicked.
+  For a unit's status no number is needed at all, because a unit works one incident at a time.
+- **Units are typed the way they are said on the air.** A callsign is split at its hyphens, slashes and spaces,
+  and any one part names the unit: for `AGENCY-NAME-H202`, type `H202` or the name. When two units fit, a
+  numbered list asks which one. Part of an ID (`H2`) only ever lists; it never acts. Every unit on a line is
+  settled before any of them is changed, so a line with one wrong word does nothing.
+- **Types and dispositions are typed by the start of their words:** `N fire`, `X unf`. Several fits give the
+  same numbered list.
+- Under the box, a line says how the command was read before Enter, and what it did after. **Up** brings back
+  earlier lines.
+
+Every command runs the same code as its button, so the marker, the feed log, the messages to the units and the
+employee number all follow as they do from a click.
+
+| Type | It does | Button |
+|---|---|---|
+| `14` | Opens incident 014 (brings its window forward if it has one) | the incident in the list |
+| `N fire, 120 main` | Opens the New Incident form with the type set and the address searched; **Enter** takes the marked address, **Enter** again creates the incident | **New** |
+| `A H35 E6` | Assigns the units | the assign search |
+| `O H35` | On Scene | **On Scene** |
+| `C H35` | Clear | **Clear** |
+| `UN H35` | Removes a unit assigned by mistake | the trash can |
+| `T 2 patients, one trapped` | Adds a note | **Add note** |
+| `X unf` | Closes the incident with that disposition; `X other <text>` for Other; `X` alone lists them | **Close Incident** |
+| `14 R caller called back` | Reopens it. The reason goes in the notes; it is required when Employee Numbers is on | **Reopen** |
+| `RN 26-00123` | Sets the report number | **Report #** |
+| `CA J Smith, 555-0100, sees smoke` | Adds a caller: name, phone, note. The name or the phone may be left out | **+ Add caller** |
+| `CP 2` | Makes the second caller primary | **Make primary** |
+| `14 M` | Shows it on the map | **Show on Map** |
+| `14 W` | Opens it in its own window | Undock |
+| `WX ALL` | Closes its window (`WX`), or every incident window | **Close all** |
+| `L C` | Back to the list (`L`), or to a tab: `L U`, `L A`, `L C` | **Back**, the tabs |
+| `SI 4521` | Signs in with an employee number | **Sign in** |
+| `SO` | Signs out | **Sign out** |
+| `EV` | Switch event | **Switch** |
+| `REP` | Event report | **Report** |
+| `SET` | Settings | **Settings** |
+| `POP` | Pops the Dispatcher out, or opens the workspace | **Pop out** / **Workspace** |
+| `DOCK` | Docks it back to the panel | **Dock back to panel** |
+| `?` | Lists the commands | |
+
+A command never throws away a new incident that is being typed: it says to create or cancel it first.
+Setup stays with the mouse: Dispatcher Settings, creating, archiving and deleting events, the map pin, editing
+or removing a caller, changing an incident's location, and the report's period and downloads.
+
+On a laptop, F2 may be a volume key until Fn Lock is on (often **Fn+Esc**).
 
 ### Delivery to field units (standalone)
 
@@ -188,7 +315,10 @@ Each Event chooses how its incidents reach field devices when it is created:
   - `plugin-dispatcher.ts` — the standalone Events/Incidents store (CloudTAK Postgres) + CRUD
     endpoints under `/api/dispatcher/…`.
   - `plugin-takcad.ts` — a server-side proxy to the TAK-CAD TAK Server plugin (and a keyless
-    Nominatim geocode helper), used only in TAK-CAD mode.
+    Nominatim geocode helper, used by older builds of the incident form in both modes).
+  - `plugin-addressing.ts` — local address data (points, intersections, places): the admin's
+    sources, file loads and web pulls, and the `/api/dispatcher/address/suggest` and `…/reverse`
+    lookups the incident form uses, with the public geocoder as the fallback.
 
 ## Install
 

@@ -31,8 +31,9 @@
             </div>{{ setupError }}
         </div>
         <template v-else>
-            <!-- Header: the title, TAK-CAD, Settings, and Pop out (Workspace in Multi-Monitor Mode). Labelled buttons,
-                 so nothing is a bare icon to guess at. -->
+            <!-- Header, three bands that read the same way: what is on the left, its actions on the right, and every
+                 action either a labelled button of one style or a plain link.
+                 Title: Settings and Pop out (Workspace in Multi-Monitor Mode). -->
             <div class='d-flex align-items-center px-3 py-2 border-bottom flex-shrink-0 gap-2'>
                 <IconHeadset
                     :size='18'
@@ -40,29 +41,6 @@
                 />
                 <span class='fw-semibold'>Dispatcher</span>
                 <span class='ms-auto' />
-                <!-- TAK-CAD connection toggle -->
-                <button
-                    v-if='store.serverMode === "takcad"'
-                    class='badge bg-success text-white small border-0'
-                    style='cursor:pointer'
-                    title='TAK-CAD connected — click to disconnect'
-                    @click='forceStandalone'
-                >
-                    TAK-CAD ●
-                </button>
-                <button
-                    v-else-if='store.serverMode === "standalone"'
-                    class='badge bg-secondary text-white small border-0'
-                    style='cursor:pointer'
-                    title='Connect to TAK-CAD'
-                    @click='retryDetection'
-                >
-                    TAK-CAD
-                </button>
-                <span
-                    v-else
-                    class='badge bg-secondary text-white small opacity-50'
-                >TAK-CAD…</span>
                 <!-- Dispatcher Settings: shared by every event (standalone only; reachable with no event open) -->
                 <button
                     v-if='store.serverMode === "standalone"'
@@ -93,18 +71,25 @@
                 </button>
             </div>
 
-            <!-- Who is on this desk: the CloudTAK callsign; with Employee Numbers on and someone signed in, their
-                 number sits beside Sign out (signing out ends that number's session at this desk). -->
+            <!-- Who is on this desk: the CloudTAK callsign and, with Employee Numbers on and someone signed in, their
+                 number. On the right, as links: Sign out (ends that number's session at this desk) and TAK-CAD
+                 (connect to a TAK-CAD server, or disconnect from it; green with a dot while connected). -->
             <div
                 class='px-3 py-1 border-bottom flex-shrink-0 d-flex align-items-center column-gap-2 small'
                 data-test='operator-signed-in'
             >
+                <!-- A long callsign is the part that gives way: the employee number always shows in full -->
                 <span
                     class='text-truncate'
+                    style='min-width:0'
                     :title='`CloudTAK callsign: ${store.dispatcherName}`'
                 ><span class='text-muted'>Callsign</span> <span class='fw-semibold'>{{ store.dispatcherName }}</span></span>
+                <span
+                    v-if='signedIn'
+                    class='text-nowrap flex-shrink-0'
+                ><span class='text-muted'>· Employee</span> <span class='fw-semibold'>#{{ store.operator }}</span></span>
+                <span class='ms-auto' />
                 <template v-if='signedIn'>
-                    <span class='ms-auto text-nowrap'><span class='text-muted'>Employee</span> <span class='fw-semibold'>#{{ store.operator }}</span></span>
                     <button
                         type='button'
                         class='btn btn-link btn-sm p-0 text-decoration-none text-nowrap'
@@ -113,7 +98,33 @@
                     >
                         Sign out
                     </button>
+                    <span class='text-muted'>·</span>
                 </template>
+                <!-- TAK-CAD connection toggle -->
+                <button
+                    v-if='store.serverMode === "takcad"'
+                    type='button'
+                    class='btn btn-link btn-sm p-0 text-decoration-none text-nowrap text-success'
+                    title='TAK-CAD connected — click to disconnect'
+                    data-test='takcad-toggle'
+                    @click='forceStandalone'
+                >
+                    TAK-CAD ●
+                </button>
+                <button
+                    v-else-if='store.serverMode === "standalone"'
+                    type='button'
+                    class='btn btn-link btn-sm p-0 text-decoration-none text-nowrap'
+                    title='Connect to TAK-CAD'
+                    data-test='takcad-toggle'
+                    @click='retryDetection'
+                >
+                    TAK-CAD
+                </button>
+                <span
+                    v-else
+                    class='text-muted text-nowrap'
+                >TAK-CAD…</span>
             </div>
 
             <!-- ── Employee Numbers on (Dispatcher Settings), standalone, nobody signed in: the yellow Sign in bar.
@@ -220,42 +231,40 @@
                 </div>
             </div>
 
-            <!-- ── Standalone mode: the open Event. "Event: NAME" with Switch event (back to the list of events; the
-                 event stays open for everyone), then how its incidents reach the field with its Event report. ── -->
+            <!-- ── Standalone mode: the open Event. One line says which event and how its incidents reach the field;
+                 under it, one row of three equal buttons: Switch (back to the list of events; this event stays open
+                 for everyone), Report (its after-action report) and Commands (the command line, per computer like
+                 Display Mode; F2 also shows it). ── -->
             <div
                 v-else-if='store.serverMode === "standalone" && store.activeEvent'
-                class='border-bottom flex-shrink-0'
+                class='border-bottom flex-shrink-0 px-3 py-2 d-flex flex-column gap-2'
                 data-test='event-bar'
             >
-                <div class='px-3 pt-2 pb-1 d-flex align-items-center gap-2'>
+                <div class='d-flex align-items-center gap-2 small'>
                     <span
-                        class='text-truncate flex-grow-1'
+                        class='text-truncate'
+                        style='min-width:0'
                         :title='store.activeEvent.name'
-                    ><span class='text-muted'>Event:</span> <span class='fw-semibold'>{{ store.activeEvent.name }}</span></span>
+                    ><span class='text-muted'>Event</span> <span class='fw-semibold'>{{ store.activeEvent.name }}</span></span>
                     <span
                         v-if='store.activeEvent.status === "archived"'
                         class='badge bg-secondary'
                     >Archived</span>
-                    <button
-                        class='btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1 text-nowrap py-0 px-2 small'
-                        title='Go to the list of events to open a different one. This event stays open for everyone.'
-                        data-test='switch-event'
-                        @click='closeEvent'
+                    <span
+                        class='ms-auto text-muted text-truncate text-end'
+                        style='min-width:0'
                     >
-                        <IconArrowsExchange
-                            :size='14'
-                            stroke='1'
-                        />
-                        Switch event
-                    </button>
-                </div>
-                <div class='px-3 pb-2 d-flex align-items-center gap-2 small'>
-                    <span class='text-muted text-truncate flex-grow-1'>
                         <template v-if='store.activeEvent.delivery === "broadcast"'>
-                            <span title='Incidents are broadcast to the channel as CloudTAK Core Events — nothing for field users to subscribe to'>Broadcast:</span>&nbsp;<span class='fw-semibold text-body'>{{ activeEventChannel || '—' }}</span>
+                            <span title='Incidents are broadcast to the channel as CloudTAK Core Events — nothing for field users to subscribe to'>Broadcast</span>&nbsp;<span
+                                class='fw-semibold text-body'
+                                :title='activeEventChannel'
+                            >{{ activeEventChannel || '—' }}</span>
                         </template>
                         <template v-else>
-                            DataSync: <span class='fw-semibold text-body'>{{ store.activeEvent.feed_name }}</span>
+                            DataSync <span
+                                class='fw-semibold text-body'
+                                :title='store.activeEvent.feed_name'
+                            >{{ store.activeEvent.feed_name }}</span>
                             <IconCheck
                                 v-if='feedSubscribed'
                                 :size='16'
@@ -265,9 +274,25 @@
                             />
                         </template>
                     </span>
+                </div>
+                <div class='d-flex gap-2'>
                     <button
-                        class='btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1 text-nowrap py-0 px-2'
-                        title='After-action report for this event: call counts, narrative, PDF / CSV'
+                        class='btn btn-sm btn-outline-secondary d-inline-flex align-items-center justify-content-center gap-1 text-nowrap py-0 px-2 small'
+                        style='flex:1 1 0'
+                        title='Switch event: go to the list of events to open a different one. This event stays open for everyone.'
+                        data-test='switch-event'
+                        @click='closeEvent'
+                    >
+                        <IconArrowsExchange
+                            :size='14'
+                            stroke='1'
+                        />
+                        Switch
+                    </button>
+                    <button
+                        class='btn btn-sm btn-outline-secondary d-inline-flex align-items-center justify-content-center gap-1 text-nowrap py-0 px-2 small'
+                        style='flex:1 1 0'
+                        title='Event report: the after-action report for this event (call counts, narrative, PDF / CSV)'
                         data-test='event-report'
                         @click='showSettings = false; showReport = true'
                     >
@@ -275,7 +300,21 @@
                             :size='14'
                             stroke='1'
                         />
-                        Event report
+                        Report
+                    </button>
+                    <button
+                        class='btn btn-sm d-inline-flex align-items-center justify-content-center gap-1 text-nowrap py-0 px-2 small'
+                        :class='commandState.shown ? "btn-warning" : "btn-outline-secondary"'
+                        style='flex:1 1 0'
+                        title='Command line (F2): type commands instead of clicking'
+                        data-test='command-line-toggle'
+                        @click='setCommandLineShown(!commandState.shown)'
+                    >
+                        <IconTerminal2
+                            :size='14'
+                            stroke='1'
+                        />
+                        Commands
                     </button>
                 </div>
             </div>
@@ -296,6 +335,12 @@
                     Recheck
                 </button>
             </div>
+
+            <!-- Standalone, an Event open: the command line (hidden until its button or F2 turns it on) -->
+            <CommandLine
+                v-if='store.serverMode === "standalone" && store.activeEvent'
+                :actions='commandActions'
+            />
 
             <!-- ── Standalone: Dispatcher Settings (shared by every event), over any screen ── -->
             <div
@@ -373,13 +418,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, onErrorCaptured, watch } from 'vue';
 import ProfileConfig from '../../../src/base/profile.ts';
-import { IconHeadset, IconPictureInPictureOn, IconSettings, IconArrowsExchange, IconFileText, IconX, IconCheck } from '@tabler/icons-vue';
+import { IconHeadset, IconPictureInPictureOn, IconSettings, IconArrowsExchange, IconFileText, IconX, IconCheck, IconTerminal2 } from '@tabler/icons-vue';
 import IncidentListView from './IncidentListView.vue';
 import VehicleListView  from './VehicleListView.vue';
 import PersonnelListView from './PersonnelListView.vue';
 import EventsView from './EventsView.vue';
 import ReportView from './ReportView.vue';
 import DispatcherSettings from './DispatcherSettings.vue';
+import CommandLine from './CommandLine.vue';
 import { getIncidentTypes, getVehicleTypes, getVehicles, getPersonnel, getRoles, getIncidentMetadata, getMissions, getSubscribedFeedGuids } from '../lib/takcad-client.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
 import type { IncidentTypeRef, VehicleType, VehicleRef, PersonRef, Role } from '../lib/takcad-types.ts';
@@ -389,6 +435,8 @@ import { dispatcherStore as store, saveLastEventId } from '../lib/dispatcher-sto
 import { popOutDispatcher, dockDispatcher, focusWorkspace } from '../lib/float-pane.ts';
 import { parseOperator, saveOperator, OPERATOR_MAX } from '../lib/operator.ts';
 import { savePanelOpen, saveForcedMode } from '../lib/panel-state.ts';
+import { commandState, setCommandLineShown } from '../lib/command-state.ts';
+import type { CommandActions } from '../lib/command-state.ts';
 
 // floating: this instance lives inside the floating pane (DispatcherFloat) rather than
 // the anchored menu route.
@@ -522,22 +570,34 @@ const signedIn = computed(() => operatorShown.value && !!store.operator);
 const signInInput = ref('');
 const signInError = ref('');
 
-function signIn() {
-    const id = parseOperator(signInInput.value);
-    if (!id) {
-        signInError.value = `Digits only, up to ${OPERATOR_MAX}.`;
-        return;
-    }
+// Signs in with what was typed; returns what is wrong with it, or '' when signed in.
+function signInWith(typed: string): string {
+    const id = parseOperator(typed);
+    if (!id) return `Digits only, up to ${OPERATOR_MAX}.`;
     store.operator = id;
     saveOperator(id);
     signInInput.value = '';
-    signInError.value = '';
+    return '';
+}
+
+function signIn() {
+    signInError.value = signInWith(signInInput.value);
 }
 
 function signOut() {
     store.operator = null;
     saveOperator(null);
 }
+
+// This frame's buttons, for the command line (CommandLine.vue): each is the same code the button runs.
+const commandActions: CommandActions = {
+    signIn:      signInWith,
+    signOut,
+    switchEvent: closeEvent,
+    report:      () => { showSettings.value = false; showReport.value = true; },
+    settings:    () => { showSettings.value = !showSettings.value; },
+    board:       () => { showSettings.value = false; showReport.value = false; },
+};
 
 function forceStandalone() {
     store.forcedMode = 'standalone';
