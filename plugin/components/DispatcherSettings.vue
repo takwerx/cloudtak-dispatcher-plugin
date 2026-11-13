@@ -16,7 +16,7 @@
         <div class='flex-grow-1 overflow-auto p-3 d-flex flex-column gap-3'>
             <div class='text-muted small'>
                 These apply to every event and every dispatcher on this CloudTAK.
-                An event's own report opens from its Event report button while that event is open.
+                An event's own report opens from its Report button while that event is open.
             </div>
 
             <!-- Display Mode: one monitor (windows over the map) or several (the workspace window). Per computer:

@@ -53,12 +53,18 @@
         <div>
             <label class='form-label small text-muted mb-1'>{{ relocate ? 'New location' : 'Location' }} <span class='text-danger'>*</span></label>
             <div class='input-group mb-1'>
+                <!-- Down / Up move through the matches and Enter takes the marked one, so an address can be
+                     chosen without the mouse. With no matches showing, Enter does what it always did. -->
                 <input
+                    ref='geoBox'
                     v-model='geoQuery'
                     type='text'
                     class='form-control form-control-sm border'
                     placeholder='Search address…'
                     @input='onGeoInput'
+                    @keydown.down.prevent='geoMove(1)'
+                    @keydown.up.prevent='geoMove(-1)'
+                    @keydown.enter='geoEnter'
                 >
                 <button
                     type='button'
@@ -100,10 +106,11 @@
                 class='list-group mb-1'
             >
                 <button
-                    v-for='s in geoSuggestions'
+                    v-for='(s, i) in geoSuggestions'
                     :key='s.source + s.label'
                     type='button'
                     class='list-group-item list-group-item-action py-1 small d-flex align-items-center gap-2'
+                    :class='{ active: i === geoMarked }'
                     data-test='geo-suggestion'
                     @click='applySuggestion(s)'
                 >
@@ -425,6 +432,7 @@ import { createIncident, getDispatcherSettings } from '../lib/events-client.ts';
 import type { DispatcherIncident } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
 import { parseOperator, OPERATOR_MAX } from '../lib/operator.ts';
+import type { NewIncidentPrefill } from '../lib/command-state.ts';
 
 const props = defineProps<{
     serverMode:    'detecting' | 'takcad' | 'standalone';
@@ -435,6 +443,8 @@ const props = defineProps<{
     // Standalone: the incident whose location is being changed. The form then shows the Location
     // block alone, filled with where the incident is now, and hands the new place back (`relocated`).
     relocate?:     DispatcherIncident | null;
+    // Standalone, from the command line's N: the type to start with and the address to search for.
+    prefill?:      NewIncidentPrefill | null;
 }>();
 
 const emit = defineEmits<{
@@ -457,6 +467,23 @@ const geoSuggestions = ref<AddressSuggestion[]>([]);
 const geoFailed      = ref(false);
 const incidentNumber = ref('');
 let geoDebounce: ReturnType<typeof setTimeout>;
+const geoBox         = ref<HTMLInputElement | null>(null);
+// The match Enter would take: the first, until Down / Up move it. -1 while none are showing.
+const geoMarked      = ref(-1);
+watch(geoSuggestions, (list) => { geoMarked.value = list.length ? 0 : -1; });
+
+function geoMove(step: number) {
+    const n = geoSuggestions.value.length;
+    if (n) geoMarked.value = (geoMarked.value + step + n) % n;
+}
+
+// Enter with matches showing takes the marked one and stays in the form (a second Enter submits it).
+function geoEnter(e: KeyboardEvent) {
+    const s = geoSuggestions.value[geoMarked.value];
+    if (!s) return;
+    e.preventDefault();
+    applySuggestion(s);
+}
 
 // Local address data (admin-loaded points, intersections, places). Read once per form; an older
 // server without the route leaves the defaults, which are today's behaviour.
@@ -747,6 +774,17 @@ onMounted(async () => {
         }
     } else if (typeOptions.value.length) {
         form.incidentType = typeOptions.value[0];
+    }
+
+    // Opened by the command line (N type, address): the type is set, the address is already being
+    // searched, and the cursor is in the search box, so Down / Enter pick the match.
+    if (props.prefill && !props.relocate) {
+        if (props.prefill.type) form.incidentType = props.prefill.type;
+        geoBox.value?.focus();
+        if (props.prefill.address) {
+            geoQuery.value = props.prefill.address;
+            void doGeocode();
+        }
     }
 });
 

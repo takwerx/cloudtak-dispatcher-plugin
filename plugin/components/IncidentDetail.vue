@@ -1,6 +1,9 @@
 <template>
+    <!-- A click or a key in this incident makes it the one the command line works on -->
     <div
         class='d-flex flex-column h-100 overflow-hidden'
+        @pointerdown.capture='touchIncidentView(incidentId)'
+        @focusin='touchIncidentView(incidentId)'
     >
         <!-- Header: only inside the menu panel (Back, title, Undock). An undocked card gets its header from the floating pane. -->
         <div
@@ -733,10 +736,10 @@ import { useMapStore } from '../../../src/stores/map.ts';
 import { postMissionLog } from '../lib/takcad-client.ts';
 import { dialablePhone as slDialable } from '../lib/map-marker.ts';
 import { showIncident, closeIncidentInField } from '../lib/field-delivery.ts';
-import { sendAssignmentMessage, sendUpdateMessage } from '../lib/contacts-client.ts';
+import { sendUpdateMessage } from '../lib/contacts-client.ts';
 import type { TakContact } from '../lib/contacts-client.ts';
 import { formatTime } from '../lib/takcad-types.ts';
-import { patchIncident, addCaller, updateCaller, removeCaller, assignUnits, setUnitStatus, removeUnit } from '../lib/events-client.ts';
+import { patchIncident, addCaller, updateCaller, removeCaller } from '../lib/events-client.ts';
 import type { DispatcherEvent, DispatcherIncident, AssignedContact, IncidentCaller } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
 import { refreshSharedSettings, fetchContactsShared, loadIncidents } from '../lib/incident-poll.ts';
@@ -744,8 +747,14 @@ import { stashDraft, takeDraft } from '../lib/undock-panes.ts';
 import { ASSIGN_REFUSAL_MS, isBusyRefusal, makeFlash } from '../lib/assign-refusal.ts';
 import type { Draft } from '../lib/undock.ts';
 import { revealInScrollBox } from '../lib/reveal.ts';
+import {
+    markerFor, applyIncident, assignAction, unitStatusAction, removeUnitAction, addNoteAction, reportNumberAction,
+    callerAction, closeAction, reopenAction, flyToIncident as flyToMap,
+} from '../lib/incident-actions.ts';
+import type { ActionContext } from '../lib/incident-actions.ts';
+import { registerIncidentView, touchIncidentView } from '../lib/command-state.ts';
 import IncidentForm from './IncidentForm.vue';
-import { BOARD_LABEL, boardState, boardBadgeClass, busyUnits, respondingLine, unitStatus, unitTimesLine, workingUids } from '../lib/unit-status.ts';
+import { BOARD_LABEL, boardState, boardBadgeClass, busyUnits, unitStatus, unitTimesLine, workingUids } from '../lib/unit-status.ts';
 import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, REOPEN_REASON_MAX, dispositionLabel } from '../lib/dispositions.ts';
 
 const props = defineProps<{
@@ -871,25 +880,7 @@ async function slAssignSelected(inc: DispatcherIncident) {
 
     slDetailError.value = '';
     try {
-        // The server stamps the time and writes the "assigned" notes.
-        const updated = await assignUnits(inc.id, toAdd.map(c => ({ uid: c.uid, callsign: c.callsign })));
-        slApplyIncident(updated);
-
-        // One GeoChat per newly-assigned responder
-        for (const c of toAdd) {
-            try { await sendAssignmentMessage(mapStore, c, { name: `${updated.number} ${updated.type ?? ''}`, address: updated.address ?? '' }); }
-            catch (e) { console.warn('[dispatcher] assignment message failed', e); }
-        }
-        // Update the marker remarks once with the full responder list
-        try { await showIncident(mapStore, slMarkerFor(updated)); }
-        catch { /* best-effort */ }
-        const feed = slEventFor(updated);
-        if (feed) {
-            for (const c of toAdd) {
-                try { await postMissionLog(feed.feed_name, `ASSIGNED: ${updated.number} → ${c.callsign}`); }
-                catch { /* best-effort */ }
-            }
-        }
+        await assignAction(slActions, inc, toAdd);
     } catch (e) {
         // Nothing was assigned (e.g. another dispatcher just put one of them on another incident).
         // Re-read the board so that unit greys out, and give the picks back to press Assign again.
@@ -900,45 +891,9 @@ async function slAssignSelected(inc: DispatcherIncident) {
     }
 }
 
-// Build the marker payload for an incident, folding responders + notes into the remarks
-// details (same presentation as before, now sourced from server fields).
-function slMarkerFor(inc: DispatcherIncident, extraDetail = '') {
-    const ev = slEventFor(inc);
-    const details = [
-        inc.details ?? '',
-        respondingLine(inc.assigned),
-        ...(inc.notes ?? []).map(n => n.text),
-        extraDetail,
-    ].filter(Boolean).join('\n');
-    return {
-        uid:        inc.id,
-        number:     inc.number,
-        name:       inc.type ?? '',
-        type:       inc.type ?? '',
-        address:    inc.address ?? '',
-        lat:        inc.lat ?? 0,
-        lon:        inc.lon ?? 0,
-        time:       inc.created_at,
-        dispatcher: inc.dispatcher ?? '',
-        details,
-        // Callers reach the marker only through this list. Off means nothing about callers goes out.
-        callers:    dispatcherStore.callerOnMarkers ? (inc.callers ?? []) : [],
-        feedGuid:   ev?.feed_guid,
-        delivery:    ev?.delivery,
-        channel:     ev?.channel,
-        coreEventId: inc.core_event_id,
-        closedAt:    inc.closed_at,
-    };
-}
-
-// Merge a server-returned incident back into the shared store (every open copy follows). A reply that lands
-// after the dispatcher switched to another Event is not put on that Event's board; the rest of the save (unit
-// messages, this incident's marker and feed log, which go to its own Event) still happens.
-function slApplyIncident(updated: DispatcherIncident) {
-    if (updated.event_id !== dispatcherStore.activeEvent?.id) return;
-    const idx = dispatcherStore.incidents.findIndex(i => i.id === updated.id);
-    if (idx !== -1) dispatcherStore.incidents[idx] = updated;
-    else dispatcherStore.incidents.push(updated);
+// The marker payload for an incident, with its own Event (lib/incident-actions.ts builds it).
+function slMarkerFor(inc: DispatcherIncident) {
+    return markerFor(inc, slEventFor(inc));
 }
 
 // The Event this incident belongs to, for its marker and its feed log. Remembered while it is open, so a save
@@ -953,6 +908,10 @@ function slEventFor(i: DispatcherIncident): DispatcherEvent | null {
     return slOwnEvent?.id === i.event_id ? slOwnEvent : null;
 }
 
+// What every button below runs (lib/incident-actions.ts): the save, then the marker, the feed log and the
+// messages to the units. The command line runs the same ones.
+const slActions: ActionContext = { mapStore, eventFor: slEventFor };
+
 async function slAssignContact(inc: DispatcherIncident, contact: TakContact) {
     if (workingUids(inc.assigned).has(contact.uid) || slBusy.value.has(contact.uid)) return;
     // Cleared at once (a second click can't send it twice), put back if the assignment fails.
@@ -961,24 +920,7 @@ async function slAssignContact(inc: DispatcherIncident, contact: TakContact) {
     slDetailError.value = '';
 
     try {
-        const updated = await assignUnits(inc.id, [{ uid: contact.uid, callsign: contact.callsign }]);
-        slApplyIncident(updated);
-
-        // GeoChat assignment message
-        try {
-            await sendAssignmentMessage(mapStore, contact, { name: `${updated.number} ${updated.type ?? ''}`, address: updated.address ?? '' });
-        } catch (e) { console.warn('[dispatcher] assignment message failed', e); }
-
-        // Update CoT marker remarks with responders
-        try { await showIncident(mapStore, slMarkerFor(updated)); }
-        catch { /* best-effort */ }
-
-        // DataSync log
-        const feed = slEventFor(updated);
-        if (feed) {
-            try { await postMissionLog(feed.feed_name, `ASSIGNED: ${updated.number} → ${contact.callsign}`); }
-            catch { /* best-effort */ }
-        }
+        await assignAction(slActions, inc, [contact]);
     } catch (e) {
         slAssignFailed(e);
         slContactSearch.value = typed;  // the list again, with the unit greyed where it is busy
@@ -1010,8 +952,7 @@ async function slSaveReportNumber(inc: DispatcherIncident) {
     if (value === (inc.report_number ?? '')) { slReportEditing.value = false; return; }
     slSaving.value = true; slDetailError.value = '';
     try {
-        const updated = await patchIncident(inc.id, { report_number: value });
-        slApplyIncident(updated);
+        await reportNumberAction(inc, value);
         slReportEditing.value = false;
     } catch (e) {
         slDetailError.value = e instanceof Error ? e.message : String(e);
@@ -1037,7 +978,7 @@ async function slSaveLocation(inc: DispatcherIncident, to: { address: string; la
             // A place chosen as the new location puts its name on the first line of the details.
             ...(to.details !== (inc.details ?? '') ? { details: to.details } : {}),
         });
-        slApplyIncident(updated);
+        applyIncident(updated);
         slRelocating.value = false;
 
         // An open incident's marker moves. A closed one has none in a DataSync Event; in a broadcast
@@ -1098,12 +1039,7 @@ async function slCallerChange(op: () => Promise<DispatcherIncident>): Promise<bo
     if (slSaving.value) return false;  // Enter can fire again while a save is in flight
     slSaving.value = true; slDetailError.value = '';
     try {
-        const updated = await op();
-        slApplyIncident(updated);
-        if (updated.status === 'active') {
-            try { await showIncident(mapStore, slMarkerFor(updated)); }
-            catch { /* best-effort */ }
-        }
+        await callerAction(slActions, op);
         return true;
     } catch (e) {
         slDetailError.value = e instanceof Error ? e.message : String(e);
@@ -1152,17 +1088,7 @@ async function slUnassignContact(inc: DispatcherIncident, contact: AssignedConta
     slDetailError.value = '';
 
     try {
-        const updated = await removeUnit(inc.id, contact.uid, contact.assigned_at);
-        slApplyIncident(updated);
-
-        const feed = slEventFor(updated);
-        if (feed) {
-            try { await postMissionLog(feed.feed_name, `UNASSIGNED: ${updated.number} → ${contact.callsign}`); }
-            catch { /* best-effort */ }
-        }
-
-        try { await showIncident(mapStore, slMarkerFor(updated)); }
-        catch { /* best-effort */ }
+        await removeUnitAction(slActions, inc, contact);
     } catch (e) {
         slDetailError.value = e instanceof Error ? e.message : String(e);
     }
@@ -1173,17 +1099,7 @@ async function slSetUnitStatus(inc: DispatcherIncident, unit: AssignedContact, t
     if (slSaving.value) return;
     slSaving.value = true; slDetailError.value = '';
     try {
-        const updated = await setUnitStatus(inc.id, unit.uid, to);
-        slApplyIncident(updated);
-
-        try { await showIncident(mapStore, slMarkerFor(updated)); }
-        catch { /* best-effort */ }
-
-        const feed = slEventFor(updated);
-        if (feed) {
-            try { await postMissionLog(feed.feed_name, `${to === 'on_scene' ? 'ON SCENE' : 'CLEARED'}: ${updated.number} → ${unit.callsign}`); }
-            catch { /* best-effort */ }
-        }
+        await unitStatusAction(slActions, inc, unit, to);
     } catch (e) {
         slDetailError.value = e instanceof Error ? e.message : String(e);
     } finally {
@@ -1204,30 +1120,11 @@ function slUnitBadge(u: AssignedContact): string {
 async function slAddNote(inc: DispatcherIncident) {
     const text = slNoteInput.value.trim();
     if (!text) return;
-    const notes = [...(inc.notes ?? []), { text, time: new Date().toISOString() }];
     slNoteInput.value = '';
     slDetailError.value = '';
 
     try {
-        const updated = await patchIncident(inc.id, { notes });
-        slApplyIncident(updated);
-
-        // Update CoT marker with latest notes appended to details
-        try { await showIncident(mapStore, slMarkerFor(updated)); }
-        catch { /* best-effort */ }
-
-        // DataSync log entry
-        const feed = slEventFor(updated);
-        if (feed) {
-            try { await postMissionLog(feed.feed_name, `UPDATE ${updated.number}: ${text}`); }
-            catch { /* best-effort */ }
-        }
-
-        // Push the update to every assigned responder as a direct GeoChat
-        for (const c of (updated.assigned ?? []).filter(u => unitStatus(u) !== 'cleared')) {
-            try { await sendUpdateMessage(mapStore, c, { name: `${updated.number} ${updated.type ?? ''}` }, text); }
-            catch (e) { console.warn('[dispatcher] update message failed', e); }
-        }
+        await addNoteAction(slActions, inc, text);
     } catch (e) {
         slDetailError.value = e instanceof Error ? e.message : String(e);
     }
@@ -1276,39 +1173,7 @@ async function slCloseIncident(inc: DispatcherIncident, disposition: string | nu
     if (!disposition) return;
     slSaving.value = true; slDetailError.value = '';
     try {
-        const stillOn = (inc.assigned ?? []).filter(u => unitStatus(u) !== 'cleared');
-        // The server stores the disposition, writes the "Closed: …" note and clears every unit
-        // still on the incident (stamped with the close time).
-        const trimmed = (note ?? '').trim();
-        const updated = await patchIncident(inc.id, {
-            status: 'closed',
-            disposition,
-            ...(trimmed ? { disposition_note: trimmed } : {}),
-        });
-        slApplyIncident(updated);
-        slCancelClose();
-
-        // DataSync: remove the marker (record stays server-side). Broadcast: mark it CLOSED;
-        // it drops off field devices after the admin-set window (Dispatcher Settings, default 60 min).
-        try { await closeIncidentInField(mapStore, slMarkerFor(updated)); }
-        catch { /* best-effort */ }
-
-        // DataSync log entry
-        const feed = slEventFor(updated);
-        if (feed) {
-            try {
-                const closedAt = new Date();
-                const startMs = new Date(updated.created_at).getTime();
-                const durMin = Math.round((closedAt.getTime() - startMs) / 60000);
-                const hhmm = `${String(closedAt.getHours()).padStart(2, '0')}:${String(closedAt.getMinutes()).padStart(2, '0')}`;
-                // Closing cleared every unit still on the incident (the server stamps the close time).
-                for (const u of stillOn) {
-                    try { await postMissionLog(feed.feed_name, `CLEARED: ${updated.number} → ${u.callsign}`); }
-                    catch { /* best-effort */ }
-                }
-                await postMissionLog(feed.feed_name, `INCIDENT CLOSED: ${updated.number} | ${updated.type ?? ''} | Closed ${hhmm} | ${durMin} min | ${dispositionLabel(updated)}`);
-            } catch { /* best-effort */ }
-        }
+        await closeAction(slActions, inc, disposition, note, slCancelClose);
         emit('closed');
     } catch (e) {
         slDetailError.value = e instanceof Error ? e.message : String(e);
@@ -1323,20 +1188,7 @@ async function slReopenIncident(inc: DispatcherIncident, reason: string) {
     if (withReason && !why) return;
     slSaving.value = true; slDetailError.value = '';
     try {
-        // Employee Numbers on: the server requires the reason and writes the "Reopened: …" note.
-        const updated = await patchIncident(inc.id, withReason ? { status: 'active', reopen_reason: why } : { status: 'active' });
-        slApplyIncident(updated);
-        slCancelReopen();
-
-        // Re-drop the CoT marker to the feed (broadcast: reopen the Core Event)
-        try { await showIncident(mapStore, slMarkerFor(updated)); }
-        catch { /* best-effort */ }
-
-        const feed = slEventFor(updated);
-        if (feed) {
-            try { await postMissionLog(feed.feed_name, `INCIDENT REOPENED: ${updated.number} | ${updated.type ?? ''}${why ? ` | ${why}` : ''}`); }
-            catch { /* best-effort */ }
-        }
+        await reopenAction(slActions, inc, why, slCancelReopen);
         emit('reopened');
     } catch (e) {
         slDetailError.value = e instanceof Error ? e.message : String(e);
@@ -1346,7 +1198,7 @@ async function slReopenIncident(inc: DispatcherIncident, reason: string) {
 }
 
 function flyToIncident(inc: DispatcherIncident) {
-    mapStore.map?.flyTo({ center: [inc.lon ?? 0, inc.lat ?? 0], zoom: 15 });
+    flyToMap(mapStore, inc);
 }
 
 // What the dispatcher is in the middle of, to carry into another window.
@@ -1396,7 +1248,14 @@ function applyDraft(d: Draft) {
     slContactSearch.value = str(d.contactSearch);
 }
 
+// The command line works on the incident last opened or touched. The panel only shows an incident the
+// dispatcher just opened; a window may have come back by itself after a reload, so it waits to be touched.
+// The panel's copy also lends the command line its Undock.
+let leaveCommandLine: (() => void) | undefined;
+onBeforeUnmount(() => leaveCommandLine?.());
+
 onMounted(async () => {
+    leaveCommandLine = registerIncidentView(props.incidentId, props.floating ? {} : { undock }, !props.floating);
     if (props.floating) {
         const d = takeDraft(props.incidentId);
         if (d) applyDraft(d);

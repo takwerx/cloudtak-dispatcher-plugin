@@ -517,7 +517,7 @@
                     <button
                         class='btn btn-sm btn-success d-inline-flex align-items-center gap-1 text-nowrap'
                         data-test='new-incident'
-                        @click='slView = "form"'
+                        @click='slNewIncident()'
                     >
                         <IconPlus
                             :size='16'
@@ -648,6 +648,7 @@
                     <IncidentForm
                         :server-mode='serverMode'
                         :incident-types='incidentTypes'
+                        :prefill='slPrefill'
                         @saved-standalone='onStandaloneSaved'
                         @cancel='slView = "list"'
                     />
@@ -685,6 +686,8 @@ import { acquireIncidentPoll, restartIncidentPoll } from '../lib/incident-poll.t
 import { undockIncident, closeAllUndocked, restoreUndocked } from '../lib/undock-panes.ts';
 import { incidentQueue } from '../lib/unit-status.ts';
 import type { IncidentQueue } from '../lib/unit-status.ts';
+import { registerList, workOn } from '../lib/command-state.ts';
+import type { NewIncidentPrefill } from '../lib/command-state.ts';
 
 const props = defineProps<{
     serverMode:    'detecting' | 'takcad' | 'standalone';
@@ -977,6 +980,26 @@ watch(splitUnassigned, (split) => {
     if (!split && slTab.value === 'unassigned') slTab.value = 'active';
 });
 
+// New: the empty form, or (from the command line's N) one with the type set and the address searched.
+const slPrefill = ref<NewIncidentPrefill | null>(null);
+function slNewIncident(prefill: NewIncidentPrefill | null = null) {
+    slPrefill.value = prefill;
+    slView.value = 'form';
+}
+
+// The command line (CommandLine.vue) opens incidents, tabs and the New form through these.
+let leaveCommandLine: (() => void) | undefined;
+onMounted(() => {
+    leaveCommandLine = registerList({
+        view:        () => slView.value,
+        detailId:    () => (slView.value === 'detail' ? slDetailId.value : null),
+        open:        slOpenDetail,
+        list:        (tab) => { if (tab) slTab.value = tab; slView.value = 'list'; },
+        newIncident: slNewIncident,
+    });
+});
+onUnmounted(() => leaveCommandLine?.());
+
 function slOpenDetail(id: string) {
     slDetailId.value = id;
     slView.value = 'detail';
@@ -984,6 +1007,7 @@ function slOpenDetail(id: string) {
 
 // Undock: the incident moves into its own floating card over the map; the panel shows the list.
 function slUndock(id: string) {
+    workOn(id);   // the dispatcher is working this incident: its window stays the command line's incident
     undockIncident(id);
     slDetailId.value = null;
     slView.value = 'list';
