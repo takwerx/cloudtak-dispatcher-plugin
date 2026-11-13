@@ -36,6 +36,10 @@ test('Change location: the detail opens the form\'s Location block, and saving s
     const save = detail.slice(detail.indexOf('async function slSaveLocation'), detail.indexOf('// Callers: each add'));
     assert.ok(save.includes('address: to.address, lat: to.lat, lon: to.lon,'));
     assert.ok(save.includes('{ details: to.details }'), 'a chosen place puts its name on the details');
+    assert.ok(save.includes('to: { address: string; lat: number; lon: number; details: string }'), 'the form hands the details over too');
+    assert.match(save, /if \(!moved && !named\) \{\s+slRelocating\.value = false;\s+return;/, 'a place chosen at the incident\'s own address is still saved');
+    assert.ok(save.indexOf('if (!moved) return;') > save.indexOf('closeIncidentInField(mapStore, marker)'), 'the marker is resent, nothing is announced as moved');
+    assert.ok(save.indexOf('if (!moved) return;') < save.indexOf('LOCATION CHANGED'));
     assert.doesNotMatch(save, /notes/, 'the server writes the note; the browser does not send the notes list');
     // The marker moves (a closed one only where it still exists), the feed log and the units hear of it.
     assert.ok(save.includes(`updated.status === 'active' ? showIncident(mapStore, marker) : closeIncidentInField(mapStore, marker)`));

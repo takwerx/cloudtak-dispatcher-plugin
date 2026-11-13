@@ -228,6 +228,8 @@ incident is now: search, click the map, or correct the boxes, then **Save Locati
 log gets a `LOCATION CHANGED:` line, the units on the incident are messaged the new address, and the server writes
 one note with both places, `Location changed: <old address> (<lat>, <lon>) → <new address> (<lat>, <lon>)`, so the
 incident's log, the report and the CSV show where it started and where it moved to.
+A place chosen at the address the incident is already at only adds its name (details and marker): nothing moved, so no
+line, message or note is written.
 
 ### Command line (standalone)
 
