@@ -361,6 +361,19 @@ function normCjisSetting(key: string, value: unknown): unknown {
 }
 // </cjis-pure>
 
+// ── Notes ───────────────────────────────────────────────────────────────────────
+// A dispatcher's note is sent as its text alone (`note_add`) and added here to the notes the incident
+// has NOW, under the row lock. A browser's copy of the list can be up to a poll old, so sending the
+// whole list back (`notes`, still accepted from older plugin builds) could drop a note another
+// dispatcher or a unit button wrote in between. Pure (no database) so plugin/test/notes-server.test.ts
+// can run it.
+// <notes-pure>
+function withAddedNote(notes: unknown[], text: unknown, now: string): unknown[] {
+    const t = typeof text === 'string' ? text.trim() : '';
+    return t ? [...notes, { text: t, time: now }] : notes;
+}
+// </notes-pure>
+
 // ── Callers ─────────────────────────────────────────────────────────────────────
 // An incident keeps a list of callers (several calls about one crash, each with the time of the
 // call). Exactly one is the PRIMARY caller: the first one added unless a dispatcher picks another.
@@ -1342,6 +1355,8 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             reopen_reason: Type.Optional(Type.String()),
             assigned: Type.Optional(Type.Array(Type.Any())),
             notes: Type.Optional(Type.Array(Type.Any())),
+            // One note to add to the incident's current notes (see <notes-pure>).
+            note_add: Type.Optional(Type.String()),
         }),
         res: Type.Any(),
     }, async (req, res) => {
@@ -1379,7 +1394,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                     assigned: b.assigned !== undefined
                         ? mergeAssignedFrom(normalizeUnits(cur.assigned), b.assigned, now)
                         : normalizeUnits(cur.assigned),
-                    notes: b.notes ?? asArray(cur.notes),
+                    notes: withAddedNote(b.notes ?? asArray(cur.notes), b.note_add, now),
                 };
                 // Report number: undefined = leave as is; '' = clear. A change is logged as a
                 // timestamped note here on the server, so the history survives even though the
