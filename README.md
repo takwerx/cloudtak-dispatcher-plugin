@@ -66,8 +66,33 @@ it in place.
 Every standalone incident opens with a one-line **CJIS reminder** ("Information derived from CJIS sources
 must not be entered into incident records.", default on). **Dispatcher Settings → CJIS Reminder** turns it off or changes
 the wording for the whole CloudTAK; only the CloudTAK system admin account (the one CloudTAK creates on
-first launch) can change it, and the server refuses the change for anyone else. **Dispatcher Settings → Custom Call
+first launch) can change it, and the server refuses the change for anyone else. **Dispatcher Settings → Incident
 Types** is locked to the same admin account.
+
+### Incident types (standalone)
+
+The **Incident Type** list on a new incident starts as the plugin's built-in types. **Dispatcher Settings →
+Incident Types** (CloudTAK system admin only) holds the agency's own types, each a **name** with an optional
+short **code** (`MVA` for `Traffic Accident`):
+
+- **Load from a CSV file**: two columns, code then name, one type per row (`MVA,Traffic Accident`). The code can
+  be left empty (`,Welfare Check`), a header row (`code,name`, or `name` over a list of names) is skipped, and a
+  name with a comma in it goes in quotes. A file with semicolons or tabs between the two columns is read the
+  same way. **Download example CSV** gives a file to start from. Loading a file replaces the list. If a code or
+  a name is in the file twice (upper and lower case count as the same), or a code is malformed, nothing is
+  loaded and the rows at fault are named, numbered as a spreadsheet numbers them.
+- **Add** one type by hand with the Code and name boxes, or remove one with its trash can.
+- A code is letters and digits only, no spaces, 8 at most, and is stored in upper case.
+- **Use only these incident types**: on, the built-in types are removed and dispatchers pick from the agency's
+  list only, in the order of the list (the first one is preselected). Off (the default), the agency's types are
+  added to the built-in ones, as before; a type named like a built-in one gives that one its code. With the
+  switch on and an empty list, the built-in types stay, so the list is never empty.
+
+The list shows the code beside the name (`MVA - Traffic Accident`). An incident stores the **name**, as before,
+so markers, the feed log and reports show the name and never the code, and incidents created earlier keep the
+type they have. A change reaches each dispatcher the next time they start a new incident: the list is read
+again when the board starts, when an incident is opened and when the New Incident form opens. A list saved by
+an older version (names only) keeps working, as names with no code. TAK-CAD mode keeps the types from its server.
 
 ### The Dispatcher header and Dispatcher Settings (standalone)
 
@@ -76,7 +101,7 @@ From the top, the Dispatcher shows:
 - **Dispatcher**, the TAK-CAD switch, **Settings** and **Pop out** (**Workspace** in Multi-Monitor Mode, below).
   **Settings** opens Dispatcher Settings, shared by every event and every dispatcher on the CloudTAK, with or
   without an event open: the report header, caller details on markers, the CJIS reminder, employee numbers and
-  custom call types. One setting there is per computer instead: the display mode (below).
+  incident types. One setting there is per computer instead: the display mode (below).
 - **Callsign** (the CloudTAK callsign), and with Employee Numbers on and someone signed in, **Employee #** beside
   **Sign out**.
 - **Event:** the open event's name, with **Switch event** to go to the list of events and open another (the

@@ -299,7 +299,8 @@ async function operatorNumbersEnabled(config: ConfigStateless): Promise<boolean>
 // dispatcher not to paste CJIS data into the Dispatcher. Both settings are shared per CloudTAK and
 // may only be changed by a CloudTAK system admin (the account CloudTAK creates on first launch);
 // every signed-in user still reads them, so the line shows for everyone. The custom call type list
-// (incident_types) and the broadcast closed-marker window (closed_marker_minutes, whole minutes
+// (incident_types), its "only these" switch (incident_types_only; both are checked in the incident
+// types block below) and the broadcast closed-marker window (closed_marker_minutes, whole minutes
 // 0..1440, default 60; see plugin/lib/closed-window.ts) are admin-only the same way. Pure (no
 // database) so plugin/test/cjis-server.test.ts and closed-window.test.ts can run it.
 // <cjis-pure>
@@ -307,7 +308,7 @@ const CJIS_REMINDER_DEFAULT_TEXT = 'Information derived from CJIS sources must n
 const CJIS_REMINDER_TEXT_MAX = 300;
 const CLOSED_MARKER_MINUTES_MIN = 0;
 const CLOSED_MARKER_MINUTES_MAX = 1440;
-const ADMIN_ONLY_KEYS = new Set(['cjis_reminder_enabled', 'cjis_reminder_text', 'incident_types', 'closed_marker_minutes']);
+const ADMIN_ONLY_KEYS = new Set(['cjis_reminder_enabled', 'cjis_reminder_text', 'incident_types', 'incident_types_only', 'closed_marker_minutes']);
 
 // True for the settings keys only a system admin may write.
 function isAdminOnlySetting(key: string): boolean {
@@ -336,6 +337,61 @@ function normCjisSetting(key: string, value: unknown): unknown {
     return value;
 }
 // </cjis-pure>
+
+// ── Incident types ──────────────────────────────────────────────────────────────
+// The admin's own incident types (setting incident_types) and the switch that hides the built-in
+// ones (incident_types_only), set in Dispatcher Settings → Incident Types. A type is a name with an
+// optional short code; the list is stored as [{ code, name }] with '' for no code. A list of plain
+// names, which is what older plugins sent and what an older database holds, is accepted and read as
+// names with no code. An incident stores its type's name as text, as before: the code never leaves
+// this list. Same rules as plugin/lib/incident-types.ts, which names the rows of a bad file before
+// anything is sent; this is the check nobody can skip. Pure (no database) so
+// plugin/test/incident-types-server.test.ts can run it.
+// <incident-types-pure>
+const INCIDENT_TYPE_CODE_MAX = 8;
+const INCIDENT_TYPE_NAME_MAX = 60;
+const INCIDENT_TYPES_MAX = 300;
+const INCIDENT_TYPE_KEYS = new Set(['incident_types', 'incident_types_only']);
+
+interface IncidentTypeEntry {
+    code: string;   // upper case letters and digits, or '' for none
+    name: string;
+}
+
+// Value a client may store under one of the incident type keys. The switch must be a boolean. The
+// list: every type needs a name, a code is letters and digits only, and no code or name may be in
+// the list twice (ignoring case). One bad type refuses the whole list.
+function normIncidentTypeSetting(key: string, value: unknown): unknown {
+    if (key === 'incident_types_only') {
+        if (typeof value !== 'boolean') throw new Err(400, null, 'incident_types_only must be true or false');
+        return value;
+    }
+    if (!Array.isArray(value)) throw new Err(400, null, 'incident_types must be a list');
+    if (value.length > INCIDENT_TYPES_MAX) throw new Err(400, null, `Too many incident types (${INCIDENT_TYPES_MAX} max)`);
+    const list: IncidentTypeEntry[] = [];
+    const codes = new Set<string>();
+    const names = new Set<string>();
+    for (const t of value) {
+        const o = (t && typeof t === 'object' ? t : { name: t }) as { code?: unknown; name?: unknown };
+        if (typeof o.name !== 'string' || (o.code !== undefined && o.code !== null && typeof o.code !== 'string')) {
+            throw new Err(400, null, 'Each incident type needs a name, and its code must be text');
+        }
+        const name = o.name.replace(/\s+/g, ' ').trim();
+        const code = String(o.code ?? '').trim().toUpperCase();
+        if (!name) throw new Err(400, null, 'An incident type has no name');
+        if (name.length > INCIDENT_TYPE_NAME_MAX) throw new Err(400, null, `Incident type "${name.slice(0, 30)}…" is too long (${INCIDENT_TYPE_NAME_MAX} characters max)`);
+        if (code && (code.length > INCIDENT_TYPE_CODE_MAX || !/^[A-Z0-9]+$/.test(code))) {
+            throw new Err(400, null, `Code "${code.slice(0, 30)}" must be letters and digits only, no spaces, ${INCIDENT_TYPE_CODE_MAX} at most`);
+        }
+        if (names.has(name.toLowerCase())) throw new Err(400, null, `Incident type "${name}" is in the list twice`);
+        if (code && codes.has(code)) throw new Err(400, null, `Code ${code} is used twice`);
+        names.add(name.toLowerCase());
+        if (code) codes.add(code);
+        list.push({ code, name });
+    }
+    return list;
+}
+// </incident-types-pure>
 
 // ── Callers ─────────────────────────────────────────────────────────────────────
 // An incident keeps a list of callers (several calls about one crash, each with the time of the
@@ -1050,9 +1106,9 @@ export default async function router(schema: Schema, config: ConfigStateless) {
                 // Auth.as_user re-reads the profile for session tokens, so this is the live flag.
                 const user = await Auth.as_user(config, req);
                 if (!user.is_admin()) throw new Err(403, null, 'Only a CloudTAK system admin can change this setting');
-                value = req.params.key === OPERATOR_SETTING
-                    ? normOperatorSetting(value)
-                    : normCjisSetting(req.params.key, value);
+                if (req.params.key === OPERATOR_SETTING) value = normOperatorSetting(value);
+                else if (INCIDENT_TYPE_KEYS.has(req.params.key)) value = normIncidentTypeSetting(req.params.key, value);
+                else value = normCjisSetting(req.params.key, value);
             } else {
                 await Auth.is_auth(config, req);
             }
