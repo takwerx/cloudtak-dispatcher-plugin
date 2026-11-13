@@ -306,10 +306,24 @@ Each Event chooses how its incidents reach field devices when it is created:
   1 Hour or Never). Needs a CloudTAK with Core Events and
   its Admin Connection connected. The incidents also appear in CloudTAK's own Core Events list.
 
+### User Guide (standalone)
+
+**User Guide**, at the bottom of the Events list, opens a plain-language, text-only guide for dispatchers and
+call takers in its own pane over the map (full screen on a phone; in Multi-Monitor Mode, on the monitor with the
+map), in the order a dispatcher meets things: opening the Dispatcher and your own settings; opening or creating
+an event; creating, working, closing and reopening an incident; the command line; working several calls at once,
+on one monitor or several; and exporting the data and closing the event. Its contents list names every task, and its
+**Contents** button stays in view. It is part of the plugin, so it works without internet and matches the
+installed version. The text is one Markdown file per section in `plugin/guide/`, which reads the same on
+GitHub. A change that adds something dispatchers see adds or updates its section there;
+[plugin/guide/README.md](plugin/guide/README.md) says how, and `plugin/test/guide.test.ts` checks every link
+and heading.
+
 ## Layout
 
 - `plugin/` — the CloudTAK web plugin (Vue 3 / TypeScript), discovered and bundled by CloudTAK's
   Vite build from the web app's `plugins/` dir (`app/plugins/` on CloudTAK >= 13.102.0, `api/web/plugins/` before).
+  - `plugin/guide/` — the User Guide, one Markdown file per section (see its README).
 - `server/` — CloudTAK API route files copied into CloudTAK's `api/stateless/routes/`
   (CloudTAK >= 13.45 — the hub/api split moved route loading there; pre-split trees are not supported):
   - `plugin-dispatcher.ts` — the standalone Events/Incidents store (CloudTAK Postgres) + CRUD

@@ -7,6 +7,7 @@ import CadMain from './components/CadMain.vue';
 import { dockDispatcher } from './lib/float-pane.ts';
 import { closeAllUndocked } from './lib/undock-panes.ts';
 import { loadPanelOpen, shouldReopenPanel } from './lib/panel-state.ts';
+import { closeGuide } from './lib/guide-pane.ts';
 
 const MENU_KEY   = 'plugin-tak-dispatcher';
 const ROUTE_NAME = 'home-menu-tak-dispatcher';
@@ -59,6 +60,7 @@ export default class DispatcherPlugin implements PluginInstance {
         try { dockDispatcher(); } catch { /* ignore */ }
         // Same for undocked incident cards; the saved list is kept so they come back on re-enable.
         try { closeAllUndocked(false); } catch { /* ignore */ }
+        try { closeGuide(); } catch { /* ignore */ }
     }
 }
 
