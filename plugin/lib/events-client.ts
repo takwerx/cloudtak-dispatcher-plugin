@@ -230,9 +230,11 @@ export async function setUnitStatus(incidentId: string, uid: string, status: 'on
     return r.incident;
 }
 
-// The ✕: a unit assigned by mistake leaves the record.
-export async function removeUnit(incidentId: string, uid: string): Promise<DispatcherIncident> {
-    const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/units/${encodeURIComponent(uid)}`, {
+// The ✕: a unit assigned by mistake leaves the record. `assignedAt` picks the trip (a unit sent back
+// to an incident it cleared from has a row per trip).
+export async function removeUnit(incidentId: string, uid: string, assignedAt: string | null | undefined): Promise<DispatcherIncident> {
+    const at = encodeURIComponent(assignedAt ?? '');
+    const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/units/${encodeURIComponent(uid)}?at=${at}`, {
         method: 'DELETE',
     }) as { incident: DispatcherIncident };
     return r.incident;

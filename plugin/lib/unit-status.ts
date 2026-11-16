@@ -72,3 +72,29 @@ export function unitTimesLine(u: AssignedContact, fmt: (iso: string) => string):
 export function boardStateOf(inc: Pick<DispatcherIncident, 'assigned'>): BoardState {
     return boardState(inc.assigned);
 }
+
+// The units still working this incident (a row not Cleared). A unit that cleared from it is free
+// again, here too: assigning it starts a second trip, a new row; the first keeps its times.
+export function workingUids(units: AssignedContact[] | undefined): Set<string> {
+    return new Set((units ?? []).filter(u => unitStatus(u) !== 'cleared').map(u => u.uid));
+}
+
+// The incident number without the Event prefix: `26-014` -> `014` (same rule as the server's refusal).
+export function shortNumber(number: string): string {
+    const i = number.lastIndexOf('-');
+    return i === -1 ? number : number.slice(i + 1);
+}
+
+// One incident per unit: the units still working (Assigned or On Scene) another active incident of
+// this Event, uid -> that incident's short number. The assign search and picker grey these out;
+// the server refuses them too, so this only spares the dispatcher a refusal.
+export function busyUnits(incidents: Pick<DispatcherIncident, 'id' | 'number' | 'status' | 'assigned'>[], currentId: string | undefined): Map<string, string> {
+    const busy = new Map<string, string>();
+    for (const inc of incidents) {
+        if (inc.id === currentId || inc.status !== 'active') continue;
+        for (const u of inc.assigned ?? []) {
+            if (unitStatus(u) !== 'cleared' && !busy.has(u.uid)) busy.set(u.uid, shortNumber(inc.number));
+        }
+    }
+    return busy;
+}

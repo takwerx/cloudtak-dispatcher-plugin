@@ -1,6 +1,5 @@
 <template>
     <div class='d-flex flex-column h-100 overflow-hidden'>
-
         <!-- Detached: this (anchored) instance collapses so the board isn't mounted twice -->
         <div
             v-if='floatedElsewhere'
@@ -27,13 +26,18 @@
             class='alert alert-danger m-2 small'
             style='white-space:pre-wrap;font-family:monospace;font-size:10px;overflow:auto'
         >
-            <div class='fw-bold mb-1'>Dispatcher error:</div>{{ setupError }}
+            <div class='fw-bold mb-1'>
+                <span>Dispatcher error:</span>
+            </div>{{ setupError }}
         </div>
         <template v-else>
             <!-- Header: the title, TAK-CAD, Settings, and Pop out (Workspace in Multi-Monitor Mode). Labelled buttons,
                  so nothing is a bare icon to guess at. -->
             <div class='d-flex align-items-center px-3 py-2 border-bottom flex-shrink-0 gap-2'>
-                <IconHeadset :size='18' class='text-warning' />
+                <IconHeadset
+                    :size='18'
+                    class='text-warning'
+                />
                 <span class='fw-semibold'>Dispatcher</span>
                 <span class='ms-auto' />
                 <!-- TAK-CAD connection toggle -->
@@ -43,14 +47,18 @@
                     style='cursor:pointer'
                     title='TAK-CAD connected — click to disconnect'
                     @click='forceStandalone'
-                >TAK-CAD ●</button>
+                >
+                    TAK-CAD ●
+                </button>
                 <button
                     v-else-if='store.serverMode === "standalone"'
                     class='badge bg-secondary text-white small border-0'
                     style='cursor:pointer'
                     title='Connect to TAK-CAD'
                     @click='retryDetection'
-                >TAK-CAD</button>
+                >
+                    TAK-CAD
+                </button>
                 <span
                     v-else
                     class='badge bg-secondary text-white small opacity-50'
@@ -102,7 +110,9 @@
                         class='btn btn-link btn-sm p-0 text-decoration-none text-nowrap'
                         title='Sign out of this desk (shift change). The next person signs in with their number.'
                         @click='signOut'
-                    >Sign out</button>
+                    >
+                        Sign out
+                    </button>
                 </template>
             </div>
 
@@ -134,12 +144,16 @@
                     <button
                         type='submit'
                         class='btn btn-warning fw-semibold text-nowrap'
-                    >Sign in</button>
+                    >
+                        Sign in
+                    </button>
                 </div>
                 <div
                     v-if='signInError'
                     class='w-100 small text-warning'
-                >{{ signInError }}</div>
+                >
+                    {{ signInError }}
+                </div>
             </form>
 
             <!-- ── TAK-CAD mode: DataSync feed picker (markers/log routing) ─────── -->
@@ -153,7 +167,10 @@
                         :disabled='loadingFeeds'
                         @click='fetchFeeds'
                     >
-                        <span v-if='loadingFeeds' class='spinner-border spinner-border-sm me-1' />
+                        <span
+                            v-if='loadingFeeds'
+                            class='spinner-border spinner-border-sm me-1'
+                        />
                         {{ loadingFeeds ? 'Loading…' : '+ Select DataSync Feed' }}
                     </button>
                     <div
@@ -402,7 +419,6 @@ const visibleTabs = computed(() =>
 const setupError = ref('');
 onErrorCaptured((err) => {
     setupError.value = err instanceof Error ? (err.stack || err.message) : String(err);
-    // eslint-disable-next-line no-console
     console.error('[dispatcher] captured render error', err);
     return false;
 });

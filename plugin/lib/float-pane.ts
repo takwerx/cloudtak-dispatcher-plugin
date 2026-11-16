@@ -100,6 +100,12 @@ export function popOutDispatcher(): void {
     dispatcherStore.floatingWindow = false;
 }
 
+/** Where the popped-out Dispatcher pane is over the map, or null when it is not out as a pane. */
+export function dispatcherPaneRect(): { x: number; y: number; width: number; height: number } | null {
+    const p = useFloatStore().panes.get(PANE_UID);
+    return p ? { x: p.x, y: p.y, width: p.width, height: p.height } : null;
+}
+
 export function dockDispatcher(): void {
     closePopout(WORKSPACE_KEY);
     useFloatStore().delete(PANE_UID);

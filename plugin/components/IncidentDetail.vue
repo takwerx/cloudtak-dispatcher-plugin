@@ -400,7 +400,7 @@
                 </div>
                 <div
                     v-for='c in inc.assigned'
-                    :key='c.uid'
+                    :key='`${c.uid}:${c.assigned_at ?? ""}`'
                     class='small py-1 border-bottom'
                 >
                     <div class='d-flex align-items-center gap-2'>
@@ -434,7 +434,7 @@
                             class='btn btn-link btn-sm p-0 text-danger text-decoration-none'
                             title='Assigned by mistake: remove from the record'
                             aria-label='Remove unit'
-                            @click='slUnassignContact(inc, c.uid)'
+                            @click='slUnassignContact(inc, c)'
                         >
                             <IconTrash
                                 :size='16'
@@ -478,14 +478,23 @@
                         class='border rounded mt-1'
                         style='max-height:120px;overflow-y:auto'
                     >
+                        <!-- A unit still working another incident is greyed with that incident's number:
+                             Clear it there first. -->
                         <button
                             v-for='c in filteredContacts'
                             :key='c.uid'
                             class='btn btn-sm w-100 text-start px-2 py-1 border-0 border-bottom rounded-0'
                             style='font-size:12px'
+                            :disabled='slBusy.has(c.uid)'
+                            :title='slBusy.has(c.uid) ? `Clear it on ${slBusy.get(c.uid)} first` : undefined'
                             @click='slAssignContact(inc, c)'
                         >
-                            + {{ c.callsign }}
+                            <template v-if='slBusy.has(c.uid)'>
+                                {{ c.callsign }} · on {{ slBusy.get(c.uid) }}
+                            </template>
+                            <template v-else>
+                                + {{ c.callsign }}
+                            </template>
                         </button>
                     </div>
 
@@ -496,22 +505,26 @@
                     >
                         <div class='small text-muted px-2 py-1 border-bottom d-flex align-items-center'>
                             <span class='flex-grow-1'>Select units to assign</span>
-                            <span>{{ pickerSelected.length }} selected</span>
+                            <span>{{ pickerChosen.length }} selected</span>
                         </div>
                         <div style='max-height:160px;overflow-y:auto'>
                             <label
                                 v-for='c in assignablePickerContacts'
                                 :key='c.uid'
                                 class='d-flex align-items-center gap-2 px-2 py-1 border-bottom small mb-0'
-                                style='cursor:pointer'
+                                :class='{ "text-muted": slBusy.has(c.uid) }'
+                                :style='{ cursor: slBusy.has(c.uid) ? "default" : "pointer" }'
+                                :title='slBusy.has(c.uid) ? `Clear it on ${slBusy.get(c.uid)} first` : undefined'
                             >
                                 <input
                                     type='checkbox'
                                     class='form-check-input mt-0'
-                                    :checked='pickerSelected.includes(c.uid)'
+                                    :checked='pickerChosen.includes(c.uid)'
+                                    :disabled='slBusy.has(c.uid)'
                                     @change='togglePickerContact(c.uid)'
                                 >
                                 <span class='flex-grow-1'>{{ c.callsign }}</span>
+                                <span v-if='slBusy.has(c.uid)'>on {{ slBusy.get(c.uid) }}</span>
                             </label>
                             <div
                                 v-if='!assignablePickerContacts.length'
@@ -529,10 +542,10 @@
                             </button>
                             <button
                                 class='btn btn-sm btn-primary ms-auto'
-                                :disabled='!pickerSelected.length'
+                                :disabled='!pickerChosen.length'
                                 @click='slAssignSelected(inc)'
                             >
-                                Assign {{ pickerSelected.length || '' }} selected
+                                Assign {{ pickerChosen.length || '' }} selected
                             </button>
                         </div>
                     </div>
@@ -684,7 +697,7 @@
 // panel (IncidentListView) and by every undocked floating card (IncidentFloat). It reads the
 // incident from dispatcherStore.incidents by id, so the shared poll keeps every copy current,
 // and every edit goes through the same server calls whichever copy made it.
-import { ref, computed, watch, onMounted, nextTick } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { IconUsers, IconPictureInPictureOn, IconTrash } from '@tabler/icons-vue';
 import { useMapStore } from '../../../src/stores/map.ts';
 import { postMissionLog } from '../lib/takcad-client.ts';
@@ -696,11 +709,12 @@ import { formatTime } from '../lib/takcad-types.ts';
 import { patchIncident, addCaller, updateCaller, removeCaller, assignUnits, setUnitStatus, removeUnit } from '../lib/events-client.ts';
 import type { DispatcherEvent, DispatcherIncident, AssignedContact, IncidentCaller } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
-import { refreshSharedSettings, fetchContactsShared } from '../lib/incident-poll.ts';
+import { refreshSharedSettings, fetchContactsShared, loadIncidents } from '../lib/incident-poll.ts';
 import { stashDraft, takeDraft } from '../lib/undock-panes.ts';
+import { ASSIGN_REFUSAL_MS, isBusyRefusal, makeFlash } from '../lib/assign-refusal.ts';
 import type { Draft } from '../lib/undock.ts';
 import { revealInScrollBox } from '../lib/reveal.ts';
-import { BOARD_LABEL, boardState, boardBadgeClass, respondingLine, unitStatus, unitTimesLine } from '../lib/unit-status.ts';
+import { BOARD_LABEL, boardState, boardBadgeClass, busyUnits, respondingLine, unitStatus, unitTimesLine, workingUids } from '../lib/unit-status.ts';
 import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, REOPEN_REASON_MAX, dispositionLabel } from '../lib/dispositions.ts';
 
 const props = defineProps<{
@@ -756,21 +770,29 @@ const loadingContacts   = ref(false);
 const showContactPicker = ref(false);
 const pickerSelected    = ref<string[]>([]);
 
+// One incident per unit: units still working another active incident of this Event, uid -> its
+// short number. They stay in the lists, greyed and not selectable, below the free ones.
+const slBusy = computed(() => busyUnits(dispatcherStore.incidents, inc.value?.id));
+const freeFirst = (list: TakContact[]) =>
+    [...list].sort((a, b) => Number(slBusy.value.has(a.uid)) - Number(slBusy.value.has(b.uid)));
+
 const filteredContacts = computed(() => {
     const q = slContactSearch.value.toLowerCase();
-    const assigned = new Set((inc.value?.assigned ?? []).map(c => c.uid));
-    return allContacts.value.filter(c =>
+    const assigned = workingUids(inc.value?.assigned);
+    return freeFirst(allContacts.value.filter(c =>
         !assigned.has(c.uid) &&
         (!q || c.callsign.toLowerCase().includes(q))
-    );
+    ));
 });
 
 // Contacts not yet assigned — the multi-select picker's candidate list.
 const assignablePickerContacts = computed(() => {
-    const assigned = new Set((inc.value?.assigned ?? []).map(c => c.uid));
-    return allContacts.value.filter(c => !assigned.has(c.uid));
+    const assigned = workingUids(inc.value?.assigned);
+    return freeFirst(allContacts.value.filter(c => !assigned.has(c.uid)));
 });
 
+// The picks that will be sent: a unit that became busy after it was ticked drops out.
+const pickerChosen = computed(() => pickerSelected.value.filter(uid => !slBusy.value.has(uid)));
 
 function shortTime(iso: string): string {
     try { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
@@ -800,7 +822,7 @@ function togglePickerContact(uid: string) {
 }
 
 async function slAssignSelected(inc: DispatcherIncident) {
-    const chosen = allContacts.value.filter(c => pickerSelected.value.includes(c.uid));
+    const chosen = allContacts.value.filter(c => pickerChosen.value.includes(c.uid));
     pickerSelected.value = [];
     showContactPicker.value = false;
     if (!chosen.length) return;
@@ -809,7 +831,8 @@ async function slAssignSelected(inc: DispatcherIncident) {
     // ALL selected in ONE call.
     const cur = dispatcherStore.incidents.find(i => i.id === inc.id) ?? inc;
     const existing = cur.assigned ?? [];
-    const toAdd = chosen.filter(c => !existing.some(a => a.uid === c.uid));
+    const working = workingUids(existing);
+    const toAdd = chosen.filter(c => !working.has(c.uid));
     if (!toAdd.length) return;
 
     slDetailError.value = '';
@@ -834,7 +857,12 @@ async function slAssignSelected(inc: DispatcherIncident) {
             }
         }
     } catch (e) {
-        slDetailError.value = e instanceof Error ? e.message : String(e);
+        // Nothing was assigned (e.g. another dispatcher just put one of them on another incident).
+        // Re-read the board so that unit greys out, and give the picks back to press Assign again.
+        slAssignFailed(e);
+        await loadIncidents();
+        pickerSelected.value = toAdd.map(c => c.uid);
+        showContactPicker.value = true;
     }
 }
 
@@ -892,7 +920,9 @@ function slEventFor(i: DispatcherIncident): DispatcherEvent | null {
 }
 
 async function slAssignContact(inc: DispatcherIncident, contact: TakContact) {
-    if ((inc.assigned ?? []).some(c => c.uid === contact.uid)) return;
+    if (workingUids(inc.assigned).has(contact.uid) || slBusy.value.has(contact.uid)) return;
+    // Cleared at once (a second click can't send it twice), put back if the assignment fails.
+    const typed = slContactSearch.value;
     slContactSearch.value = '';
     slDetailError.value = '';
 
@@ -916,9 +946,22 @@ async function slAssignContact(inc: DispatcherIncident, contact: TakContact) {
             catch { /* best-effort */ }
         }
     } catch (e) {
-        slDetailError.value = e instanceof Error ? e.message : String(e);
+        slAssignFailed(e);
+        slContactSearch.value = typed;  // the list again, with the unit greyed where it is busy
+        await loadIncidents();  // a refusal: the unit greys out with the incident it is on
     }
 }
+
+// A failed assignment. The server's "unit is busy" refusal (`E12 is on 014. Clear it there first.`)
+// shows for 10 s, then goes; the greyed unit keeps saying where it is. Any other failure (network,
+// a closed incident) stays until the next action, so a unit that never went out is not missed.
+const slRefusal = makeFlash(() => slDetailError.value, (text) => { slDetailError.value = text; }, ASSIGN_REFUSAL_MS);
+function slAssignFailed(e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (isBusyRefusal(e)) slRefusal.show(msg);
+    else slDetailError.value = msg;
+}
+onBeforeUnmount(() => slRefusal.stop());
 
 // Report number: the server logs every change as a timestamped note, so only the
 // field itself is sent (no read-modify-write of the notes array from the browser).
@@ -1027,16 +1070,16 @@ async function slRemoveCaller(inc: DispatcherIncident, c: IncidentCaller) {
     if (await slCallerChange(() => removeCaller(inc.id, c.id))) slRemovingCaller.value = null;
 }
 
-async function slUnassignContact(inc: DispatcherIncident, uid: string) {
-    const contact = (inc.assigned ?? []).find(c => c.uid === uid);
+// One row (one trip) of the unit leaves the record.
+async function slUnassignContact(inc: DispatcherIncident, contact: AssignedContact) {
     slDetailError.value = '';
 
     try {
-        const updated = await removeUnit(inc.id, uid);
+        const updated = await removeUnit(inc.id, contact.uid, contact.assigned_at);
         slApplyIncident(updated);
 
         const feed = slEventFor(updated);
-        if (feed && contact) {
+        if (feed) {
             try { await postMissionLog(feed.feed_name, `UNASSIGNED: ${updated.number} → ${contact.callsign}`); }
             catch { /* best-effort */ }
         }

@@ -526,6 +526,25 @@
                         New
                     </button>
                 </div>
+                <!-- The last new incident was saved, but its marker, feed log or chat did not go out (IncidentForm) -->
+                <div
+                    v-if='slCreateProblem'
+                    class='px-3 py-1 border-bottom flex-shrink-0 small text-warning d-flex align-items-start gap-2'
+                    data-test='create-problem'
+                >
+                    <span class='flex-grow-1'>{{ slCreateProblem }}</span>
+                    <button
+                        class='btn btn-link btn-sm p-0 text-muted text-decoration-none'
+                        title='Dismiss'
+                        aria-label='Dismiss'
+                        @click='slCreateProblem = ""'
+                    >
+                        <IconX
+                            :size='16'
+                            stroke='1'
+                        />
+                    </button>
+                </div>
                 <!-- Undocked cards open over the map (opened with Undock on an incident) -->
                 <div
                     v-if='dispatcherStore.undocked.length'
@@ -913,6 +932,8 @@ const slView            = ref<SlViewName>('list');
 const slTab             = ref<SlTab>('active');
 // The incident open in the panel's detail view (IncidentDetail reads it from the store by id).
 const slDetailId        = ref<string | null>(null);
+// What did not go out for the last new incident (its marker, feed log or chat), shown on the list.
+const slCreateProblem   = ref('');
 
 const slQueued = computed(() => {
     const out: Record<SlTab, DispatcherIncident[]> = { unassigned: [], active: [], closed: [] };
@@ -949,9 +970,12 @@ function slUndock(id: string) {
     slView.value = 'list';
 }
 
-function onStandaloneSaved(inc: DispatcherIncident) {
+// A new incident is saved before its marker, feed log and chat go out; when one of those fails, the list
+// the dispatcher lands on says so, until dismissed or the next new incident.
+function onStandaloneSaved(inc: DispatcherIncident, problems: string) {
     const idx = dispatcherStore.incidents.findIndex(i => i.id === inc.id);
     if (idx === -1) dispatcherStore.incidents.push(inc);
+    slCreateProblem.value = problems ? `${inc.number} was created, but: ${problems}` : '';
     slView.value = 'list';
     slShowTabFor(inc.id);
 }
@@ -1003,6 +1027,7 @@ watch(() => dispatcherStore.activeEvent?.id, (id) => {
     if (props.serverMode !== 'standalone') return;
     slView.value = 'list';
     slDetailId.value = null;
+    slCreateProblem.value = '';
     stopRestoreWatch?.();
     stopRestoreWatch = undefined;
     restartIncidentPoll();

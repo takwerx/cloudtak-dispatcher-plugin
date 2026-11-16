@@ -4,7 +4,7 @@ A dispatcher plugin for [CloudTAK](https://github.com/dfpc-coe/CloudTAK) — cre
 incidents on the map, organize them under named **Events**, assign responders, and notify them
 via mission chat and direct GeoChat.
 
-**Current version: 1.6.0.** What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+**Current version: 1.6.1.** What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 ## Modes
 
@@ -29,13 +29,24 @@ and CSV. A database from the earlier single-caller version moves its caller into
 
 Each unit on an incident is **Assigned**, then **On Scene**, then **Cleared**. The dispatcher presses the
 button (**On Scene**, **Clear**) when the unit radios in, and the server stamps the time, so nothing comes
-from the field. A cleared unit stays on the incident, greyed, with its three times; the **✕** is for a unit
+from the field. A cleared unit stays on the incident, greyed, with its three times; the **trash can** is for a unit
 assigned by mistake and removes it from the record. The board shows **Unassigned**, **Dispatched** or
 **On Scene** next to each active incident. Closing an incident clears every unit still on it with the close
 time. The marker remarks read `Responding: E12 (on scene), M4` (cleared units drop off), the feed log gets
 `ON SCENE:` and `CLEARED:` lines, every change is a note on the incident, and the report and CSV list each unit
 with its times plus the incident's first on-scene time. Units assigned before this version show as Assigned
 with no times.
+
+A unit works one incident at a time. While it is Assigned or On Scene on an active incident, the assign
+search and the contacts picker show it greyed with that incident's number (`E12 · on 014`, the number
+without the Event prefix), and it can't be picked. Clear it there first; then it can be assigned here. The
+server checks too, so two dispatchers assigning the same unit at the same moment can't both win: the second
+gets `E12 is on 014. Clear it there first.` (it clears after 10 seconds; with several units picked it adds
+`Nothing was assigned.`, since a refused press assigns none of them).
+
+A unit that cleared from an incident can be sent back to it: assigning it again adds a second line for the
+second trip, and the first line keeps its times (the report lists both, and the incident's first on-scene
+time stays). The **✕** on a line removes that trip only.
 
 ### Disposition on close (standalone)
 
@@ -115,7 +126,8 @@ for anyone else (it describes the desk, one monitor or several, and desks often 
 
 - **Single Monitor Mode** (the default; a computer that never chooses gets this): the window
   floats over the map inside the CloudTAK page, draggable by its grip and resizable. New windows open side
-  by side while they fit left of the panel, then step down and right. After a page reload they come back
+  by side while they fit left of the panel, then step down and right, and never over a popped-out
+  Dispatcher while there is room beside it. After a page reload they come back
   when the Dispatcher is opened on that Event again.
 - **Multi-Monitor Mode**: the Dispatcher's pop-out button opens the **Dispatcher workspace**, one browser
   window of its own to drag onto another monitor and maximize, like CloudTAK's video wall. The Dispatcher is

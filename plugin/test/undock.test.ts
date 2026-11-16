@@ -52,6 +52,44 @@ test('first free slot never returns a taken slot while any slot in the cycle is 
     assert.ok(!taken.some(t => t.x === p.x && t.y === p.y));
 });
 
+// The Dispatcher popped out over the map (float-pane.ts): 420 x 640 at CloudTAK's default spot, where the
+// first card would open.
+const dispatcher = { x: 56, y: 76, width: 420, height: 640 };
+const card = { width: u.UNDOCK_CARD_WIDTH, height: u.UNDOCK_CARD_HEIGHT };
+const covers = (p: { x: number; y: number }, k: typeof dispatcher) =>
+    p.x < k.x + k.width && k.x < p.x + card.width && p.y < k.y + k.height && k.y < p.y + card.height;
+
+test('a popped-out Dispatcher is not covered: the first card opens beside it', () => {
+    assert.deepEqual(u.firstFreeSlot([], base, vp, card, [dispatcher]), u.cardPosition(1, base, vp));
+});
+
+test('cards keep clear of the popped-out Dispatcher on the next rows too', () => {
+    // 1500 wide, three per row: slots 1 and 2 hold cards, slot 3 (next row, first column) is over the Dispatcher.
+    const taken = [u.cardPosition(1, base, vp), u.cardPosition(2, base, vp)];
+    assert.deepEqual(u.firstFreeSlot(taken, base, vp, card, [dispatcher]), u.cardPosition(4, base, vp));
+    // Ten cards opened one after another: none covers the Dispatcher, no two share a slot.
+    const open: { x: number; y: number }[] = [];
+    for (let i = 0; i < 10; i++) open.push(u.firstFreeSlot(open, base, vp, card, [dispatcher]));
+    assert.ok(open.every(p => !covers(p, dispatcher)));
+    assert.equal(new Set(open.map(p => `${p.x},${p.y}`)).size, 10);
+});
+
+test('the Dispatcher counts wherever it is: a little lower, wider, or dragged away', () => {
+    // A status bar above the map puts CloudTAK's panes a little lower than the cards' base.
+    assert.deepEqual(u.firstFreeSlot([], base, vp, card, [{ ...dispatcher, y: 100 }]), u.cardPosition(1, base, vp));
+    // Made wider, it reaches into the second slot too.
+    assert.deepEqual(u.firstFreeSlot([], base, vp, card, [{ ...dispatcher, width: 500 }]), u.cardPosition(2, base, vp));
+    // Dragged to the right, it frees the first slot.
+    assert.deepEqual(u.firstFreeSlot([], base, vp, card, [{ ...dispatcher, x: 1000, y: 200 }]), base);
+});
+
+test('no room beside the popped-out Dispatcher: cards open where they would without it', () => {
+    // 600 wide: one card per row, and every slot is over the Dispatcher.
+    const narrow = { width: 600, height: 900 };
+    assert.deepEqual(u.firstFreeSlot([], base, narrow, card, [dispatcher]), base);
+    assert.deepEqual(u.firstFreeSlot([base], base, narrow, card, [dispatcher]), u.cardPosition(1, base, narrow));
+});
+
 test('negative or fractional counts are clamped', () => {
     assert.deepEqual(u.cardPosition(-3, base, vp), base);
     assert.deepEqual(u.cardPosition(1.9, base, vp), u.cardPosition(1, base, vp));
