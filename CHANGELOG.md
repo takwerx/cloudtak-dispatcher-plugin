@@ -34,6 +34,10 @@ as before.
 - Build-time updates of `eslint`, `@typescript-eslint` and `@tabler/icons-vue`. They are not part of what runs
   in CloudTAK.
 
+**If you go back to 1.6.1:** your own incident types are hidden until you update again. Nothing is lost. While
+you are on 1.6.1, do not add or remove types in its Custom Call Types card: saving there replaces your 1.7.0 list
+(and its codes) with only what that card shows.
+
 ## 1.6.1
 
 - **One unit, one incident.** A unit that is Assigned or On Scene on an open incident can no longer be put on a
