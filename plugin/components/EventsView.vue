@@ -357,13 +357,28 @@
                     </div>
                 </div>
             </div>
+            <!-- User Guide: opens in its own pane over the map (lib/guide-pane.ts) -->
+            <div class='px-3 py-2 border-top flex-shrink-0'>
+                <button
+                    type='button'
+                    class='btn btn-sm btn-outline-secondary w-100 d-flex align-items-center justify-content-center gap-2'
+                    title='How to use the Dispatcher, step by step'
+                    @click='openGuide()'
+                >
+                    <IconBook
+                        :size='16'
+                        stroke='1'
+                    />
+                    User Guide
+                </button>
+            </div>
         </template>
     </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, watch, onMounted, onUnmounted } from 'vue';
-import { IconRefresh, IconX } from '@tabler/icons-vue';
+import { IconBook, IconRefresh, IconX } from '@tabler/icons-vue';
 import { useMapStore } from '../../../src/stores/map.ts';
 import { getMissions, getUserChannels, createFeed, feedChannels } from '../lib/takcad-client.ts';
 import OverlayManager from '../../../src/base/overlay.ts';
@@ -375,6 +390,7 @@ import type { DispatcherEvent } from '../lib/events-client.ts';
 import { withdrawIncident, coreEventsAvailable } from '../lib/field-delivery.ts';
 import { dispatcherStore as store, loadLastEventId } from '../lib/dispatcher-store.ts';
 import { closedMarkerMinutesFrom, setClosedMarkerMinutes } from '../lib/closed-window.ts';
+import { openGuide } from '../lib/guide-pane.ts';
 import ReportView from './ReportView.vue';
 
 const emit = defineEmits<{

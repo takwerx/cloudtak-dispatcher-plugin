@@ -95,8 +95,12 @@ test('removing the only phone-bearing primary clears the marker phone', () => {
 });
 
 test('the incident detail (panel and undocked cards) sends no callers to the marker when Caller Details is off', () => {
-    const src = readFileSync(new URL('../components/IncidentDetail.vue', import.meta.url), 'utf8');
+    // The marker payload is built in one place, which the incident's buttons and the command line both use.
+    const src = readFileSync(new URL('../lib/incident-actions.ts', import.meta.url), 'utf8');
     assert.match(src, /callers:\s+dispatcherStore\.callerOnMarkers \? \(inc\.callers \?\? \[\]\) : \[\]/);
+    const detail = readFileSync(new URL('../components/IncidentDetail.vue', import.meta.url), 'utf8');
+    assert.match(detail, /return markerFor\(inc, slEventFor\(inc\)\);/);
+    assert.doesNotMatch(detail, /callers:\s/);
 });
 
 test('dropIncidentMarker always sets contact through markerContact', () => {

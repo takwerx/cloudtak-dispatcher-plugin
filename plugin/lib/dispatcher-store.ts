@@ -6,6 +6,8 @@ import { loadOperator, saveOperator } from './operator.ts';
 import { loadDisplayMode } from './display-mode.ts';
 import { loadForcedMode } from './panel-state.ts';
 import type { DisplayMode } from './display-mode.ts';
+import { incidentTypeOptions } from './incident-types.ts';
+import type { IncidentTypeOption } from './incident-types.ts';
 
 export type ServerMode = 'detecting' | 'takcad' | 'standalone';
 
@@ -55,6 +57,11 @@ interface DispatcherState {
     callerOnMarkers: boolean;
     // Shared CJIS reminder line on every standalone incident (Dispatcher Settings; admin-only to change).
     cjisReminder:   CjisReminder;
+    // The incident types a standalone dispatcher picks from, in dropdown order (incident-types.ts): the
+    // built-in ones until the shared settings arrive, then whatever the admin's list and switch say.
+    // Kept current by refreshSharedSettings (incident-poll.ts), by Dispatcher Settings → Incident Types
+    // on every save, and by the New Incident form when it opens.
+    incidentTypes:  IncidentTypeOption[];
 }
 
 export const dispatcherStore = reactive<DispatcherState>({
@@ -74,6 +81,7 @@ export const dispatcherStore = reactive<DispatcherState>({
     incidents:      [],
     callerOnMarkers: true,
     cjisReminder:   { enabled: true, text: CJIS_REMINDER_DEFAULT_TEXT },
+    incidentTypes:  incidentTypeOptions({}),
 });
 
 // The board itself is now server-backed (CloudTAK Postgres via the dispatcher route), so it

@@ -3,6 +3,7 @@ import { listIncidents, getDispatcherSettings } from './events-client.ts';
 import { cjisReminderFrom } from './cjis-reminder.ts';
 import { operatorNumbersFrom } from './operator.ts';
 import { closedMarkerMinutesFrom, setClosedMarkerMinutes } from './closed-window.ts';
+import { incidentTypeOptions } from './incident-types.ts';
 import { getContacts } from './contacts-client.ts';
 import type { TakContact } from './contacts-client.ts';
 
@@ -25,7 +26,7 @@ export async function loadIncidents(): Promise<void> {
     } catch { /* keep previous list */ }
 }
 
-// The Dispatcher Settings (caller details on markers, CJIS reminder, employee numbers) are shared across
+// The Dispatcher Settings (caller details on markers, CJIS reminder, employee numbers, incident types) are shared across
 // dispatchers, so re-read them when the board starts and when an incident is opened (cheap)
 // rather than on every poll (the settings blob can carry the agency logo).
 export function refreshSharedSettings(): void {
@@ -34,6 +35,7 @@ export function refreshSharedSettings(): void {
         dispatcherStore.cjisReminder = cjisReminderFrom(s);
         applyOperatorNumbers(operatorNumbersFrom(s));
         setClosedMarkerMinutes(closedMarkerMinutesFrom(s));
+        dispatcherStore.incidentTypes = incidentTypeOptions(s);
     }).catch(() => { /* keep last */ });
 }
 

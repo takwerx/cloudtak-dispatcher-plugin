@@ -1,8 +1,10 @@
 <template>
+    <!-- A press anywhere on the pane, its header included, makes this the incident the command line works on -->
     <FloatingPane
         :uid='uid'
         :padded='false'
         @close='closeUndocked(incidentId)'
+        @pointerdown.capture='touchIncidentView(incidentId)'
     >
         <template #header>
             <!-- One fixed line in CloudTAK's pane header: number and type only, truncating. The status
@@ -41,6 +43,7 @@ import { dispatcherStore } from '../lib/dispatcher-store.ts';
 import { closeUndocked, forgetUndocked } from '../lib/undock-panes.ts';
 import { acquireIncidentPoll } from '../lib/incident-poll.ts';
 import { incidentTitle } from '../lib/undock.ts';
+import { touchIncidentView } from '../lib/command-state.ts';
 
 const props = defineProps<{ uid: string }>();
 

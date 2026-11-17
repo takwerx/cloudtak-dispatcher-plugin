@@ -310,6 +310,7 @@
                     <div class='input-group'>
                         <input
                             v-model='newNote'
+                            maxlength='2000'
                             type='text'
                             class='form-control form-control-sm border'
                             placeholder='Add a note…'
@@ -517,7 +518,7 @@
                     <button
                         class='btn btn-sm btn-success d-inline-flex align-items-center gap-1 text-nowrap'
                         data-test='new-incident'
-                        @click='slView = "form"'
+                        @click='slNewIncident()'
                     >
                         <IconPlus
                             :size='16'
@@ -604,12 +605,31 @@
             <!-- Standalone incident detail -->
             <!-- Standalone incident detail (shared with undocked cards: IncidentDetail.vue) -->
             <template v-else-if='slView === "detail" && slDetailId'>
+                <!-- A new incident opens here, so what did not go out for it is said here too -->
+                <div
+                    v-if='slCreateProblem'
+                    class='px-3 py-1 border-bottom flex-shrink-0 small text-warning d-flex align-items-start gap-2'
+                    data-test='create-problem'
+                >
+                    <span class='flex-grow-1'>{{ slCreateProblem }}</span>
+                    <button
+                        class='btn btn-link btn-sm p-0 text-muted text-decoration-none'
+                        title='Dismiss'
+                        aria-label='Dismiss'
+                        @click='slCreateProblem = ""'
+                    >
+                        <IconX
+                            :size='16'
+                            stroke='1'
+                        />
+                    </button>
+                </div>
                 <IncidentDetail
                     :key='slDetailId'
                     :incident-id='slDetailId'
                     @back='slView = "list"'
                     @undock='slUndock(slDetailId)'
-                    @closed='slView = "list"; slTab = "closed"'
+                    @closed='slView = "list"'
                     @reopened='slShowTabFor(slDetailId)'
                 />
             </template>
@@ -629,6 +649,7 @@
                     <IncidentForm
                         :server-mode='serverMode'
                         :incident-types='incidentTypes'
+                        :prefill='slPrefill'
                         @saved-standalone='onStandaloneSaved'
                         @cancel='slView = "list"'
                     />
@@ -666,6 +687,8 @@ import { acquireIncidentPoll, restartIncidentPoll } from '../lib/incident-poll.t
 import { undockIncident, closeAllUndocked, restoreUndocked } from '../lib/undock-panes.ts';
 import { incidentQueue } from '../lib/unit-status.ts';
 import type { IncidentQueue } from '../lib/unit-status.ts';
+import { registerList, workOn } from '../lib/command-state.ts';
+import type { NewIncidentPrefill } from '../lib/command-state.ts';
 
 const props = defineProps<{
     serverMode:    'detecting' | 'takcad' | 'standalone';
@@ -958,6 +981,26 @@ watch(splitUnassigned, (split) => {
     if (!split && slTab.value === 'unassigned') slTab.value = 'active';
 });
 
+// New: the empty form, or (from the command line's N) one with the type set and the address searched.
+const slPrefill = ref<NewIncidentPrefill | null>(null);
+function slNewIncident(prefill: NewIncidentPrefill | null = null) {
+    slPrefill.value = prefill;
+    slView.value = 'form';
+}
+
+// The command line (CommandLine.vue) opens incidents, tabs and the New form through these.
+let leaveCommandLine: (() => void) | undefined;
+onMounted(() => {
+    leaveCommandLine = registerList({
+        view:        () => slView.value,
+        detailId:    () => (slView.value === 'detail' ? slDetailId.value : null),
+        open:        slOpenDetail,
+        list:        (tab) => { if (tab) slTab.value = tab; slView.value = 'list'; },
+        newIncident: slNewIncident,
+    });
+});
+onUnmounted(() => leaveCommandLine?.());
+
 function slOpenDetail(id: string) {
     slDetailId.value = id;
     slView.value = 'detail';
@@ -965,19 +1008,21 @@ function slOpenDetail(id: string) {
 
 // Undock: the incident moves into its own floating card over the map; the panel shows the list.
 function slUndock(id: string) {
+    workOn(id);   // the dispatcher is working this incident: its window stays the command line's incident
     undockIncident(id);
     slDetailId.value = null;
     slView.value = 'list';
 }
 
-// A new incident is saved before its marker, feed log and chat go out; when one of those fails, the list
-// the dispatcher lands on says so, until dismissed or the next new incident.
+// A new incident opens straight away: whoever took the call usually keeps adding to it. It is saved before
+// its marker, feed log and chat go out; when one of those fails, the incident and the list say so, until
+// dismissed or the next new incident. Back goes to the tab the incident is in.
 function onStandaloneSaved(inc: DispatcherIncident, problems: string) {
     const idx = dispatcherStore.incidents.findIndex(i => i.id === inc.id);
     if (idx === -1) dispatcherStore.incidents.push(inc);
     slCreateProblem.value = problems ? `${inc.number} was created, but: ${problems}` : '';
-    slView.value = 'list';
     slShowTabFor(inc.id);
+    slOpenDetail(inc.id);
 }
 
 // ── Polling ───────────────────────────────────────────────────────────────────

@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.7.0
+
+New features, most of them contributed by Sentinel6Systems. All of them are for standalone mode; TAK-CAD mode works
+as before.
+
+- **Command line (F2).** For dispatchers who would rather type than click. Press **F2** (or the new **Commands**
+  button) with an event open, and type what the buttons do: `O H35` puts a unit On Scene, `C H35` clears it,
+  `14 T caller called back` adds a note to incident 014, `X unf` closes an incident, `N fire, 120 main` starts a
+  new one. `?` lists every command. Each command does exactly what its button does. It is off until a desk turns
+  it on, and it is remembered per computer.
+- **Your agency's own incident types.** In **Dispatcher Settings → Incident Types** (CloudTAK admins), load the
+  agency's list from a CSV file, with short codes (`MVA` for `Traffic Accident`), or add types by hand. A switch
+  makes dispatchers pick from the agency's list only. A file with a mistake loads nothing and says which rows to
+  fix. This replaces the old Custom Call Types card; types saved there are kept.
+- **Your own address data searched first.** In **Dispatcher Settings → Local Address Data** (CloudTAK admins),
+  load the agency's address points, street intersections and place names from a file or a public web address.
+  The address search and a map click then offer those **Verified** and **Place** results before OpenStreetMap.
+  An address with apartment or suite numbers offers them as buttons. A web address that points inside your own
+  network is refused; load internal data from a file instead.
+- **Change an incident's location.** Press **Change** beside the address of an incident, pick the new place and
+  **Save Location**. The marker moves, the units are told the new address, and the incident's notes keep both
+  the old and the new place.
+- **Create Incident opens the new incident**, ready for callers, notes and units. **Closing an incident** goes
+  back to the tab you were working in, not to Closed.
+- **Built-in User Guide.** A **User Guide** button at the bottom of the Events list opens a plain guide for
+  dispatchers and call takers. It is part of the plugin, so it works without internet and matches the version
+  you have.
+- **A tidier header.** **TAK-CAD** and **Sign out** are now links on the callsign line. Under the event's name
+  are three buttons: **Switch** (event), **Report** and **Commands**.
+- **Limits on notes.** A note can be up to 2,000 characters, and an incident keeps up to 500 notes.
+- Security problems are now reported by email (see SECURITY.md), not through GitHub.
+- Build-time updates of `eslint`, `@typescript-eslint` and `@tabler/icons-vue`. They are not part of what runs
+  in CloudTAK.
+
+**If you go back to 1.6.1:** your own incident types are hidden until you update again. Nothing is lost. While
+you are on 1.6.1, do not add or remove types in its Custom Call Types card: saving there replaces your 1.7.0 list
+(and its codes) with only what that card shows.
+
 ## 1.6.1
 
 - **One unit, one incident.** A unit that is Assigned or On Scene on an open incident can no longer be put on a

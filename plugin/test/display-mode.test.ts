@@ -62,3 +62,8 @@ test('it is not a server setting: the server file does not know it', () => {
     assert.ok(!server.includes('display_mode'), 'display_mode must not be a server setting');
 });
 
+test('closing an incident goes back to the list it was opened from, not to Closed', () => {
+    const list = readFileSync(new URL('../components/IncidentListView.vue', import.meta.url), 'utf8');
+    assert.ok(list.includes(`@closed='slView = "list"'`), 'back to the list, on the tab that was showing');
+    assert.doesNotMatch(list, /slTab = "closed"/, 'nothing switches the tab to Closed');
+});

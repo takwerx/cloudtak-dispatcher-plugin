@@ -98,13 +98,9 @@ export const deletePerson   = (uid: string)     => cadDelete('deletePerson', uid
 export const getRoles       = ()                => cadGet<Role[]>('getRoles');
 
 // ── Shared incident type list ─────────────────────────────────────────────────
-// Used by both modes. TAK-CAD mode loads server types but falls back to this.
-export const DEFAULT_INCIDENT_TYPES = [
-    'Medical Emergency', 'Medical Assist', 'Fire', 'Traffic Accident',
-    'Hazardous Spill', 'Criminal Activity', 'Fight', 'Public Disturbance', 'Bomb Threat',
-    'Animal Control', 'Gas Leak', 'Water Main Break', 'Missing Person',
-    'Crowd Control', 'VIP Security', 'Welfare Check', 'Other',
-];
+// Used by both modes. TAK-CAD mode loads server types but falls back to this. The list itself is in
+// incident-types.ts, beside the admin's own types.
+export { DEFAULT_INCIDENT_TYPES } from './incident-types.ts';
 
 // ── Missions / DataSync feeds ─────────────────────────────────────────────────
 export interface MissionRef {

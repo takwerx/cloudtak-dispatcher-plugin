@@ -7,6 +7,7 @@ import {
     addUndocked, removeUndocked, restorable, undockStorageKey, parseSavedUndocked,
 } from './undock.ts';
 import type { Draft } from './undock.ts';
+import { touchIncidentView } from './command-state.ts';
 import {
     multiMonitor, workspaceArea, showWorkspace, onWorkspaceClosed, workspaceOpen, dockDispatcher,
     dispatcherPaneRect,
@@ -65,6 +66,8 @@ function findCard(id: string) {
 export function raiseCard(id: string): void {
     const c = findCard(id);
     if (c && c.z !== topZ) c.z = ++topZ;
+    // The card in front is the incident the command line works on.
+    touchIncidentView(id);
 }
 
 /**
