@@ -34,7 +34,7 @@ So `14 T caller called back` adds the note “caller called back” to incident 
 - **A unit’s status needs no number.** A unit works one call at a time, so `O H35` finds its call.
 - **Type a unit the way it is said on the radio.** One part of its callsign is enough: for a unit named `FIRE-ENGINE-E12`, type `E12`.
 - **More than one fit, or only part of a name typed?** A numbered list shows under the box. Type the number of the right one, then press **Enter**.
-- **Types and dispositions:** type the start of a word, such as `N fire` or `X unf` (Unfounded). A type’s code works too, such as `N MVA`.
+- **Types and dispositions:** type the start of a word, such as `N fire` or `X unf` (Unfounded). A type’s code works too, such as `N MVA`, and so does any other code your agency gave it, such as `N wreck`.
 - **Read the line under the box.** Before you press **Enter**, it says how your command was read: grey is fine, yellow means it will not work as typed. After, green says what was done, and red means it was not done.
 - **The up arrow key** brings back the lines you typed before.
 - **`?`** lists every command. Type `?` again, or press **Esc**, to close the list.

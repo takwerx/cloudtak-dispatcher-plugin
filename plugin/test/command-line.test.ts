@@ -123,6 +123,18 @@ test('an incident type is named by its code first', () => {
     assert.deepEqual(m.matchOptions('MED', types).map(t => t.name), ['Medical Emergency']);
 });
 
+test('any of a type\'s codes names it, so one type can be typed several ways', () => {
+    const types = [
+        { code: 'MVA', name: 'Traffic Accident', aliases: ['WRECK', '1050'] },
+        { code: 'FIRE', name: 'Fire' },
+    ];
+    for (const typed of ['mva', 'wreck', '1050', 'traffic', 'acc']) {
+        assert.deepEqual(m.matchOptions(typed, types).map(t => t.name), ['Traffic Accident'], typed);
+    }
+    // an alias is a whole code: the start of one is not enough
+    assert.deepEqual(m.matchOptions('wre', types), []);
+});
+
 test('with no code: the whole name, then the start of the name, then word starts', () => {
     const types = ['Medical Emergency', 'Medical Assist', 'Fire', 'Traffic Accident', 'Gas Leak'].map(name => ({ name }));
     assert.deepEqual(m.matchOptions('fire', types).map(t => t.name), ['Fire']);

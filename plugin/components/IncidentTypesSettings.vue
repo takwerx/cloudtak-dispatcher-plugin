@@ -1,5 +1,6 @@
 <!-- Dispatcher Settings → Incident Types (standalone). The admin's own incident types, each a name with
-     an optional short code: loaded from a two-column CSV file or typed in one at a time, plus the
+     an optional short code and any more codes the command line also takes: loaded from a two-column
+     CSV file or typed in one at a time, plus the
      switch that hides the built-in types. CloudTAK system admin only; everyone else reads the list.
      The list logic and the file reader are lib/incident-types.ts. -->
 <template>
@@ -53,7 +54,7 @@
                         <span
                             class='fw-semibold flex-shrink-0'
                             style='width:6.5em'
-                        >{{ t.code || '—' }}</span>
+                        >{{ incidentTypeCodes(t).join(', ') || '—' }}</span>
                         <span class='flex-grow-1'>{{ t.name }}</span>
                         <button
                             v-if='isAdmin'
@@ -105,7 +106,8 @@
                         Download example CSV
                     </button>
                     <span class='text-muted'>
-                        Two columns, code then name, one type per row. The code can be left empty.
+                        Two columns, code then name. The code can be left empty. For more codes for
+                        one type, add a row for each code with the same name.
                     </span>
                 </div>
 
@@ -171,8 +173,9 @@
 
                 <div class='text-muted small'>
                     The code is a short word for the type (letters and digits, {{ INCIDENT_TYPE_CODE_MAX }} at
-                    most), shown beside the name in the Incident Type list. Incidents, markers and reports
-                    show the name. A change here reaches each dispatcher the next time they start a new
+                    most). The first one is shown beside the name in the Incident Type list; on the command
+                    line, any of a type's codes picks it. To give a type one more code, add it again with
+                    the new code. Incidents, markers and reports show the name. A change here reaches each dispatcher the next time they start a new
                     incident; incidents already created keep their type.
                 </div>
             </div>
@@ -189,8 +192,8 @@ import { downloadFile } from '../lib/report.ts';
 import {
     INCIDENT_TYPES_SETTING, INCIDENT_TYPES_ONLY_SETTING, INCIDENT_TYPE_CODE_MAX, INCIDENT_TYPE_NAME_MAX,
     INCIDENT_TYPE_EXAMPLE_CSV, INCIDENT_TYPE_EXAMPLE_NAME,
-    incidentTypeCode, incidentTypeFileProblem, incidentTypeName, incidentTypeOptions, incidentTypeProblems, incidentTypesOnly,
-    isIncidentTypeCode, parseIncidentTypeCsv, savedIncidentTypes,
+    incidentTypeCode, incidentTypeCodes, incidentTypeFileProblem, incidentTypeName, incidentTypeOptions, incidentTypeProblems,
+    incidentTypesOnly, isIncidentTypeCode, parseIncidentTypeCsv, savedIncidentTypes, withIncidentTypeCodes,
 } from '../lib/incident-types.ts';
 import type { IncidentTypeOption } from '../lib/incident-types.ts';
 
@@ -287,16 +290,20 @@ async function addType() {
         problems.value = [`The code must be letters and digits only, no spaces, ${INCIDENT_TYPE_CODE_MAX} at most.`];
         return;
     }
-    const sameCode = code ? types.value.find(t => t.code === code) : undefined;
+    const sameCode = code ? types.value.find(t => incidentTypeCodes(t).includes(code)) : undefined;
     if (sameCode) {
         problems.value = [`The code ${code} is already used by ${sameCode.name}.`];
         return;
     }
-    if (types.value.some(t => t.name.toLowerCase() === name.toLowerCase())) {
-        problems.value = ['That incident type is already in the list.'];
+    // A name already in the list with a new code: one more code for that type.
+    const same = types.value.find(t => t.name.toLowerCase() === name.toLowerCase());
+    if (same && !code) {
+        problems.value = ['That incident type is already in the list. To give it one more code, type the code too.'];
         return;
     }
-    const next = [...types.value, { code, name }];
+    const next = same
+        ? types.value.map(t => (t === same ? withIncidentTypeCodes(t.name, [...incidentTypeCodes(t), code]) : t))
+        : [...types.value, { code, name }];
     // Anything else wrong with the list (an older entry) is said here rather than by the server.
     problems.value = incidentTypeProblems(next);
     if (problems.value.length) return;
