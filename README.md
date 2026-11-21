@@ -317,6 +317,15 @@ Each Event chooses how its incidents reach field devices when it is created:
   1 Hour or Never). Needs a CloudTAK with Core Events and
   its Admin Connection connected. The incidents also appear in CloudTAK's own Core Events list.
 
+### Quick Reference (standalone)
+
+**Quick Reference**, under User Guide at the bottom of the Events list, opens a printable sheet for the desk, the
+same way as the Event report (**Print / Save as PDF**, no PDF library): every command-line command, the incident
+types this CloudTAK offers right now (built-in, or the agency's own with all their codes, honoring "Use only these
+incident types"), the dispositions, and three worked examples, simple to complex. The new-incident example uses one
+of the agency's own types. Letter paper; a list of more than 30 types gets the back of the sheet. Built by
+`plugin/lib/quick-reference.ts` from the same lists the command line runs on.
+
 ### User Guide (standalone)
 
 **User Guide**, at the bottom of the Events list, opens a plain-language, text-only guide for dispatchers and

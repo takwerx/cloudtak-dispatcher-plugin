@@ -357,7 +357,8 @@
                     </div>
                 </div>
             </div>
-            <!-- User Guide: opens in its own pane over the map (lib/guide-pane.ts) -->
+            <!-- User Guide: opens in its own pane over the map (lib/guide-pane.ts). Quick Reference: the
+                 commands and this CloudTAK's incident types on one printable sheet (lib/quick-reference.ts). -->
             <div class='px-3 py-2 border-top flex-shrink-0'>
                 <button
                     type='button'
@@ -371,6 +372,25 @@
                     />
                     User Guide
                 </button>
+                <button
+                    type='button'
+                    class='btn btn-sm btn-outline-secondary w-100 d-flex align-items-center justify-content-center gap-2 mt-2'
+                    title='Commands and incident types on one sheet, to print or save as a PDF'
+                    data-test='quick-reference'
+                    @click='printQuickReference'
+                >
+                    <IconPrinter
+                        :size='16'
+                        stroke='1'
+                    />
+                    Quick Reference
+                </button>
+                <div
+                    v-if='quickRefError'
+                    class='text-danger small mt-1'
+                >
+                    {{ quickRefError }}
+                </div>
             </div>
         </template>
     </div>
@@ -378,7 +398,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, watch, onMounted, onUnmounted } from 'vue';
-import { IconBook, IconRefresh, IconX } from '@tabler/icons-vue';
+import { IconBook, IconPrinter, IconRefresh, IconX } from '@tabler/icons-vue';
 import { useMapStore } from '../../../src/stores/map.ts';
 import { getMissions, getUserChannels, createFeed, feedChannels } from '../lib/takcad-client.ts';
 import OverlayManager from '../../../src/base/overlay.ts';
@@ -386,11 +406,15 @@ import type { MissionRef } from '../lib/takcad-client.ts';
 import {
     listEvents, createEvent, setEventStatus, deleteEvent, listIncidents, getDispatcherSettings,
 } from '../lib/events-client.ts';
-import type { DispatcherEvent } from '../lib/events-client.ts';
+import type { AgencySettings, DispatcherEvent } from '../lib/events-client.ts';
 import { withdrawIncident, coreEventsAvailable } from '../lib/field-delivery.ts';
 import { dispatcherStore as store, loadLastEventId } from '../lib/dispatcher-store.ts';
 import { closedMarkerMinutesFrom, setClosedMarkerMinutes } from '../lib/closed-window.ts';
 import { openGuide } from '../lib/guide-pane.ts';
+import { buildQuickReferenceHtml } from '../lib/quick-reference.ts';
+import { incidentTypeOptions } from '../lib/incident-types.ts';
+import { DISPOSITIONS } from '../lib/dispositions.ts';
+import { openPrintWindow } from '../lib/report.ts';
 import ReportView from './ReportView.vue';
 
 const emit = defineEmits<{
@@ -401,6 +425,21 @@ const mapStore = useMapStore();
 
 const view         = ref<'list' | 'create' | 'report'>('list');
 const reportEvent  = ref<DispatcherEvent | null>(null);
+
+// Quick Reference: built from the settings as they are now (the agency's incident types and the
+// "use only these" switch, the report header), so the sheet matches what the command line takes.
+const quickRefError = ref('');
+async function printQuickReference() {
+    quickRefError.value = '';
+    const s = await getDispatcherSettings().catch(() => ({} as Record<string, unknown>));
+    const html = buildQuickReferenceHtml({
+        types:        incidentTypeOptions(s),
+        dispositions: DISPOSITIONS,
+        generated:    new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }),
+        agency:       (s.agency as AgencySettings | undefined) ?? null,
+    });
+    if (!openPrintWindow(html)) quickRefError.value = 'Popup blocked: allow popups for CloudTAK, then press Quick Reference again.';
+}
 
 function openReport(ev: DispatcherEvent) {
     reportEvent.value = ev;

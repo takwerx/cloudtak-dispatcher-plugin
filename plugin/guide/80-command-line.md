@@ -72,6 +72,8 @@ In this table, `14` stands for an incident number and `H35` or `E6` for a unit.
 | `DOCK` | Docks the Dispatcher back to the panel. |
 | `?` | Lists the commands. |
 
+**A sheet for the desk:** press **Quick Reference**, under **User Guide** at the bottom of the **Events** list. It opens a page with every command, your agency’s incident types with all their codes, the dispositions and three examples. Press **Print / Save as PDF** to print it on letter paper or keep it as a PDF. A long list of incident types goes on the back. Print it again after the types change.
+
 Some things still need the mouse: creating, archiving and deleting events, dropping a pin on the map, changing a caller, changing an incident’s location, the settings, and the report’s buttons.
 
 While a new incident is open and not yet created, the commands that would leave it are not done: an incident number alone, `N`, `L`, `EV`, `REP` and `SET`. The line under the box says **A new incident is open. Create or cancel it first.** The other commands still work, such as `O H35` or `14 T caller called back`.
