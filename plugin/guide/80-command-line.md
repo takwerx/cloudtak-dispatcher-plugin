@@ -41,6 +41,20 @@ So `14 T caller called back` adds the note “caller called back” to incident 
 
 If one unit on a line is wrong, nothing on that line is done. Fix it and press **Enter** again. If a red line starts with **Done:**, it names what was done and the unit that was not: type a new line for that unit only.
 
+### Several commands on one line
+
+Put a semicolon (`;`) between commands to do several in one go. They are done in order, left to right:
+
+`14 A H35 E6; O H35 E6; RN 26-00123, 26-00124; T both drivers cited; X report`
+
+This sends H35 and E6 to incident 014, puts them on scene, sets the report numbers, adds a note and closes the incident as **Report**.
+
+- **Type the incident number once**, at the start. Each command after it is for the same incident. With no number at all, every command is for the incident shown at the left of the box.
+- **A semicolon inside a note:** type two, `;;`.
+- **Only commands for an incident** can share a line: `A`, `O`, `C`, `UN`, `T`, `X`, `R`, `RN`, `CA`, `CP` and `M`.
+- **If a command on the line is wrong**, such as an unknown command, nothing is done.
+- **If one fails while the line runs**, the ones before it stay done. The red line says what was done, and the commands not done come back in the box. Fix them and press **Enter**.
+
 ### The commands
 
 In this table, `14` stands for an incident number and `H35` or `E6` for a unit.

@@ -259,6 +259,12 @@ A line is `[incident] COMMAND [units or text]`, then **Enter**:
   settled before any of them is changed, so a line with one wrong word does nothing.
 - **Types and dispositions are typed by the start of their words:** `N fire`, `X unf`. A type's code, or any of
   its other codes, works too: `N mva`, `N wreck`. Several fits give the same numbered list.
+- **Several commands on one line**, with `;` between them, are done in order:
+  `14 A H35 E6; O H35 E6; RN 26-00123; T both drivers cited; X report`. A command with no number is for the
+  incident numbered before it on the line (else the one at the left of the box), so the line stays on one
+  incident. `;;` is a semicolon in a note. Only the commands for an incident (`A O C UN T X R RN CA CP M`) can
+  share a line. Every part is read before anything is done; if one fails while the line runs, the ones before
+  it stay done and the rest comes back in the box.
 - Under the box, a line says how the command was read before Enter, and what it did after. **Up** brings back
   earlier lines.
 
@@ -323,7 +329,7 @@ Each Event chooses how its incidents reach field devices when it is created:
 same way as the Event report (**Print / Save as PDF**, no PDF library): every command-line command, the incident
 types this CloudTAK offers right now (built-in, or the agency's own with all their codes, honoring "Use only these
 incident types"), the dispositions, and three worked examples, simple to complex. The new-incident example uses one
-of the agency's own types. Letter paper; a list of more than 30 types gets the back of the sheet. Built by
+of the agency's own types. Letter paper; a list of more than 21 types gets the back of the sheet. Built by
 `plugin/lib/quick-reference.ts` from the same lists the command line runs on.
 
 ### User Guide (standalone)

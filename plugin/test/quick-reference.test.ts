@@ -8,7 +8,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { buildQuickReferenceHtml, quickReferenceExamples } from '../lib/quick-reference.ts';
-import { COMMANDS, matchOptions, parseLine } from '../lib/command-line.ts';
+import { COMMANDS, matchOptions, parseChain, readDisposition } from '../lib/command-line.ts';
+import type { ChainPart } from '../lib/command-line.ts';
 import { incidentTypeOptions } from '../lib/incident-types.ts';
 import { DISPOSITIONS } from '../lib/dispositions.ts';
 
@@ -62,16 +63,20 @@ test('three examples, simple to complex, and each is a line the command line tak
     const ex = quickReferenceExamples(OWN);
     assert.deepEqual(ex.map(e => e.level), ['Simple', 'Medium', 'Complex']);
     for (const e of ex) {
-        const p = parseLine(e.line);
+        const p = parseChain(e.line, null);
         assert.ok(p && !('error' in p), e.line);
     }
     // the new-incident example uses this list's own type, by one of its extra codes, and names the others
     assert.equal(ex[1].line, 'N 1050, 120 Main St');
     assert.deepEqual(matchOptions('1050', OWN).map(t => t.name), ['Traffic Accident']);
     assert.match(ex[1].says, /<b>MVA<\/b> or <b>WRECK<\/b> works the same/);
-    // complex: incident number, verb, two units
-    const p = parseLine(ex[2].line) as { incident: string; verb: string; rest: string };
-    assert.deepEqual([p.incident, p.verb, p.rest], ['14', 'A', 'H35 E6']);
+    // complex: one line that assigns, puts on scene, sets the report numbers, adds a note and closes as Report
+    const parts = parseChain(ex[2].line, null) as ChainPart[];
+    assert.deepEqual(parts.map(x => [x.parsed.incident, x.parsed.verb, x.parsed.rest]), [
+        ['14', 'A', 'H35 E6'], ['14', 'O', 'H35 E6'], ['14', 'RN', '26-00123, 26-00124'],
+        ['14', 'T', 'both drivers cited'], ['14', 'X', 'report'],
+    ]);
+    assert.deepEqual(readDisposition('report', DISPOSITIONS, 'Other'), { disposition: 'Report', note: '' });
 });
 
 test('examples with no codes at all use the start of a type name, and still match', () => {

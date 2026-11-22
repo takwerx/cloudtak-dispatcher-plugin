@@ -72,6 +72,52 @@ export function parseLine(line: string): ParsedLine | { error: string } | null {
     return { incident, verb, rest };
 }
 
+// ── Several commands on one line ─────────────────────────────────────────────────────────────────────
+
+// The commands that may share a line: the ones that work on an incident.
+export const CHAIN_VERBS: ReadonlySet<string> = new Set(['A', 'O', 'C', 'UN', 'T', 'X', 'R', 'RN', 'CA', 'CP', 'M']);
+
+/** One command of a line, and its text as it would be typed alone (incident number included). */
+export interface ChainPart { text: string; parsed: ParsedLine }
+
+/**
+ * A line of one or more commands separated by ";": `14 A H35 E6; O H35 E6; X report`. ";;" is a semicolon
+ * in the text (a note). A line of one command reads as parseLine reads it. With several, a part with no
+ * incident number is for the incident numbered before it on the line, else for `current` (the short
+ * number of the incident being worked), so the whole line stays on one incident even when a command in it
+ * changes which one is shown. Every part is read before anything runs: one wrong part refuses the line.
+ */
+export function parseChain(line: string, current: string | null): ChainPart[] | { error: string } | null {
+    const texts: string[] = [];
+    let part = '';
+    for (let i = 0; i < line.length; i++) {
+        if (line[i] !== ';') part += line[i];
+        else if (line[i + 1] === ';') { part += ';'; i++; }
+        else { texts.push(part); part = ''; }
+    }
+    texts.push(part);
+    const filled = texts.map(t => t.trim()).filter(Boolean);
+    if (filled.length <= 1) {
+        const p = parseLine(filled[0] ?? '');
+        return p && !('error' in p) ? [{ text: filled[0], parsed: p }] : p;
+    }
+    const parts: ChainPart[] = [];
+    let incident = current;
+    for (const [i, text] of filled.entries()) {
+        const p = parseLine(text);
+        if (!p) continue;
+        if ('error' in p) return { error: `Part ${i + 1}: ${p.error.replace(' Type ? for the list.', '')} For a ; inside a note, type ;;` };
+        if (!CHAIN_VERBS.has(p.verb)) {
+            return { error: `Part ${i + 1}: ${p.verb ? `${p.verb} goes` : 'An incident number alone goes'} on a line of its own.` };
+        }
+        incident = p.incident ?? incident;
+        if (!incident) return { error: `Which incident? Put its number first: 14 ${filled.join('; ')}` };
+        const parsed = { ...p, incident };
+        parts.push({ text: [incident, p.verb, p.rest.replace(/;/g, ';;')].filter(Boolean).join(' '), parsed });
+    }
+    return parts;
+}
+
 /** The words of a unit or type list: split on spaces and commas. */
 export function words(rest: string): string[] {
     return rest.split(/[\s,]+/).filter(Boolean);

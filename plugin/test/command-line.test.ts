@@ -307,6 +307,49 @@ test('a caller with no phone: what follows the name is the note, never stored as
         { name: 'J Smith', phone: '555 0100 ext 4', note: 'at work' });
 });
 
+test('several commands on one line: ; between them, each for the incident numbered before it', () => {
+    const parts = m.parseChain('14 a H35 E6; o H35 E6 ;RN 26-00123, 26-00124; T both cited;; tow called; x rep', null);
+    assert.ok(Array.isArray(parts));
+    assert.deepEqual(parts.map(x => x.parsed), [
+        { incident: '14', verb: 'A', rest: 'H35 E6' },
+        { incident: '14', verb: 'O', rest: 'H35 E6' },
+        { incident: '14', verb: 'RN', rest: '26-00123, 26-00124' },
+        { incident: '14', verb: 'T', rest: 'both cited; tow called' },
+        { incident: '14', verb: 'X', rest: 'rep' },
+    ]);
+    // each part's text runs alone, the number in front and ;; kept, so what is left can go back in the box
+    assert.equal(parts[3].text, '14 T both cited;; tow called');
+    // a second number switches the incident for the parts after it
+    const two = m.parseChain('14 O H35; 15 O E6; C E6', null) as m.ChainPart[];
+    assert.deepEqual(two.map(x => x.parsed.incident), ['14', '15', '15']);
+    // no number at all: the incident being worked, for every part
+    assert.deepEqual((m.parseChain('A H35; T sent', '9') as m.ChainPart[]).map(x => x.parsed.incident), ['9', '9']);
+    assert.match((m.parseChain('A H35; T sent', null) as { error: string }).error, /^Which incident\? Put its number first: 14 A H35; T sent/);
+});
+
+test('one command on a line reads as before, and a trailing ; changes nothing', () => {
+    assert.deepEqual(m.parseChain('o h35', null), [{ text: 'o h35', parsed: { incident: null, verb: 'O', rest: 'h35' } }]);
+    assert.deepEqual((m.parseChain('14 T a;; b;', '3') as m.ChainPart[])[0].parsed, { incident: '14', verb: 'T', rest: 'a; b' });
+    assert.deepEqual(m.parseChain(' ; ', null), null);
+    assert.deepEqual(m.parseChain('zz', null), m.parseLine('zz'));
+});
+
+test('a chained line with one wrong part is refused whole, and only incident commands can share a line', () => {
+    assert.deepEqual(m.parseChain('14 T caller says; door is open', null),
+        { error: 'Part 2: DOOR is not a command. For a ; inside a note, type ;;' });
+    assert.deepEqual(m.parseChain('14 A H35; N fire, 1 main', null), { error: 'Part 2: N goes on a line of its own.' });
+    assert.deepEqual(m.parseChain('14 A H35; 15', null), { error: 'Part 2: An incident number alone goes on a line of its own.' });
+    for (const v of m.CHAIN_VERBS) assert.ok(m.COMMANDS.some(c => c.verb === v), v);
+});
+
+test('wiring: a chained line runs its commands in order and gives back what was not done', () => {
+    const cmd = readFileSync(new URL('../components/CommandLine.vue', import.meta.url), 'utf8');
+    assert.match(cmd, /for \(; at < parts\.length; at\+\+\) \{\s+const said = await run\(parts\[at\]\.parsed\);/);
+    assert.match(cmd, /const left = parts\.slice\(at\)\.map\(x => x\.text\)\.join\('; '\);\s+[^\n]+\n\s+text\.value = left;/);
+    assert.match(cmd, /return parseChain\(line, current\.value \? shortNumber\(current\.value\.number\) : null\);/);
+    assert.doesNotMatch(cmd, /parseLine\(/);
+});
+
 test('wiring: the command line settles units first, and a note is sent as its text alone', () => {
     const cmd = readFileSync(new URL('../components/CommandLine.vue', import.meta.url), 'utf8');
     // On Scene / Clear / remove / Assign all go through resolveUnits before any action is called.

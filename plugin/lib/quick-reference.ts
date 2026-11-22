@@ -21,7 +21,7 @@ export interface QuickReferenceExample { level: string; line: string; says: stri
 
 // More types than this do not fit under the commands on one sheet: the types then get a page of their
 // own (the back of the sheet), so the examples stay at the bottom of the front.
-export const QUICK_REFERENCE_TYPES_ON_FRONT = 30;
+export const QUICK_REFERENCE_TYPES_ON_FRONT = 21;
 
 function esc(s: string): string {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -55,8 +55,8 @@ export function quickReferenceExamples(types: IncidentTypeOption[]): QuickRefere
         },
         {
             level: 'Complex',
-            line:  '14 A H35 E6',
-            says:  'Assigns units H35 and E6 to incident 014: the incident number first, then the command, then the units.',
+            line:  '14 A H35 E6; O H35 E6; RN 26-00123, 26-00124; T both drivers cited; X report',
+            says:  'Left to right on incident 014: assign H35 and E6, both On Scene, two report numbers, a note, close as Report.',
         },
     ];
 }
@@ -126,7 +126,9 @@ export function buildQuickReferenceHtml(input: QuickReferenceInput): string {
     .type { break-inside: avoid; padding: .5pt 0; }
     .codes { font-family: Consolas, 'DejaVu Sans Mono', monospace; font-weight: 700; }
     .reason { display: inline-block; border: 1px solid #bbb; border-radius: 3pt; padding: 0 4pt; margin: 0 3pt 3pt 0; }
-    .examples { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6pt; break-inside: avoid; }
+    .examples { display: grid; grid-template-columns: 1fr 1fr; gap: 6pt; break-inside: avoid; }
+    .example:nth-child(3) { grid-column: 1 / -1; }
+    .example:nth-child(3) .line { font-size: 10pt; }
     .example { border: 1px solid #999; border-radius: 4pt; padding: 4pt 6pt; }
     .level { font-size: 7.5pt; color: #555; text-transform: uppercase; font-weight: 600; }
     .line { font-family: Consolas, 'DejaVu Sans Mono', monospace; font-weight: 700; font-size: 11pt; margin: 2pt 0; }
@@ -158,6 +160,7 @@ ${commands}
 <li><b>Incident number first, or none.</b> <code>14 T caller called back</code> is for incident 014. With no number, the command is for the incident shown at the left of the box.</li>
 <li><b>Units the way they are said on the radio.</b> One part of a callsign is enough: <code>E12</code> for FIRE-ENGINE-E12.</li>
 <li><b>Types by any of their codes, or the start of a word in the name.</b> A code must be typed whole.</li>
+<li><b>Several commands on one line:</b> put <code>;</code> between them. They are done in order. For a ; inside a note, type <code>;;</code>.</li>
 <li><b>More than one fit?</b> A numbered list shows: type the number, then Enter. <b>Up arrow</b> brings back earlier lines. <b>?</b> lists every command.</li>
 </ul>
 </div>
