@@ -21,7 +21,7 @@ export interface QuickReferenceExample { level: string; line: string; says: stri
 
 // More types than this do not fit under the commands on one sheet: the types then get a page of their
 // own (the back of the sheet), so the examples stay at the bottom of the front.
-export const QUICK_REFERENCE_TYPES_ON_FRONT = 21;
+export const QUICK_REFERENCE_TYPES_ON_FRONT = 18;
 
 function esc(s: string): string {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -158,7 +158,7 @@ ${commands}
 <h2>How a line is read</h2>
 <ul>
 <li><b>Incident number first, or none.</b> <code>14 T caller called back</code> is for incident 014. With no number, the command is for the incident shown at the left of the box.</li>
-<li><b>Units the way they are said on the radio.</b> One part of a callsign is enough: <code>E12</code> for FIRE-ENGINE-E12.</li>
+<li><b>Units the way they are said on the radio.</b> One part of a callsign is enough: <code>E12</code> for FIRE-ENGINE-E12. A unit not on TAK: <code>A E7</code>, then <code>1</code> to add it by name.</li>
 <li><b>Types by any of their codes, or the start of a word in the name.</b> A code must be typed whole.</li>
 <li><b>Several commands on one line:</b> put <code>;</code> between them. They are done in order. For a ; inside a note, type <code>;;</code>.</li>
 <li><b>More than one fit?</b> A numbered list shows: type the number, then Enter. <b>Up arrow</b> brings back earlier lines. <b>?</b> lists every command.</li>

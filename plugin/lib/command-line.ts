@@ -194,16 +194,22 @@ export function pickUnit<T extends { callsign: string }>(word: string, candidate
 /**
  * Every typed word as the unit it means, in order, each unit once. `ask` puts a list to the dispatcher
  * and gives back the one picked (it rejects when they cancel); `none` is the error for a word that fits
- * nothing. Nothing is changed here: a line with one wrong word stops before anything is done.
+ * nothing, unless `missing` is given: it asks about that word instead (Assign: add it as a unit not on
+ * TAK). Nothing is changed here: a line with one wrong word stops before anything is done.
  */
 export async function resolveUnits<T extends { callsign: string }>(
     typed: readonly string[], candidates: readonly T[],
-    opts: { ask: (word: string, options: T[]) => Promise<T>; none: (word: string) => Error },
+    opts: { ask: (word: string, options: T[]) => Promise<T>; none: (word: string) => Error; missing?: (word: string) => Promise<T> },
 ): Promise<T[]> {
     const out: T[] = [];
     for (const w of typed) {
         const p = pickUnit(w, candidates);
-        if (p.kind === 'none') throw opts.none(w);
+        if (p.kind === 'none') {
+            if (!opts.missing) throw opts.none(w);
+            const unit = await opts.missing(w);
+            if (!out.includes(unit)) out.push(unit);
+            continue;
+        }
         const unit = p.kind === 'one' ? p.unit : await opts.ask(w, p.options);
         if (!out.includes(unit)) out.push(unit);
     }

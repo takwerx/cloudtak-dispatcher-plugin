@@ -2,7 +2,7 @@
 //   node --test plugin/test/*.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BOARD_LABEL, boardState, boardBadgeClass, busyUnits, incidentQueue, rowUnits, firstOnScene, respondingLine, shortNumber, unitTimesLine, workingUids } from '../lib/unit-status.ts';
+import { BOARD_LABEL, boardState, boardBadgeClass, busyUnits, incidentQueue, isOffTak, offTakUnit, OFF_TAK_NAME_MAX, rowUnits, firstOnScene, respondingLine, shortNumber, unitTimesLine, workingUids } from '../lib/unit-status.ts';
 import { buildCsv, buildReportHtml, buildStats, unitLine } from '../lib/report.ts';
 
 const T1 = '2026-11-02T17:15:00.000Z', T2 = '2026-11-02T17:22:00.000Z', T3 = '2026-11-02T17:39:00.000Z', T4 = '2026-11-02T17:52:00.000Z';
@@ -47,6 +47,7 @@ test('a unit line lists only the steps that have a time', () => {
     assert.equal(unitTimesLine({ uid: 'x', callsign: 'E7' }, f), '');
     assert.equal(unitLine(clearedU, f), 'L1 (cleared) assigned <17:15> · on scene <17:22> · cleared <17:39>');
     assert.equal(unitLine({ uid: 'x', callsign: 'E7' }, f), 'E7');
+    assert.equal(unitLine({ uid: 'off-tak:E7', callsign: 'E7', status: 'on_scene' }, f), 'E7 (not on TAK) (on scene)');
 });
 
 const incident = {
@@ -149,4 +150,17 @@ test('a unit that cleared from this incident is free here again; a second trip i
     assert.equal(workingUids([clearedU]).has('c'), false);
     assert.equal(workingUids([clearedU, { ...assignedU, uid: 'c', callsign: 'L1' }]).has('c'), true);
     assert.equal(workingUids(undefined).size, 0);
+});
+
+test('a unit not on TAK is stored by its typed name, so the same name is the same unit', () => {
+    assert.deepEqual(offTakUnit('  e7 '), { uid: 'off-tak:E7', callsign: 'E7' });
+    assert.deepEqual(offTakUnit('engine   7'), { uid: 'off-tak:ENGINE 7', callsign: 'ENGINE 7' });
+    assert.equal(offTakUnit('   '), null);
+    assert.equal(offTakUnit('x'.repeat(OFF_TAK_NAME_MAX + 5))!.callsign.length, OFF_TAK_NAME_MAX);
+    assert.ok(isOffTak(offTakUnit('E7')!));
+    assert.ok(!isOffTak({ uid: 'ANDROID-1234' }));
+    // one incident at a time, by that uid, like any unit
+    const e7 = { ...offTakUnit('E7')!, status: 'assigned' as const };
+    const busy = busyUnits([{ id: 'a', number: 'X-014', status: 'active', assigned: [e7] }] as never, 'b');
+    assert.equal(busy.get(offTakUnit('e7')!.uid), '014');
 });

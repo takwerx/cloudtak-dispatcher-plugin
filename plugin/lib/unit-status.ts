@@ -11,6 +11,22 @@ export const BOARD_LABEL: Record<BoardState, string> = {
     on_scene: 'On Scene',
 };
 
+// A unit not on TAK: one that called in on the radio (off shift, no TAK device, not signed in), put on an
+// incident by the name the dispatcher typed. Its uid is made from that name, so the same name is the same
+// unit everywhere a uid counts: one incident at a time, On Scene, Clear. It gets no TAK messages.
+export const OFF_TAK_PREFIX = 'off-tak:';
+export const OFF_TAK_NAME_MAX = 64;
+
+// The unit for a typed name, or null when nothing is left of it. Upper case, one space between words.
+export function offTakUnit(name: string): { uid: string; callsign: string } | null {
+    const callsign = name.replace(/\s+/g, ' ').trim().toUpperCase().slice(0, OFF_TAK_NAME_MAX);
+    return callsign ? { uid: `${OFF_TAK_PREFIX}${callsign}`, callsign } : null;
+}
+
+export function isOffTak(u: { uid: string }): boolean {
+    return u.uid.startsWith(OFF_TAK_PREFIX);
+}
+
 // A row from before unit status existed has only uid + callsign: it reads as Assigned.
 export function unitStatus(u: AssignedContact): 'assigned' | 'on_scene' | 'cleared' {
     return u.status === 'on_scene' || u.status === 'cleared' ? u.status : 'assigned';

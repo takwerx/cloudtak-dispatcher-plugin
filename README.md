@@ -44,6 +44,14 @@ server checks too, so two dispatchers assigning the same unit at the same moment
 gets `E12 is on 014. Clear it there first.` (it clears after 10 seconds; with several units picked it adds
 `Nothing was assigned.`, since a refused press assigns none of them).
 
+**Units not on TAK.** A unit that is off shift, has no TAK device or is not signed in is not a TAK contact, but
+it can still call in on the radio and be put on a call. Typed into the assign search (now **Search or type a
+unit to assign…**), a name that no TAK contact has gives one more row, **+ Add "E7" not on TAK**. On the command
+line, `A E7` asks the same as a numbered list (**1** then **Enter**), so a typo never adds a unit by itself.
+Such a unit is stored by its name (uid `off-tak:E7`), so the same name is the same unit: one incident at a time,
+On Scene, Clear, its times and the report work as for any unit. A phone-off icon marks it in the incident and
+the incident list, the report and CSV add `(not on TAK)`, and it is sent no GeoChat. No server change.
+
 A unit that cleared from an incident can be sent back to it: assigning it again adds a second line for the
 second trip, and the first line keeps its times (the report lists both, and the incident's first on-scene
 time stays). The **✕** on a line removes that trip only.
@@ -329,7 +337,7 @@ Each Event chooses how its incidents reach field devices when it is created:
 same way as the Event report (**Print / Save as PDF**, no PDF library): every command-line command, the incident
 types this CloudTAK offers right now (built-in, or the agency's own with all their codes, honoring "Use only these
 incident types"), the dispositions, and three worked examples, simple to complex. The new-incident example uses one
-of the agency's own types. Letter paper; a list of more than 21 types gets the back of the sheet. Built by
+of the agency's own types. Letter paper; a list of more than 18 types gets the back of the sheet. Built by
 `plugin/lib/quick-reference.ts` from the same lists the command line runs on.
 
 ### User Guide (standalone)

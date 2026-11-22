@@ -101,7 +101,7 @@ import type { TakContact } from '../lib/contacts-client.ts';
 import { fetchContactsShared, loadIncidents } from '../lib/incident-poll.ts';
 import { undockIncident, closeUndocked, closeAllUndocked } from '../lib/undock-panes.ts';
 import { popOutDispatcher, dockDispatcher } from '../lib/float-pane.ts';
-import { busyUnits, shortNumber, workingUids } from '../lib/unit-status.ts';
+import { busyUnits, offTakUnit, shortNumber, workingUids } from '../lib/unit-status.ts';
 import type { IncidentQueue } from '../lib/unit-status.ts';
 import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, REOPEN_REASON_MAX, dispositionLabel } from '../lib/dispositions.ts';
 import { incidentTypeOptions } from '../lib/incident-types.ts';
@@ -289,6 +289,12 @@ async function run(p: ParsedLine): Promise<string> {
             const chosen = await resolveUnits(typed, contacts.value, {
                 ask:  askUnit(c => (cannotAssign(c, inc) ? `${c.callsign} · ${cannotAssign(c, inc)}` : c.callsign)),
                 none: w => new Error(`No unit matches "${w}".`),
+                // Not on TAK (a unit that called in on the radio): one more Enter adds it by that name, so a
+                // typo never adds a unit by itself.
+                missing: (w) => {
+                    const u = offTakUnit(w) as TakContact;
+                    return ask(`"${w}" is not on TAK.`, [{ label: `Add ${u.callsign} (not on TAK)`, value: u }]);
+                },
             });
             for (const c of chosen) {
                 const why = cannotAssign(c, inc);
@@ -470,6 +476,7 @@ function previewUnits(p: ParsedLine): { text: string; bad: boolean } {
     const shown = words(p.rest).map((w) => {
         if (p.verb === 'A') {
             const pick = pickUnit(w, contacts.value);
+            if (pick.kind === 'none') return `${w}? not on TAK`;
             if (pick.kind !== 'one') return `${w}?`;
             const why = cannotAssign(pick.unit, target(p));
             if (why) bad = true;

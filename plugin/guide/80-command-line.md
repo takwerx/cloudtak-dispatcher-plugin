@@ -63,7 +63,7 @@ In this table, `14` stands for an incident number and `H35` or `E6` for a unit.
 |---|---|
 | `14` | Opens incident 014. |
 | `N fire, 120 main` | Opens the new incident form with the type picked and the address searched. Press **Enter** to take the marked address, check the form, then press **Enter** again to create the incident. |
-| `A H35 E6` | Sends (assigns) the units. |
+| `A H35 E6` | Sends (assigns) the units. For a unit that is not on TAK, such as `A E7`, a list asks **Add E7 (not on TAK)**: type `1`, then **Enter**. |
 | `O H35` | The unit is on scene. |
 | `C H35` | The unit is clear. |
 | `UN H35` | Removes a unit that was sent by mistake. |

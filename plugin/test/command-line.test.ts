@@ -342,6 +342,36 @@ test('a chained line with one wrong part is refused whole, and only incident com
     for (const v of m.CHAIN_VERBS) assert.ok(m.COMMANDS.some(c => c.verb === v), v);
 });
 
+test('Assign: a word that fits no unit on TAK is asked about, to add it as a unit not on TAK', async () => {
+    const units = [unit('E12'), unit('M4')];
+    const asked: string[] = [];
+    const added = await m.resolveUnits(['E12', 'E7'], units, {
+        ask:     async () => { throw new Error('not asked'); },
+        none:    w => new Error(`none ${w}`),
+        missing: async (w) => { asked.push(w); return { uid: `off-tak:${w}`, callsign: w }; },
+    });
+    assert.deepEqual(asked, ['E7']);
+    assert.deepEqual(added.map(u => u.uid), ['E12', 'off-tak:E7']);
+    // without it (On Scene, Clear, remove) a word that fits nothing is still an error
+    await assert.rejects(m.resolveUnits(['E7'], units, { ask: async () => units[0], none: w => new Error(`none ${w}`) }), /none E7/);
+});
+
+test('wiring: A offers a unit not on TAK by one more pick, and the panel offers it under the search', () => {
+    const cmd = readFileSync(new URL('../components/CommandLine.vue', import.meta.url), 'utf8');
+    assert.match(cmd, /missing: \(w\) => \{\s+const u = offTakUnit\(w\) as TakContact;\s+return ask\(`"\$\{w\}" is not on TAK\.`, \[\{ label: `Add \$\{u\.callsign\} \(not on TAK\)`, value: u \}\]\);/);
+    assert.equal((cmd.match(/missing:/g) ?? []).length, 1, 'only Assign adds units');
+    const detail = readFileSync(new URL('../components/IncidentDetail.vue', import.meta.url), 'utf8');
+    assert.match(detail, /if \(!u \|\| matchUnits\(u\.callsign, allContacts\.value\)\.exact\.length\) return null;/);
+    assert.match(detail, /v-if='offTakOffer'[^>]+data-test='assign-off-tak'\s+@click='slAssignContact\(inc, offTakOffer\)'/);
+    assert.match(detail, /<IconDeviceMobileOff\s+v-if='isOffTak\(c\)'/);
+    const row = readFileSync(new URL('../components/IncidentRow.vue', import.meta.url), 'utf8');
+    assert.match(row, /v-if='offTak\.has\(u\)'/);
+    // no TAK message to a unit that has no TAK device
+    const actions = readFileSync(new URL('../lib/incident-actions.ts', import.meta.url), 'utf8');
+    assert.match(actions, /for \(const c of units\.filter\(u => !isOffTak\(u\)\)\) \{\s+try \{ await sendAssignmentMessage/);
+    assert.match(actions, /filter\(u => unitStatus\(u\) !== 'cleared' && !isOffTak\(u\)\)\) \{\s+try \{ await sendUpdateMessage/);
+});
+
 test('wiring: a chained line runs its commands in order and gives back what was not done', () => {
     const cmd = readFileSync(new URL('../components/CommandLine.vue', import.meta.url), 'utf8');
     assert.match(cmd, /for \(; at < parts\.length; at\+\+\) \{\s+const said = await run\(parts\[at\]\.parsed\);/);
