@@ -72,6 +72,92 @@ export function parseLine(line: string): ParsedLine | { error: string } | null {
     return { incident, verb, rest };
 }
 
+// ── Several commands on one line ─────────────────────────────────────────────────────────────────────
+// `14 A H35 E6 ; O H35 ; RN 26-00123 ; T 2 patients, one trapped ; X unf` works one call in one go. A
+// semicolon always starts the next command, so a note that needs one writes a comma instead. The commands
+// run one after another, each as if typed alone. A number typed first goes for every command on the line
+// that has none, and a line works one incident: another number later on is refused, so a command can never
+// land on a different incident than the one the line began with. Only the commands that work a call can be
+// chained; the ones that open a
+// window or a form (N, a number alone, W, L, EV, REP, SET, POP, DOCK, SI, SO, ?) go on a line of their own.
+
+export const CHAIN_VERBS: ReadonlySet<string> = new Set(['A', 'O', 'C', 'UN', 'T', 'X', 'R', 'RN', 'CA', 'CP']);
+export const CHAIN_MAX = 8;
+
+export interface ChainPart {
+    text:      string;       // the command as typed, trimmed
+    parsed:    ParsedLine;   // with the line's incident number filled in when it has none
+    inherited: boolean;      // the number came from the first command
+}
+
+/**
+ * A typed line as the commands on it, in order; an error to show (nothing is done then); or null for an
+ * empty line. A line with no semicolon is one command of any kind.
+ */
+export function parseChain(line: string): ChainPart[] | { error: string } | null {
+    const segments = line.split(';').map(s => s.trim()).filter(Boolean);
+    if (segments.length <= 1) {
+        const p = parseLine(segments[0] ?? '');
+        if (!p) return null;
+        return 'error' in p ? p : [{ text: segments[0], parsed: p, inherited: false }];
+    }
+    if (segments.length > CHAIN_MAX) return { error: `At most ${CHAIN_MAX} commands on one line.` };
+    const parts: ChainPart[] = [];
+    for (const [i, text] of segments.entries()) {
+        const p = parseLine(text);
+        if (!p) continue;
+        if ('error' in p) {
+            const hint = p.error.includes('is not a command') ? ' A semicolon starts a new command: use a comma inside a note.' : '';
+            return { error: `Command ${i + 1} (${text}): ${p.error}${hint}` };
+        }
+        if (!CHAIN_VERBS.has(p.verb)) {
+            return { error: `Command ${i + 1} (${text}) cannot go on a line with others: type it on its own line.` };
+        }
+        const lead = parts[0]?.parsed.incident ?? null;
+        if (i > 0 && p.incident !== null && (lead === null || p.incident.replace(/^0+(?=\d)/, '') !== lead.replace(/^0+(?=\d)/, ''))) {
+            return { error: lead === null
+                ? `Command ${i + 1} (${text}): put the incident number first, so it goes for the whole line: ${p.incident} ${parts[0]?.text ?? ''} ; ...`
+                : `Command ${i + 1} (${text}): this line works incident ${lead}. Put other incidents on their own line.` };
+        }
+        const inherited = i > 0 && p.incident === null && lead !== null;
+        parts.push({ text, parsed: inherited ? { ...p, incident: lead } : p, inherited });
+    }
+    return parts;
+}
+
+/**
+ * What is left of a chained line from command `from` on, to put back in the box when the line stopped
+ * there: what was done is not typed again. A number that came from the first command goes back with the
+ * new first one.
+ */
+export function chainRest(parts: readonly ChainPart[], from: number): string {
+    return parts.slice(from).map((pt, k) => (k === 0 && pt.inherited ? `${pt.parsed.incident} ${pt.text}` : pt.text)).join(' ; ');
+}
+
+export interface ChainRun {
+    said:     string[];   // what each command that ran said, in order
+    // Set when a command failed or was cancelled: its place, what it threw and what is left of the line.
+    stopped?: { at: number; error: unknown; rest: string };
+}
+
+/**
+ * Run the commands one after another, each as if typed alone, and stop at the first that throws: the
+ * commands after it are not run. `rest` is what to put back in the box (the whole line when the first
+ * command is the one that failed, so a refused line comes back to be fixed).
+ */
+export async function runChain(parts: readonly ChainPart[], run: (p: ParsedLine) => Promise<string>): Promise<ChainRun> {
+    const said: string[] = [];
+    for (const [at, part] of parts.entries()) {
+        try {
+            const one = await run(part.parsed);
+            if (one) said.push(one);
+        } catch (error) {
+            return { said, stopped: { at, error, rest: chainRest(parts, at) } };
+        }
+    }
+    return { said };
+}
+
 /** The words of a unit or type list: split on spaces and commas. */
 export function words(rest: string): string[] {
     return rest.split(/[\s,]+/).filter(Boolean);
