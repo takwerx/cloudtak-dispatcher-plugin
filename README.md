@@ -252,6 +252,10 @@ A line is `[incident] COMMAND [units or text]`, then **Enter**:
   same numbered list.
 - Under the box, a line says how the command was read before Enter, and what it did after. **Up** brings back
   earlier lines.
+- **Quick reference sheet.** `?` lists the commands, and **Print quick reference** under that list makes one letter-size
+  page from what this CloudTAK has in use: the commands, the incident types with their codes (the agency's own, or
+  the built-in ones), the dispositions and a few examples. The browser's print window prints it or saves it as a
+  PDF; **Save as file** keeps it as an HTML file. It is built in `plugin/lib/quick-reference.ts`.
 
 Every command runs the same code as its button, so the marker, the feed log, the messages to the units and the
 employee number all follow as they do from a click.
