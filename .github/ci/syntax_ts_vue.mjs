@@ -5,7 +5,7 @@
 //
 //   CI_TOOLS=/path/with/node_modules node .github/ci/syntax_ts_vue.mjs
 //
-// CI_TOOLS is a folder where `npm install typescript vue` was run (the workflow does this).
+// CI_TOOLS is a folder where `npm ci` ran on .github/ci/tools (the workflow does this).
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'

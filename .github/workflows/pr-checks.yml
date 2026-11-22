@@ -36,7 +36,7 @@ jobs:
         with:
           python-version: '3.12'
       # shellcheck pinned so "error" means the same thing every run (the runner image's own moves).
-      - run: pip install shellcheck-py==0.11.0.1 pyyaml && shellcheck --version
+      - run: pip install --require-hashes -r .github/ci/requirements-ci.lock && shellcheck --version
       - run: bash .github/ci/static_checks.sh
 
   # Syntax check of every .ts and .vue file (plugin/ and server/), using the same TypeScript and Vue
@@ -52,7 +52,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
-      - run: npm install --prefix "$RUNNER_TEMP/ci-tools" --no-save --no-package-lock --no-audit --no-fund typescript@6.0.3 vue@3.5.40
+      # From the lock file (integrity hashes), never `npm install` (ops #1014).
+      - run: |
+          mkdir -p "$RUNNER_TEMP/ci-tools"
+          cp .github/ci/tools/package.json .github/ci/tools/package-lock.json "$RUNNER_TEMP/ci-tools/"
+          npm ci --prefix "$RUNNER_TEMP/ci-tools" --ignore-scripts --no-audit --no-fund
       - run: node .github/ci/syntax_ts_vue.mjs
         env:
           CI_TOOLS: ${{ runner.temp }}/ci-tools
