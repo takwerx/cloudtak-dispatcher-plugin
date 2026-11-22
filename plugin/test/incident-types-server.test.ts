@@ -77,20 +77,41 @@ test('what the server stores is what the plugin reads back', () => {
     assert.deepEqual(lib.incidentTypeProblems(stored as lib.IncidentTypeOption[]), []);
 });
 
-test('a duplicated code or name refuses the whole list, ignoring case', () => {
+test('one name on several rows, one code each, is stored; a code with no name is stored (ops 1068, items 1 and 2)', () => {
+    const rows = [{ code: 'MVA', name: 'Traffic Accident' }, { code: 'wreck', name: 'traffic accident' }, { code: '1050', name: '' }, { code: 'w22' }].map(r => ({ name: '', ...r }));
+    assert.deepEqual(norm(rows), [
+        { code: 'MVA', name: 'Traffic Accident' }, { code: 'WRECK', name: 'traffic accident' }, { code: '1050', name: '' }, { code: 'W22', name: '' },
+    ]);
+    // the server and the plugin read the same list the same way
+    const stored = norm(rows) as lib.IncidentTypeOption[];
+    assert.deepEqual(lib.savedIncidentTypes(stored), stored);
+    assert.deepEqual(lib.incidentTypeProblems(stored), []);
+    // and refuse the same lists
+    for (const bad of [
+        [{ code: '', name: 'Fire' }, { code: 'F2', name: 'fire' }],
+        [{ code: 'F2', name: 'Fire' }, { code: '', name: 'fire' }],
+        [{ code: 'A', name: 'One' }, { code: 'a', name: 'One' }],
+    ]) {
+        assert.ok(lib.incidentTypeProblems(bad).length, 'plugin refuses ' + JSON.stringify(bad));
+        refuses(() => norm(bad), 400);
+    }
+    refuses(() => norm([{ code: '', name: '' }]), 400, /no name/);
+});
+
+test('a duplicated code, or a name repeated with no code of its own, refuses the whole list, ignoring case', () => {
     refuses(() => norm([{ code: 'MVA', name: 'One' }, { code: 'mva', name: 'Two' }]), 400, /Code MVA is used twice/);
-    refuses(() => norm([{ code: 'A', name: 'Fire' }, { code: 'B', name: 'FIRE' }]), 400, /"FIRE" is in the list twice/);
+    refuses(() => norm([{ code: 'A', name: 'Fire' }, { code: '', name: 'FIRE' }]), 400, /"FIRE" is in the list twice/);
     refuses(() => norm(['Fire', 'fire']), 400, /twice/);
     // two types with no code are fine
     assert.equal((norm(['One', 'Two']) as unknown[]).length, 2);
 });
 
-test('a malformed code, a missing name, a long name and junk are refused', () => {
+test('a malformed code, a row with neither code nor name, a long name and junk are refused', () => {
     for (const code of ['M VA', 'M-VA', 'A1B2C3D4E', 'É1']) {
         refuses(() => norm([{ code, name: 'X' }]), 400, /letters and digits only/);
     }
     assert.deepEqual(norm([{ code: 'A1B2C3D4', name: 'X' }]), [{ code: 'A1B2C3D4', name: 'X' }]);
-    refuses(() => norm([{ code: 'A', name: '  ' }]), 400, /no name/);
+    refuses(() => norm([{ code: ' ', name: '  ' }]), 400, /no name/);
     refuses(() => norm(['']), 400, /no name/);
     refuses(() => norm([{ code: 'A' }]), 400);
     refuses(() => norm([7]), 400);

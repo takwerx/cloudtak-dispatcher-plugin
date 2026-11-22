@@ -103,7 +103,7 @@ import { popOutDispatcher, dockDispatcher } from '../lib/float-pane.ts';
 import { busyUnits, workingUids } from '../lib/unit-status.ts';
 import type { IncidentQueue } from '../lib/unit-status.ts';
 import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, REOPEN_REASON_MAX, dispositionLabel } from '../lib/dispositions.ts';
-import { incidentTypeOptions } from '../lib/incident-types.ts';
+import { incidentTypeLabel, incidentTypeOptions } from '../lib/incident-types.ts';
 import {
     assignAction, unitStatusAction, removeUnitAction, addNoteAction, reportNumberAction, callerAction,
     closeAction, reopenAction, flyToIncident,
@@ -270,7 +270,7 @@ async function run(p: ParsedLine): Promise<string> {
                 const m = matchOptions(type, types);
                 if (!m.length) throw new Error(`No incident type matches "${type}". For an address alone: N , 120 main`);
                 name = m.length === 1 ? m[0].name : (await ask(`Which type is "${type}"?`,
-                    m.map(t => ({ label: t.code ? `${t.code}  ${t.name}` : t.name, value: t })))).name;
+                    m.map(t => ({ label: incidentTypeLabel(t), value: t })))).name;
             }
             const list = await board();
             keepForm(list);

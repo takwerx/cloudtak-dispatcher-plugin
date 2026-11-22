@@ -123,6 +123,20 @@ test('an incident type is named by its code first', () => {
     assert.deepEqual(m.matchOptions('MED', types).map(t => t.name), ['Medical Emergency']);
 });
 
+test('every code of a type names it: N wreck and N mva both open Traffic Accident (ops 1068)', () => {
+    const types = [
+        { code: 'MVA', codes: ['MVA', 'WRECK', '1050'], name: 'Traffic Accident' },
+        { code: 'MED', codes: ['MED'], name: 'Medical Emergency' },
+        { code: '', codes: [], name: 'Medical Assist' },
+        { code: '1050', codes: ['1050'], name: '1050' },
+    ];
+    for (const typed of ['mva', 'WRECK', 'wreck ', '1050']) {
+        assert.deepEqual(m.matchOptions(typed, types).map(t => t.name), typed.trim() === '1050' ? ['Traffic Accident', '1050'] : ['Traffic Accident'], typed);
+    }
+    // a code beats a name that starts with the same letters
+    assert.deepEqual(m.matchOptions('med', types).map(t => t.name), ['Medical Emergency']);
+});
+
 test('with no code: the whole name, then the start of the name, then word starts', () => {
     const types = ['Medical Emergency', 'Medical Assist', 'Fire', 'Traffic Accident', 'Gas Leak'].map(name => ({ name }));
     assert.deepEqual(m.matchOptions('fire', types).map(t => t.name), ['Fire']);

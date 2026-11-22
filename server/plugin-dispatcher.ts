@@ -392,8 +392,10 @@ function checkNotesList(list: unknown[] | undefined): void {
 
 // ── Incident types ──────────────────────────────────────────────────────────────
 // The admin's own incident types (setting incident_types) and the switch that hides the built-in
-// ones (incident_types_only), set in Dispatcher Settings → Incident Types. A type is a name with an
-// optional short code; the list is stored as [{ code, name }] with '' for no code. A list of plain
+// ones (incident_types_only), set in Dispatcher Settings → Incident Types. A type is a name with
+// optional short codes; the list is stored as one [{ code, name }] row per code, with '' for no code.
+// A name may be on several rows when each has its own code, and a row may be a code with no name
+// (a code nobody has named yet; the code then stands as the name). A list of plain
 // names, which is what older plugins sent and what an older database holds, is accepted and read as
 // names with no code. An incident stores its type's name as text, as before: the code never leaves
 // this list. Same rules as plugin/lib/incident-types.ts, which names the rows of a bad file before
@@ -407,12 +409,13 @@ const INCIDENT_TYPE_KEYS = new Set(['incident_types', 'incident_types_only']);
 
 interface IncidentTypeEntry {
     code: string;   // upper case letters and digits, or '' for none
-    name: string;
+    name: string;   // '' only for a code with no name yet
 }
 
 // Value a client may store under one of the incident type keys. The switch must be a boolean. The
-// list: every type needs a name, a code is letters and digits only, and no code or name may be in
-// the list twice (ignoring case). One bad type refuses the whole list.
+// list: every row needs a code or a name, a code is letters and digits only, no code may be in the
+// list twice, and a name may be on more than one row only when every one of those rows has its own
+// code (ignoring case). One bad row refuses the whole list.
 function normIncidentTypeSetting(key: string, value: unknown): unknown {
     if (key === 'incident_types_only') {
         if (typeof value !== 'boolean') throw new Err(400, null, 'incident_types_only must be true or false');
@@ -422,22 +425,23 @@ function normIncidentTypeSetting(key: string, value: unknown): unknown {
     if (value.length > INCIDENT_TYPES_MAX) throw new Err(400, null, `Too many incident types (${INCIDENT_TYPES_MAX} max)`);
     const list: IncidentTypeEntry[] = [];
     const codes = new Set<string>();
-    const names = new Set<string>();
+    const names = new Map<string, boolean>();   // name -> every row with it so far has a code
     for (const t of value) {
         const o = (t && typeof t === 'object' ? t : { name: t }) as { code?: unknown; name?: unknown };
         if (typeof o.name !== 'string' || (o.code !== undefined && o.code !== null && typeof o.code !== 'string')) {
-            throw new Err(400, null, 'Each incident type needs a name, and its code must be text');
+            throw new Err(400, null, 'Each incident type needs a name or a code, and its code must be text');
         }
         const name = o.name.replace(/\s+/g, ' ').trim();
         const code = String(o.code ?? '').trim().toUpperCase();
-        if (!name) throw new Err(400, null, 'An incident type has no name');
+        if (!name && !String(o.code ?? '').trim()) throw new Err(400, null, 'An incident type has no name');
         if (name.length > INCIDENT_TYPE_NAME_MAX) throw new Err(400, null, `Incident type "${name.slice(0, 30)}…" is too long (${INCIDENT_TYPE_NAME_MAX} characters max)`);
         if (code && (code.length > INCIDENT_TYPE_CODE_MAX || !/^[A-Z0-9]+$/.test(code))) {
             throw new Err(400, null, `Code "${code.slice(0, 30)}" must be letters and digits only, no spaces, ${INCIDENT_TYPE_CODE_MAX} at most`);
         }
-        if (names.has(name.toLowerCase())) throw new Err(400, null, `Incident type "${name}" is in the list twice`);
+        const prior = name ? names.get(name.toLowerCase()) : undefined;
+        if (prior !== undefined && (!code || !prior)) throw new Err(400, null, `Incident type "${name}" is in the list twice`);
         if (code && codes.has(code)) throw new Err(400, null, `Code ${code} is used twice`);
-        names.add(name.toLowerCase());
+        if (name) names.set(name.toLowerCase(), !!code);
         if (code) codes.add(code);
         list.push({ code, name });
     }

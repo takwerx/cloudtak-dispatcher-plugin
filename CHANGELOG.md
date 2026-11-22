@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Several codes for one incident type, and codes with no name yet.** In **Dispatcher Settings → Incident
+  Types**, a type can now have more than one code (`MVA` and `WRECK` for `Traffic Accident`): put its name on
+  several rows, each with its own code. Any of them names the type on the command line, and the Incident Type list
+  shows them all. A code can also be listed before anyone has named it (`1050,`); until it has a name, the code
+  stands as the name. Neither makes a CSV file fail any more.
+
+  **If you go back to 1.7.0:** a type with several codes keeps only its first, and a code with no name is not shown,
+  until you update again. Nothing is lost.
+
 ## 1.7.0
 
 New features, most of them contributed by Sentinel6Systems. All of them are for standalone mode; TAK-CAD mode works

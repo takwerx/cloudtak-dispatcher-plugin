@@ -197,19 +197,20 @@ export function unitRows(incidents: readonly DispatcherIncident[], want: 'assign
 
 // ── Incident types and dispositions ──────────────────────────────────────────────────────────────────
 
-export interface NamedOption { code?: string; name: string }
+// `codes` is every code a type answers to (the incident types have several); `code` is the one it has when it has one.
+export interface NamedOption { code?: string; codes?: readonly string[]; name: string }
 
 const nameWords = (s: string) => s.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
 
 /**
- * The options a typed text names, best kind of match first: a code, the whole name, the start of the
+ * The options a typed text names, best kind of match first: any of its codes, the whole name, the start of the
  * name, then every typed word starting a word of the name ("med em" is Medical Emergency). One option
  * back is the answer; several are offered as a numbered list; none is an error.
  */
 export function matchOptions<T extends NamedOption>(typed: string, options: readonly T[]): T[] {
     const text = typed.trim().toUpperCase();
     if (!text) return [];
-    const byCode = options.filter(o => (o.code ?? '').toUpperCase() === text);
+    const byCode = options.filter(o => (o.codes ?? [o.code ?? '']).some(c => c.toUpperCase() === text));
     if (byCode.length) return byCode;
     const whole = options.filter(o => o.name.toUpperCase() === text);
     if (whole.length) return whole;

@@ -11,7 +11,7 @@ import {
     DEFAULT_INCIDENT_TYPES, INCIDENT_TYPE_CODE_MAX, INCIDENT_TYPE_NAME_MAX, INCIDENT_TYPES_MAX,
     INCIDENT_TYPE_EXAMPLE_CSV,
     incidentTypeLabel, incidentTypeOptions, incidentTypeProblems, incidentTypesOnly, isIncidentTypeCode,
-    parseIncidentTypeCsv, savedIncidentTypes,
+    incidentTypeCount, parseIncidentTypeCsv, savedIncidentTypes,
 } from '../lib/incident-types.ts';
 import type { IncidentTypeOption } from '../lib/incident-types.ts';
 
@@ -45,21 +45,63 @@ test('an older saved list of plain names still loads, as names with no code', ()
     ]);
     const list = incidentTypeOptions({ incident_types: ['Zebra Loose', 'Brush Fire'] });
     assert.deepEqual(names(list).slice(-3), ['Brush Fire', 'Zebra Loose', 'Other']);
-    // a list with both shapes, and junk that is skipped rather than failing the read
-    assert.deepEqual(savedIncidentTypes(['Brush Fire', { code: 'mva', name: ' Vehicle  Crash ' }, 7, null, { code: 'X' }, '']), [
-        { code: '', name: 'Brush Fire' }, { code: 'MVA', name: 'Vehicle Crash' },
+    // a list with both shapes, and junk that is skipped rather than failing the read. A code with no
+    // name is a row now (a code nobody has named yet).
+    assert.deepEqual(savedIncidentTypes(['Brush Fire', { code: 'mva', name: ' Vehicle  Crash ' }, 7, null, { code: 'X' }, '', { code: 'B 1' }]), [
+        { code: '', name: 'Brush Fire' }, { code: 'MVA', name: 'Vehicle Crash' }, { code: 'X', name: '' },
     ]);
 });
 
-test('a hand-edited list cannot put a name or a code in the dropdown twice', () => {
+test('a hand-edited list cannot put a code in the dropdown twice, nor a name twice with no code', () => {
     assert.deepEqual(savedIncidentTypes([
-        { code: 'A1', name: 'Alarm' }, { code: 'A2', name: 'alarm' }, { code: 'a1', name: 'Alarm Two' }, { code: 'B 1', name: 'Bad Code' },
+        { code: 'A1', name: 'Alarm' }, { code: 'a1', name: 'Alarm Two' }, { code: 'B 1', name: 'Bad Code' },
+        { code: '', name: 'ALARM' }, { code: 'A1', name: '' },
     ]), [{ code: 'A1', name: 'Alarm' }, { code: '', name: 'Alarm Two' }, { code: '', name: 'Bad Code' }]);
+    // a name with no code, then the same name with one: the repeat is dropped, so the list stays valid
+    assert.deepEqual(savedIncidentTypes([{ code: '', name: 'Alarm' }, { code: 'A2', name: 'Alarm' }]), [{ code: '', name: 'Alarm' }]);
+});
+
+test('one type can have several codes: one dropdown line, every code on it (ops 1068, item 1)', () => {
+    const rows = [
+        { code: 'MVA', name: 'Traffic Accident' }, { code: 'WRECK', name: 'Traffic Accident' },
+        { code: '1050', name: 'traffic accident' }, { code: 'STR', name: 'Structure Fire' },
+    ];
+    assert.deepEqual(savedIncidentTypes(rows), rows, 'every row is kept');
+    const only = incidentTypeOptions({ incident_types: rows, incident_types_only: true });
+    assert.deepEqual(only, [
+        { code: 'MVA', codes: ['MVA', 'WRECK', '1050'], name: 'Traffic Accident' },
+        { code: 'STR', codes: ['STR'], name: 'Structure Fire' },
+    ]);
+    assert.equal(incidentTypeLabel(only[0]), 'MVA, WRECK, 1050 - Traffic Accident');
+    assert.equal(incidentTypeCount(rows), 2);
+    // switch off: the built-in Traffic Accident takes all three codes and is listed once
+    const list = incidentTypeOptions({ incident_types: rows });
+    assert.equal(list.filter(t => t.name === 'Traffic Accident').length, 1);
+    assert.deepEqual(list.find(t => t.name === 'Traffic Accident')?.codes, ['MVA', 'WRECK', '1050']);
+    assert.equal(list.find(t => t.name === 'Structure Fire')?.code, 'STR');
+    // no repeated name in the dropdown, so no repeated option value
+    assert.equal(new Set(list.map(t => t.name.toLowerCase())).size, list.length);
+});
+
+test('a code with no name yet: a row of its own, shown and chosen as the code (ops 1068, item 2)', () => {
+    const rows = [{ code: 'MVA', name: 'Traffic Accident' }, { code: '1050', name: '' }, { code: 'W22', name: '' }];
+    assert.deepEqual(savedIncidentTypes(rows), rows);
+    const only = incidentTypeOptions({ incident_types: rows, incident_types_only: true });
+    assert.deepEqual(names(only), ['Traffic Accident', '1050', 'W22']);
+    // the dropdown shows the code once, and the incident stores the code as its type name
+    assert.equal(incidentTypeLabel(only[1]), '1050');
+    assert.equal(only[1].name, '1050');
+    // switch off: it is listed by its code among the admin's own types, above Other
+    assert.deepEqual(names(incidentTypeOptions({ incident_types: rows })).slice(-3), ['1050', 'W22', 'Other']);
+    // an old plugin's saved list and a new one agree on a type that has no code
+    assert.deepEqual(incidentTypeProblems(rows), []);
+    // a row with neither is a problem
+    assert.deepEqual(incidentTypeProblems([{ code: '', name: '' }]), ['Row 1: it needs a code or a name.']);
 });
 
 test('switch on: only the admin\'s list, in the admin\'s order; no built-in type, no added Other', () => {
     const list = incidentTypeOptions({ incident_types: OWN, incident_types_only: true });
-    assert.deepEqual(list, OWN);
+    assert.deepEqual(list, [{ code: 'MVA', codes: ['MVA'], name: 'Vehicle Crash' }, { code: '', codes: [], name: 'Brush Fire' }]);
     assert.equal(incidentTypesOnly({ incident_types_only: true }), true);
     assert.equal(incidentTypesOnly({}), false);
     assert.equal(incidentTypesOnly(undefined), false);
@@ -75,11 +117,12 @@ test('switch off: a type named like a built-in one gives it its code and is not 
     const list = incidentTypeOptions({ incident_types: [{ code: 'MVA', name: 'traffic accident' }, { code: 'OTH', name: 'Other' }] });
     assert.deepEqual(names(list), DEFAULT_INCIDENT_TYPES);
     assert.equal(list.find(t => t.name === 'Traffic Accident')?.code, 'MVA');
-    assert.deepEqual(list[list.length - 1], { code: 'OTH', name: 'Other' });
+    assert.deepEqual(list[list.length - 1], { code: 'OTH', codes: ['OTH'], name: 'Other' });
 });
 
 test('the dropdown shows the code beside the name when there is one', () => {
     assert.equal(incidentTypeLabel({ code: 'MVA', name: 'Traffic Accident' }), 'MVA - Traffic Accident');
+    assert.equal(incidentTypeLabel({ code: 'MVA', codes: ['MVA', 'WRECK'], name: 'Traffic Accident' }), 'MVA, WRECK - Traffic Accident');
     assert.equal(incidentTypeLabel({ code: '', name: 'Welfare Check' }), 'Welfare Check');
 });
 
@@ -155,40 +198,57 @@ test('CSV: only a row of header words is skipped as the header', () => {
     assert.deepEqual(parseIncidentTypeCsv('code\nAlarm\n').types.map(t => t.name), ['code', 'Alarm']);
 });
 
-test('the example file loads clean and shows a code, a comma in a name and a type with no code', () => {
+test('the example file loads clean and shows a code, a second code, a comma in a name, a type with no code and a code with no name', () => {
     const read = parseIncidentTypeCsv(INCIDENT_TYPE_EXAMPLE_CSV);
     assert.deepEqual(read.errors, []);
-    assert.equal(read.types.length, 5);
+    assert.equal(read.types.length, 7);
     assert.ok(read.types.some(t => t.code === '' && t.name));
     assert.ok(read.types.some(t => t.name.includes(',')));
+    assert.equal(read.types.filter(t => t.name === 'Traffic Accident').length, 2);
+    assert.ok(read.types.some(t => t.code && !t.name));
+    assert.equal(incidentTypeCount(read.types), 6);
 });
 
-test('CSV: a duplicated code or name refuses the whole file and names the rows', () => {
-    const read = parseIncidentTypeCsv('code,name\nMVA,Traffic Accident\nFIRE,Fire\nmva,Vehicle Crash\nF2,fire\nMVA,Third\n');
+test('CSV: two rows with one name and different codes are one type with two codes; a code with no name is accepted (ops 1068, items 1 and 2)', () => {
+    const read = parseIncidentTypeCsv('code,name\nMVA,Traffic Accident\nWRECK,Traffic Accident\n1050,\nw22 ,\nSTR,Structure Fire\n');
+    assert.deepEqual(read.errors, []);
+    assert.deepEqual(read.types, [
+        { code: 'MVA', name: 'Traffic Accident' }, { code: 'WRECK', name: 'Traffic Accident' },
+        { code: '1050', name: '' }, { code: 'W22', name: '' }, { code: 'STR', name: 'Structure Fire' },
+    ]);
+    // semicolons too
+    assert.deepEqual(parseIncidentTypeCsv('MVA;Traffic Accident\nWRECK;Traffic Accident\n1050;\n').types.length, 3);
+    // a name with no code on two rows, or on one row with a code and one without, is still a repeat
+    assert.deepEqual(parseIncidentTypeCsv('Fire\nfire\n').errors, ['Rows 1 and 2: the name "Fire" is used more than once. Give each row its own code, or remove the repeat.']);
+    assert.equal(parseIncidentTypeCsv('F1,Fire\n,Fire\n').errors.length, 1);
+    // the same code twice is still refused, even for a name that may repeat
+    assert.deepEqual(parseIncidentTypeCsv('MVA,Traffic Accident\nmva,Traffic Accident\n').errors, ['Rows 1 and 2: the code MVA is used more than once.']);
+});
+
+test('CSV: a duplicated code, or a name repeated with no code of its own, refuses the whole file and names the rows', () => {
+    const read = parseIncidentTypeCsv('code,name\nMVA,Traffic Accident\nFIRE,Fire\nmva,Vehicle Crash\n,fire\nMVA,Third\n');
     assert.deepEqual(read.types, []);
     assert.deepEqual(read.errors, [
         'Rows 2, 4 and 6: the code MVA is used more than once.',
-        'Rows 3 and 5: the name "Fire" is used more than once.',
+        'Rows 3 and 5: the name "Fire" is used more than once. Give each row its own code, or remove the repeat.',
     ]);
 });
 
-test('CSV: a malformed code, a missing name, an unquoted comma and a long name are each named by row', () => {
+test('CSV: a malformed code, an unquoted comma and a long name are each named by row', () => {
     const read = parseIncidentTypeCsv([
         'code,name',
         'M VA,Traffic Accident',
         'TOOLONG99,Fire',
-        'MED,',
         'STR,Fire, Structure',
         `LONG,${'x'.repeat(INCIDENT_TYPE_NAME_MAX + 1)}`,
         `OK,${'x'.repeat(INCIDENT_TYPE_NAME_MAX)}`,
     ].join('\n'));
     assert.deepEqual(read.types, []);
-    assert.equal(read.errors.length, 5, 'in row order');
+    assert.equal(read.errors.length, 4, 'in row order');
     assert.match(read.errors[0], /^Row 2: the code "M VA" must be letters and digits only/);
     assert.match(read.errors[1], /^Row 3: the code "TOOLONG99"/);
-    assert.equal(read.errors[2], 'Row 4: the name is missing.');
-    assert.match(read.errors[3], /^Row 5: more than two columns/);
-    assert.equal(read.errors[4], `Row 6: the name is longer than ${INCIDENT_TYPE_NAME_MAX} characters.`);
+    assert.match(read.errors[2], /^Row 4: more than two columns/);
+    assert.equal(read.errors[3], `Row 5: the name is longer than ${INCIDENT_TYPE_NAME_MAX} characters.`);
 });
 
 test('CSV: an empty file, or one with only a header, says so; too many types is refused', () => {
@@ -204,7 +264,9 @@ test('a list checked without a file numbers the types by their place', () => {
     assert.deepEqual(incidentTypeProblems([{ code: 'A', name: 'One' }, { code: '', name: 'Two' }]), []);
     assert.deepEqual(incidentTypeProblems([{ code: 'A', name: 'One' }, { code: 'a', name: 'one' }]), [
         'Rows 1 and 2: the code A is used more than once.',
-        'Rows 1 and 2: the name "One" is used more than once.',
+    ]);
+    assert.deepEqual(incidentTypeProblems([{ code: '', name: 'One' }, { code: '', name: 'one' }]), [
+        'Rows 1 and 2: the name "One" is used more than once. Give each row its own code, or remove the repeat.',
     ]);
 });
 

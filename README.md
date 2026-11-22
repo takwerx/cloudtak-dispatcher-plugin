@@ -72,15 +72,17 @@ Types** is locked to the same admin account.
 ### Incident types (standalone)
 
 The **Incident Type** list on a new incident starts as the plugin's built-in types. **Dispatcher Settings →
-Incident Types** (CloudTAK system admin only) holds the agency's own types, each a **name** with an optional
-short **code** (`MVA` for `Traffic Accident`):
+Incident Types** (CloudTAK system admin only) holds the agency's own types, each a **name** with optional
+short **codes** (`MVA` and `WRECK` for `Traffic Accident`):
 
-- **Load from a CSV file**: two columns, code then name, one type per row (`MVA,Traffic Accident`). The code can
-  be left empty (`,Welfare Check`), a header row (`code,name`, or `name` over a list of names) is skipped, and a
+- **Load from a CSV file**: two columns, code then name, one row per code (`MVA,Traffic Accident`). The code can
+  be left empty (`,Welfare Check`). The name can be left empty too, for a code nobody has named yet (`1050,`): the
+  code then stands as the name. Put one name on several rows, each with its own code (`MVA,Traffic Accident` and
+  `WRECK,Traffic Accident`), to give it several codes; any of them names that type on the command line. A header row (`code,name`, or `name` over a list of names) is skipped, and a
   name with a comma in it goes in quotes. A file with semicolons or tabs between the two columns is read the
-  same way. **Download example CSV** gives a file to start from. Loading a file replaces the list. If a code or
-  a name is in the file twice (upper and lower case count as the same), or a code is malformed, nothing is
-  loaded and the rows at fault are named, numbered as a spreadsheet numbers them.
+  same way. **Download example CSV** gives a file to start from. Loading a file replaces the list. If a code is
+  in the file twice, a name is repeated on a row with no code of its own (upper and lower case count as the
+  same), or a code is malformed, nothing is loaded and the rows at fault are named, numbered as a spreadsheet numbers them.
 - **Add** one type by hand with the Code and name boxes, or remove one with its trash can.
 - A code is letters and digits only, no spaces, 8 at most, and is stored in upper case.
 - **Use only these incident types**: on, the built-in types are removed and dispatchers pick from the agency's
@@ -88,7 +90,7 @@ short **code** (`MVA` for `Traffic Accident`):
   added to the built-in ones, as before; a type named like a built-in one gives that one its code. With the
   switch on and an empty list, the built-in types stay, so the list is never empty.
 
-The list shows the code beside the name (`MVA - Traffic Accident`). An incident stores the **name**, as before,
+The list shows the codes beside the name (`MVA, WRECK - Traffic Accident`). An incident stores the **name**, as before,
 so markers, the feed log and reports show the name and never the code, and incidents created earlier keep the
 type they have. A change reaches each dispatcher the next time they start a new incident: the list is read
 again when the board starts, when an incident is opened and when the New Incident form opens. A list saved by

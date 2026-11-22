@@ -1,8 +1,10 @@
 // Incident types for the standalone New Incident form: the built-in list, the admin's own list
 // (Dispatcher Settings → Incident Types: loaded from a CSV file or typed in) and the admin switch
-// that hides the built-in ones. A type is a NAME with an optional short CODE ("MVA" for "Traffic
-// Accident"). An incident stores the name as text, as it always has, so markers and reports are
-// unchanged; the code lives only in this list. Pure: no CloudTAK imports, so
+// that hides the built-in ones. A type is a NAME with optional short CODES ("MVA" and "WRECK" for
+// "Traffic Accident"). The saved list has one row per code, so a name may be on several rows when each
+// row has its own code, and a row may be a code alone (a code nobody has named yet; the code then
+// stands as the name). An incident stores the name as text, as it always has, so markers and reports
+// are unchanged; the codes live only in this list. Pure: no CloudTAK imports, so
 // plugin/test/incident-types.test.ts runs this file as it ships. The server checks a saved list by
 // the same rules (server/plugin-dispatcher.ts, <incident-types-pure>).
 
@@ -14,8 +16,10 @@ export const DEFAULT_INCIDENT_TYPES = [
     'Crowd Control', 'VIP Security', 'Welfare Check', 'Other',
 ];
 
-// One line of the Incident Type dropdown. `code` is '' when the type has none.
-export interface IncidentTypeOption { code: string; name: string }
+// One line of the Incident Type dropdown, or one saved row. `code` is '' when the type has none. In the
+// dropdown (incidentTypeOptions) `codes` is every code the type answers to (`code` is the first) and
+// `name` is never empty; in a saved row `name` is '' for a code with no name.
+export interface IncidentTypeOption { code: string; name: string; codes?: string[] }
 
 // Shared settings (dispatcher_settings), both CloudTAK system admin only: the admin's list, and the
 // switch "use only these incident types".
@@ -55,20 +59,25 @@ export function isIncidentTypeCode(code: string): boolean {
 }
 
 // The admin's list as saved. An older list is plain names (["Brush Fire"]): those load as names with
-// no code. Anything that is not a type is skipped rather than failing the read, and so is a second
-// type with a name already in the list; a code that is malformed or already taken reads as no code.
+// no code. Anything that is not a type is skipped rather than failing the read. So is a row that
+// repeats a name without a new code of its own; a code that is malformed or already taken reads as no
+// code (and the row is then skipped when it has no name either).
 export function savedIncidentTypes(v: unknown): IncidentTypeOption[] {
     if (!Array.isArray(v)) return [];
     const out: IncidentTypeOption[] = [];
     const names = new Set<string>();
+    const uncoded = new Set<string>();   // names that have a row with no code
     const codes = new Set<string>();
     for (const t of v) {
         const o = (t && typeof t === 'object' ? t : { name: t }) as { code?: unknown; name?: unknown };
         const name = typeof o.name === 'string' ? incidentTypeName(o.name) : '';
-        if (!name || names.has(name.toLowerCase())) continue;
         let code = typeof o.code === 'string' ? incidentTypeCode(o.code) : '';
         if (!isIncidentTypeCode(code) || codes.has(code)) code = '';
-        names.add(name.toLowerCase());
+        if (!name && !code) continue;
+        const key = name.toLowerCase();
+        if (name && names.has(key) && (!code || uncoded.has(key))) continue;
+        if (name) names.add(key);
+        if (name && !code) uncoded.add(key);
         if (code) codes.add(code);
         out.push({ code, name });
     }
@@ -80,16 +89,40 @@ export function incidentTypesOnly(settings: Record<string, unknown> | null | und
     return settings?.[INCIDENT_TYPES_ONLY_SETTING] === true;
 }
 
+// Saved rows as the types a dispatcher picks from: one per name, with every code that name has, in
+// the order the names first appear. A row with no name is its code (the dropdown shows it as it is).
+function groupedTypes(rows: readonly IncidentTypeOption[]): IncidentTypeOption[] {
+    const out = new Map<string, IncidentTypeOption>();
+    for (const r of rows) {
+        const name = r.name || r.code;
+        const hit = out.get(name.toLowerCase());
+        if (hit) {
+            if (r.code) hit.codes!.push(r.code);
+        } else {
+            out.set(name.toLowerCase(), { code: '', name, codes: r.code ? [r.code] : [] });
+        }
+    }
+    return [...out.values()].map(t => ({ ...t, code: t.codes![0] ?? '' }));
+}
+
+// How many types a saved list holds: a name on several rows (one code each) is one type.
+export function incidentTypeCount(rows: readonly IncidentTypeOption[]): number {
+    return groupedTypes(rows).length;
+}
+
 // The types a dispatcher picks from, in dropdown order, from what getDispatcherSettings() returns.
 //   Switch on:  the admin's list and nothing else, in the admin's order. With an empty list the
 //               built-in types stay, so the dropdown is never empty.
 //   Switch off: the built-in types (without Other), then the admin's types by name, then Other. A
-//               type in the admin's list with a built-in type's name gives that one its code.
+//               type in the admin's list with a built-in type's name gives that one its codes.
 export function incidentTypeOptions(settings: Record<string, unknown>): IncidentTypeOption[] {
-    const own = savedIncidentTypes(settings?.[INCIDENT_TYPES_SETTING]);
+    const own = groupedTypes(savedIncidentTypes(settings?.[INCIDENT_TYPES_SETTING]));
     if (incidentTypesOnly(settings) && own.length) return own;
     const byName = new Map(own.map(t => [t.name.toLowerCase(), t]));
-    const builtIn = DEFAULT_INCIDENT_TYPES.map(name => ({ code: byName.get(name.toLowerCase())?.code ?? '', name }));
+    const builtIn = DEFAULT_INCIDENT_TYPES.map((name) => {
+        const codes = byName.get(name.toLowerCase())?.codes ?? [];
+        return { code: codes[0] ?? '', name, codes };
+    });
     const builtInNames = new Set(builtIn.map(t => t.name.toLowerCase()));
     const extra = own
         .filter(t => !builtInNames.has(t.name.toLowerCase()))
@@ -98,9 +131,11 @@ export function incidentTypeOptions(settings: Record<string, unknown>): Incident
     return [...builtIn.filter(t => t.name !== 'Other'), ...extra, ...builtIn.filter(t => t.name === 'Other')];
 }
 
-// What the dropdown shows for one type: "MVA - Traffic Accident", or the name alone.
+// What the dropdown shows for one type: "MVA, WRECK - Traffic Accident", or the name alone. A code
+// that is the name itself (a code with no name) is not shown twice.
 export function incidentTypeLabel(t: IncidentTypeOption): string {
-    return t.code ? `${t.code} - ${t.name}` : t.name;
+    const codes = (t.codes ?? (t.code ? [t.code] : [])).filter(c => c.toLowerCase() !== t.name.toLowerCase());
+    return codes.length ? `${codes.join(', ')} - ${t.name}` : t.name;
 }
 
 // "Row 4", "Rows 4 and 9", "Rows 4, 9 and 12".
@@ -115,12 +150,15 @@ interface TypeProblem { row: number; text: string }
 function typeProblems(types: IncidentTypeOption[], rows?: number[]): TypeProblem[] {
     const row = (i: number) => rows?.[i] ?? i + 1;
     const problems: TypeProblem[] = [];
-    // What was seen (the code, or the name as first spelled) and the rows it was seen in.
-    const codes = new Map<string, { text: string; rows: number[] }>();
-    const names = new Map<string, { text: string; rows: number[] }>();
-    const seen = (map: typeof codes, text: string, i: number) => {
-        const hit = map.get(text.toLowerCase()) ?? { text, rows: [] };
+    // What was seen (the code, or the name as first spelled), the rows it was seen in and, for a name,
+    // whether one of those rows has no code.
+    interface Seen { text: string; rows: number[]; uncoded: boolean }
+    const codes = new Map<string, Seen>();
+    const names = new Map<string, Seen>();
+    const seen = (map: Map<string, Seen>, text: string, i: number, uncoded = false) => {
+        const hit = map.get(text.toLowerCase()) ?? { text, rows: [], uncoded: false };
         hit.rows.push(row(i));
+        hit.uncoded ||= uncoded;
         map.set(text.toLowerCase(), hit);
     };
     types.forEach((t, i) => {
@@ -130,18 +168,19 @@ function typeProblems(types: IncidentTypeOption[], rows?: number[]): TypeProblem
             seen(codes, t.code, i);
         }
         if (!t.name) {
-            problems.push({ row: row(i), text: `Row ${row(i)}: the name is missing.` });
+            if (!t.code) problems.push({ row: row(i), text: `Row ${row(i)}: it needs a code or a name.` });
         } else if (t.name.length > INCIDENT_TYPE_NAME_MAX) {
             problems.push({ row: row(i), text: `Row ${row(i)}: the name is longer than ${INCIDENT_TYPE_NAME_MAX} characters.` });
         } else {
-            seen(names, t.name, i);
+            seen(names, t.name, i, !t.code);
         }
     });
     for (const c of codes.values()) {
         if (c.rows.length > 1) problems.push({ row: c.rows[0], text: `${rowsLabel(c.rows)}: the code ${c.text.toUpperCase()} is used more than once.` });
     }
+    // A name may be on several rows, one code each (MVA and WRECK for Traffic Accident); not twice with no code.
     for (const n of names.values()) {
-        if (n.rows.length > 1) problems.push({ row: n.rows[0], text: `${rowsLabel(n.rows)}: the name "${n.text}" is used more than once.` });
+        if (n.rows.length > 1 && n.uncoded) problems.push({ row: n.rows[0], text: `${rowsLabel(n.rows)}: the name "${n.text}" is used more than once. Give each row its own code, or remove the repeat.` });
     }
     return problems;
 }
@@ -238,8 +277,10 @@ function isTypeHeader(cells: string[]): boolean {
     return second ? first === 'code' && NAME_HEADERS.has(second) : NAME_HEADERS.has(first);
 }
 
-// Read the admin's CSV file: two columns, code then name, one type per row. The code may be left
-// empty (",Welfare Check"), and a row with a single cell is a name with no code. Blank rows and a
+// Read the admin's CSV file: two columns, code then name, one row per code. The code may be left
+// empty (",Welfare Check"), the name may be left empty (a code nobody has named yet: "1050,"), and a
+// row with a single cell is a name with no code. The same name on several rows, each with its own
+// code, is one type with several codes. Blank rows and a
 // first row of header words ("code,name", or "name" alone) are skipped. Semicolons or tabs between
 // the columns are read too. Codes come back in upper case. Any problem refuses the whole file:
 // `errors` names the rows as a spreadsheet numbers them, and `types` is then empty.
@@ -268,15 +309,17 @@ export function parseIncidentTypeCsv(text: string): { types: IncidentTypeOption[
     return errors.length ? { types: [], errors } : { types, errors };
 }
 
-// The file behind "Download example CSV": made-up rows that show a code, a name with a comma in it
-// and a type with no code.
+// The file behind "Download example CSV": made-up rows that show a code, a second code for the same
+// name, a name with a comma in it, a type with no code and a code with no name yet.
 export const INCIDENT_TYPE_EXAMPLE_NAME = 'incident-types-example.csv';
 export const INCIDENT_TYPE_EXAMPLE_CSV = [
     'code,name',
     'MVA,Traffic Accident',
+    'WRECK,Traffic Accident',
     'STR,Structure Fire',
     'MED,Medical Emergency',
     'ALARM,"Alarm, Commercial"',
     ',Welfare Check',
+    '1050,',
     '',
 ].join('\r\n');

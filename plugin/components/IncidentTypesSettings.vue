@@ -47,21 +47,28 @@
                 >
                     <div
                         v-for='t in types'
-                        :key='t.name'
+                        :key='`${t.code}|${t.name}`'
                         class='d-flex align-items-center gap-2 px-2 py-1 border-bottom'
                     >
                         <span
                             class='fw-semibold flex-shrink-0'
                             style='width:6.5em'
                         >{{ t.code || '—' }}</span>
-                        <span class='flex-grow-1'>{{ t.name }}</span>
+                        <span
+                            v-if='t.name'
+                            class='flex-grow-1'
+                        >{{ t.name }}</span>
+                        <span
+                            v-else
+                            class='flex-grow-1 text-muted fst-italic'
+                        >No name yet</span>
                         <button
                             v-if='isAdmin'
                             class='btn btn-link btn-sm p-0 text-danger text-decoration-none flex-shrink-0'
                             style='min-height:0;line-height:1'
                             type='button'
-                            :title='`Remove ${t.name}`'
-                            :aria-label='`Remove ${t.name}`'
+                            :title='`Remove ${t.name || t.code}`'
+                            :aria-label='`Remove ${t.name || t.code}`'
                             :disabled='saving'
                             @click='removeType(t)'
                         >
@@ -82,7 +89,7 @@
                     v-if='types.length'
                     class='text-muted'
                 >
-                    {{ types.length }} {{ types.length === 1 ? 'type' : 'types' }}
+                    {{ typeCount }} {{ typeCount === 1 ? 'type' : 'types' }}
                 </div>
 
                 <label class='mb-0 text-muted'>Load from a CSV file (replaces this list)
@@ -105,7 +112,9 @@
                         Download example CSV
                     </button>
                     <span class='text-muted'>
-                        Two columns, code then name, one type per row. The code can be left empty.
+                        Two columns, code then name, one row per code. Leave the code empty for a type with no
+                        code, or the name empty for a code with no name yet. Give a name several rows to give it
+                        several codes.
                     </span>
                 </div>
 
@@ -126,7 +135,7 @@
                         v-model='newName'
                         type='text'
                         class='form-control form-control-sm border flex-grow-1'
-                        placeholder='Add one incident type…'
+                        placeholder='Add one incident type… (or a code alone)'
                         aria-label='Name'
                         :maxlength='INCIDENT_TYPE_NAME_MAX'
                         data-test='incident-type-name'
@@ -136,7 +145,7 @@
                     <button
                         class='btn btn-sm btn-outline-secondary'
                         type='button'
-                        :disabled='!isAdmin || !newName.trim() || saving'
+                        :disabled='!isAdmin || (!newName.trim() && !newCode.trim()) || saving'
                         @click='addType'
                     >
                         Add
@@ -170,10 +179,11 @@
                 </div>
 
                 <div class='text-muted small'>
-                    The code is a short word for the type (letters and digits, {{ INCIDENT_TYPE_CODE_MAX }} at
-                    most), shown beside the name in the Incident Type list. Incidents, markers and reports
-                    show the name. A change here reaches each dispatcher the next time they start a new
-                    incident; incidents already created keep their type.
+                    A code is a short word for the type (letters and digits, {{ INCIDENT_TYPE_CODE_MAX }} at
+                    most), shown beside the name in the Incident Type list. A type can have several codes:
+                    add the same name again with each code. A code with no name stands as the name.
+                    Incidents, markers and reports show the name. A change here reaches each dispatcher the
+                    next time they start a new incident; incidents already created keep their type.
                 </div>
             </div>
         </div>
@@ -181,7 +191,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { IconCheck, IconTrash } from '@tabler/icons-vue';
 import { getDispatcherSettings, putDispatcherSetting } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
@@ -189,7 +199,7 @@ import { downloadFile } from '../lib/report.ts';
 import {
     INCIDENT_TYPES_SETTING, INCIDENT_TYPES_ONLY_SETTING, INCIDENT_TYPE_CODE_MAX, INCIDENT_TYPE_NAME_MAX,
     INCIDENT_TYPE_EXAMPLE_CSV, INCIDENT_TYPE_EXAMPLE_NAME,
-    incidentTypeCode, incidentTypeFileProblem, incidentTypeName, incidentTypeOptions, incidentTypeProblems, incidentTypesOnly,
+    incidentTypeCode, incidentTypeCount, incidentTypeFileProblem, incidentTypeName, incidentTypeOptions, incidentTypeProblems, incidentTypesOnly,
     isIncidentTypeCode, parseIncidentTypeCsv, savedIncidentTypes,
 } from '../lib/incident-types.ts';
 import type { IncidentTypeOption } from '../lib/incident-types.ts';
@@ -208,6 +218,7 @@ const newName  = ref('');
 const saving   = ref(false);
 const problems = ref<string[]>([]);
 const loaded   = ref('');
+const typeCount = computed(() => incidentTypeCount(types.value));
 
 // What this card shows is what is saved: hand it to the shared store, so the next New Incident on
 // this computer offers it without waiting for a reload of the settings.
@@ -267,7 +278,8 @@ async function onFile(ev: Event) {
         if (read.errors.length) {
             problems.value = ['Nothing was loaded. Fix the file and load it again.', ...read.errors];
         } else if (await saveTypes(read.types)) {
-            loaded.value = `Loaded ${read.types.length} ${read.types.length === 1 ? 'type' : 'types'} from ${file.name}`;
+            const count = incidentTypeCount(read.types);
+            loaded.value = `Loaded ${count} ${count === 1 ? 'type' : 'types'} from ${file.name}`;
         }
     } catch {
         problems.value = ['Could not read that file.'];
@@ -280,7 +292,7 @@ async function onFile(ev: Event) {
 async function addType() {
     const code = incidentTypeCode(newCode.value);
     const name = incidentTypeName(newName.value);
-    if (!name) return;
+    if (!name && !code) return;
     problems.value = [];
     loaded.value = '';
     if (code && !isIncidentTypeCode(code)) {
@@ -289,11 +301,13 @@ async function addType() {
     }
     const sameCode = code ? types.value.find(t => t.code === code) : undefined;
     if (sameCode) {
-        problems.value = [`The code ${code} is already used by ${sameCode.name}.`];
+        problems.value = [`The code ${code} is already used by ${sameCode.name || 'a code with no name'}.`];
         return;
     }
-    if (types.value.some(t => t.name.toLowerCase() === name.toLowerCase())) {
-        problems.value = ['That incident type is already in the list.'];
+    // The same name again is how a type gets another code; with no code it would be a plain repeat.
+    const sameName = name ? types.value.filter(t => t.name.toLowerCase() === name.toLowerCase()) : [];
+    if (sameName.length && (!code || sameName.some(t => !t.code))) {
+        problems.value = ['That incident type is already in the list. To give it another code, type the code with the same name.'];
         return;
     }
     const next = [...types.value, { code, name }];
@@ -309,7 +323,8 @@ async function addType() {
 async function removeType(t: IncidentTypeOption) {
     problems.value = [];
     loaded.value = '';
-    await saveTypes(types.value.filter(x => x.name !== t.name));
+    // One row: a name with several codes keeps its other codes.
+    await saveTypes(types.value.filter(x => !(x.name === t.name && x.code === t.code)));
 }
 
 function downloadExample() {
