@@ -106,8 +106,9 @@
                         Download example CSV
                     </button>
                     <span class='text-muted'>
-                        Two columns, code then name. The code can be left empty. For more codes for
-                        one type, add a row for each code with the same name.
+                        Two columns, code then name. The code can be left empty; with the name left
+                        empty, the code is the name. For more codes for one type, add a row for each
+                        code with the same name.
                     </span>
                 </div>
 
@@ -138,7 +139,7 @@
                     <button
                         class='btn btn-sm btn-outline-secondary'
                         type='button'
-                        :disabled='!isAdmin || !newName.trim() || saving'
+                        :disabled='!isAdmin || !(newName.trim() || newCode.trim()) || saving'
                         @click='addType'
                     >
                         Add
@@ -282,7 +283,8 @@ async function onFile(ev: Event) {
 
 async function addType() {
     const code = incidentTypeCode(newCode.value);
-    const name = incidentTypeName(newName.value);
+    // A code alone is a type named by its code, as in a CSV file.
+    const name = incidentTypeName(newName.value) || code;
     if (!name) return;
     problems.value = [];
     loaded.value = '';

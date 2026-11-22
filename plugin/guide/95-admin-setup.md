@@ -20,7 +20,7 @@ A setting marked **CloudTAK admin only** can be changed only when you are signed
 
 Your own incident types, each with a short code if you want one, such as **MVA - Traffic Accident**. CloudTAK admin only.
 
-1. Under **Incident Types**, press **Download example CSV** to see the layout: two columns, code then name. The code can be left empty.
+1. Under **Incident Types**, press **Download example CSV** to see the layout: two columns, code then name. The code can be left empty. If the name is left empty, the code is used as the name (the incident and reports show the code) until you give it a name.
 2. Make your file the same way. A code is letters and digits only, no spaces, 8 at most.
    To let dispatchers type a type more than one way on the command line, add one more row for each extra code, with the same name: `MVA,Traffic Accident`, then `WRECK,Traffic Accident`. Up to 10 codes per type. The first one shows in the Incident Type list.
 3. Under **Load from a CSV file (replaces this list)**, pick your file.

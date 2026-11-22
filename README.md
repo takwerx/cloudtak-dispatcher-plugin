@@ -77,7 +77,8 @@ short **code** (`MVA` for `Traffic Accident`), and up to 10 codes in all for the
 `1050` can all start a Traffic Accident):
 
 - **Load from a CSV file**: two columns, code then name, one type per row (`MVA,Traffic Accident`). The code can
-  be left empty (`,Welfare Check`), a header row (`code,name`, or `name` over a list of names) is skipped, and a
+  be left empty (`,Welfare Check`). With the name left empty (`SMOKE,`), the code is used as the name until the
+  file gives it one. A header row (`code,name`, or `name` over a list of names) is skipped, and a
   name with a comma in it goes in quotes. A file with semicolons or tabs between the two columns is read the
   same way. **Download example CSV** gives a file to start from. Loading a file replaces the list. For more
   codes for one type, give it one more row per code with the same name (`WRECK,Traffic Accident`): the first
@@ -85,7 +86,8 @@ short **code** (`MVA` for `Traffic Accident`), and up to 10 codes in all for the
   file twice (upper and lower case count as the same), a name is repeated on a row with no code, or a code is
   malformed, nothing is loaded and the rows at fault are named, numbered as a spreadsheet numbers them.
 - **Add** one type by hand with the Code and name boxes, or remove one with its trash can. Adding a name that is
-  already in the list with a new code gives that type one more code.
+  already in the list with a new code gives that type one more code. A code with no name adds a type named by its
+  code.
 - A code is letters and digits only, no spaces, 8 at most, and is stored in upper case.
 - **Use only these incident types**: on, the built-in types are removed and dispatchers pick from the agency's
   list only, in the order of the list (the first one is preselected). Off (the default), the agency's types are

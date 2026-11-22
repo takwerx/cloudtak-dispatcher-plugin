@@ -205,7 +205,7 @@ test('CSV: a duplicated code, a repeated row that adds no code, or too many code
     assert.equal(incidentTypeCodes(parseIncidentTypeCsv(lots.slice(0, lots.lastIndexOf('\n'))).types[0]).length, INCIDENT_TYPE_CODES_MAX);
 });
 
-test('CSV: a malformed code, a missing name, an unquoted comma and a long name are each named by row', () => {
+test('CSV: a malformed code, an unquoted comma and a long name are each named by row', () => {
     const read = parseIncidentTypeCsv([
         'code,name',
         'M VA,Traffic Accident',
@@ -216,12 +216,25 @@ test('CSV: a malformed code, a missing name, an unquoted comma and a long name a
         `OK,${'x'.repeat(INCIDENT_TYPE_NAME_MAX)}`,
     ].join('\n'));
     assert.deepEqual(read.types, []);
-    assert.equal(read.errors.length, 5, 'in row order');
+    assert.equal(read.errors.length, 4, 'in row order');
     assert.match(read.errors[0], /^Row 2: the code "M VA" must be letters and digits only/);
     assert.match(read.errors[1], /^Row 3: the code "TOOLONG99"/);
-    assert.equal(read.errors[2], 'Row 4: the name is missing.');
-    assert.match(read.errors[3], /^Row 5: more than two columns/);
-    assert.equal(read.errors[4], `Row 6: the name is longer than ${INCIDENT_TYPE_NAME_MAX} characters.`);
+    assert.match(read.errors[2], /^Row 5: more than two columns/);
+    assert.equal(read.errors[3], `Row 6: the name is longer than ${INCIDENT_TYPE_NAME_MAX} characters.`);
+});
+
+test('CSV: a code with the name left empty is a type named by its code', () => {
+    const read = parseIncidentTypeCsv('code,name\nMVA,Traffic Accident\nsmoke,\n , \nSTR,Structure Fire\n');
+    assert.deepEqual(read.errors, []);
+    assert.deepEqual(read.types, [
+        { code: 'MVA', name: 'Traffic Accident' },
+        { code: 'SMOKE', name: 'SMOKE' },
+        { code: 'STR', name: 'Structure Fire' },
+    ]);
+    assert.equal(incidentTypeLabel(read.types[1]), 'SMOKE');
+    assert.equal(incidentTypeLabel(read.types[0]), 'MVA - Traffic Accident');
+    // the same code twice is still refused, named or not
+    assert.match(parseIncidentTypeCsv('SMOKE,\nSMOKE,Smoke Report').errors[0], /^Rows 1 and 2: the code SMOKE is used more than once/);
 });
 
 test('CSV: an empty file, or one with only a header, says so; too many types is refused', () => {

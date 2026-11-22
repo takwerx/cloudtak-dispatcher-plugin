@@ -270,7 +270,7 @@ async function run(p: ParsedLine): Promise<string> {
                 const m = matchOptions(type, types);
                 if (!m.length) throw new Error(`No incident type matches "${type}". For an address alone: N , 120 main`);
                 name = m.length === 1 ? m[0].name : (await ask(`Which type is "${type}"?`,
-                    m.map(t => ({ label: t.code ? `${t.code}  ${t.name}` : t.name, value: t })))).name;
+                    m.map(t => ({ label: t.code && t.code !== t.name ? `${t.code}  ${t.name}` : t.name, value: t })))).name;
             }
             const list = await board();
             keepForm(list);

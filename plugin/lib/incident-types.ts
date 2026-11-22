@@ -121,10 +121,10 @@ export function incidentTypeOptions(settings: Record<string, unknown>): Incident
     return [...builtIn.filter(t => t.name !== 'Other'), ...extra, ...builtIn.filter(t => t.name === 'Other')];
 }
 
-// What the dropdown shows for one type: "MVA - Traffic Accident", or the name alone. Aliases are for
-// typing and are not shown.
+// What the dropdown shows for one type: "MVA - Traffic Accident", or the name alone (also for a type
+// named by its code: "SMOKE", not "SMOKE - SMOKE"). Aliases are for typing and are not shown.
 export function incidentTypeLabel(t: IncidentTypeOption): string {
-    return t.code ? `${t.code} - ${t.name}` : t.name;
+    return t.code && t.code !== t.name ? `${t.code} - ${t.name}` : t.name;
 }
 
 // "Row 4", "Rows 4 and 9", "Rows 4, 9 and 12".
@@ -281,7 +281,9 @@ function isTypeHeader(cells: string[]): boolean {
 }
 
 // Read the admin's CSV file: two columns, code then name, one code per row. The code may be left
-// empty (",Welfare Check"), and a row with a single cell is a name with no code. A type with more than
+// empty (",Welfare Check"), and a row with a single cell is a name with no code. A code with the name
+// left empty ("SMOKE,") is a type named by its code, so the incident and reports show "SMOKE" until the
+// agency gives it a name. A type with more than
 // one code has one row per code, all with its name: the first row's code is the one the dropdown
 // shows, the others are aliases for the command line, and the type keeps the place of its first row.
 // Blank rows and a first row of header words ("code,name", or "name" alone) are skipped. Semicolons
@@ -301,9 +303,8 @@ export function parseIncidentTypeCsv(text: string): { types: IncidentTypeOption[
             problems.push({ row: i + 1, text: `Row ${i + 1}: more than two columns. Put quotes around a name that has a ${SEPARATORS[file.sep]} in it.` });
             return;
         }
-        list.push(cells.length === 1
-            ? { code: '', name: cells[0], row: i + 1 }
-            : { code: incidentTypeCode(cells[0]), name: cells[1], row: i + 1 });
+        const code = cells.length === 1 ? '' : incidentTypeCode(cells[0]);
+        list.push({ code, name: (cells.length === 1 ? cells[0] : cells[1]) || code, row: i + 1 });
     });
     // One type per name, in the order of its first row, with its codes in row order.
     const byName = new Map<string, { name: string; codes: string[] }>();
