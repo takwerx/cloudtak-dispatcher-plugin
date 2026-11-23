@@ -36,6 +36,9 @@ export interface AssignedContact {
     assigned_at?: string | null;
     on_scene_at?: string | null;
     cleared_at?: string | null;
+    // A unit with no TAK device (off shift, not signed in): a callsign the dispatcher typed, with a uid the
+    // server made from it. It gets no messages. See lib/off-tak.ts.
+    off_tak?: boolean;
 }
 
 export interface IncidentNote {
@@ -215,7 +218,7 @@ export async function removeCaller(incidentId: string, callerId: string): Promis
 
 // ── Units (the server stamps every time and writes the note) ─────────────────────
 
-export async function assignUnits(incidentId: string, units: { uid: string; callsign: string }[]): Promise<DispatcherIncident> {
+export async function assignUnits(incidentId: string, units: { uid: string; callsign: string; off_tak?: boolean }[]): Promise<DispatcherIncident> {
     const r = await std(`/api/dispatcher/incidents/${encodeURIComponent(incidentId)}/units`, {
         method: 'POST',
         body: withOperator({ units }),

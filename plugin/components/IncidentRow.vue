@@ -36,9 +36,22 @@
         <div
             v-if='units.length'
             class='small text-truncate'
-            :title='units.join(", ")'
+            :title='unitsTitle'
         >
-            <span class='text-muted'>Units</span> {{ units.join(', ') }}
+            <span class='text-muted'>Units</span>
+            <template
+                v-for='(u, i) in units'
+                :key='`${u.callsign}:${i}`'
+            >
+                <span v-if='i'>, </span>
+                <span>{{ u.callsign }}</span>
+                <!-- A unit with no TAK device: said in words, not just a colour -->
+                <span
+                    v-if='u.offTak'
+                    class='badge border text-muted fw-normal ms-1'
+                    data-test='unit-off-tak'
+                >{{ OFF_TAK_LABEL }}</span>
+            </template>
         </div>
     </div>
 </template>
@@ -53,14 +66,16 @@
 import { computed } from 'vue';
 import type { DispatcherIncident } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
-import { BOARD_LABEL, boardState, boardBadgeClass, rowUnits } from '../lib/unit-status.ts';
+import { BOARD_LABEL, boardState, boardBadgeClass, rowUnitList } from '../lib/unit-status.ts';
+import { OFF_TAK_LABEL } from '../lib/off-tak.ts';
 
 const props = defineProps<{ inc: DispatcherIncident }>();
 const emit = defineEmits<{ (e: 'open', id: string): void }>();
 
 const labels = computed(() => dispatcherStore.displayMode !== 'multi');
 const undocked = computed(() => dispatcherStore.undocked.includes(props.inc.id));
-const units = computed(() => rowUnits(props.inc.assigned));
+const units = computed(() => rowUnitList(props.inc.assigned));
+const unitsTitle = computed(() => units.value.map(u => (u.offTak ? `${u.callsign} (not on TAK)` : u.callsign)).join(', '));
 const address = computed(() =>
     props.inc.address || `${(props.inc.lat ?? 0).toFixed(5)}, ${(props.inc.lon ?? 0).toFixed(5)}`);
 

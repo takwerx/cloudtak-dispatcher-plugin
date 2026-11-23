@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Units that are not on TAK.** Units that are off shift, have no TAK device or are not signed in still call in on
+  the radio. A dispatcher can now put them on an incident by callsign, to document what they did: type the
+  callsign in the assign search and press **+ E99 · not on TAK**, or on the command line type `A +E99`. They have
+  the same buttons as any unit (On Scene, Clear, remove) and the server stamps the times, but they get no
+  messages. A **Not on TAK** tag shows in the incident panel and on the incident's card in the list, so the
+  board shows at a glance which units are on TAK. The report and the CSV list them with the other units and say
+  `(not on TAK)`; the CSV has one more column on the end, `units_not_on_tak`.
+
 ## 1.7.0
 
 New features, most of them contributed by Sentinel6Systems. All of them are for standalone mode; TAK-CAD mode works

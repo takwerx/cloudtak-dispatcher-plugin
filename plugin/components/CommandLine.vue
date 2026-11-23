@@ -70,6 +70,9 @@
                 <div class='text-muted'>
                     A number first names the incident (14 T text). Left out, it is the incident shown at the left.
                 </div>
+                <div class='text-muted'>
+                    A unit that is not on TAK: put a + before its callsign, A +E99. It stays on the incident like any unit (O E99, C E99) but gets no messages.
+                </div>
                 <div
                     v-for='c in COMMANDS'
                     :key='c.verb'
@@ -207,10 +210,23 @@ async function loadContacts(): Promise<void> {
 }
 
 // Why a contact cannot be assigned to this incident, in the server's words; '' when it can.
-function cannotAssign(c: TakContact, inc: DispatcherIncident): string {
+function cannotAssign(c: { uid: string; callsign: string }, inc: DispatcherIncident): string {
     if (workingUids(fresh(inc).assigned).has(c.uid)) return `${c.callsign} is already on ${inc.number}.`;
     const elsewhere = busyUnits(store.incidents, inc.id).get(c.uid);
     return elsewhere ? `${c.callsign} is on ${elsewhere}. Clear it there first.` : '';
+}
+
+// A word typed after A as `+E99` is a unit that is not on TAK (off shift, no TAK device, not signed in): put on
+// the incident by its callsign. What it comes to, or why it cannot be: no TAK contact has that callsign (then
+// that contact is the unit: type it without the +).
+function offTakFor(callsign: string): ReturnType<typeof offTakUnit> {
+    const problem = offTakCallsignProblem(callsign);
+    if (problem) throw new Error(`+${callsign}: ${problem}`);
+    const c = offTakCallsign(callsign);
+    if (contacts.value.some(t => t.callsign.trim().toUpperCase() === c.toUpperCase())) {
+        throw new Error(`${c} is on TAK: type A ${c}, without the +.`);
+    }
+    return offTakUnit(c);
 }
 
 // ── The commands ─────────────────────────────────────────────────────────────────────────────────────
@@ -285,10 +301,14 @@ async function run(p: ParsedLine): Promise<string> {
             await loadContacts();
             // Every contact is a candidate, so two with the same ID are always asked about, even when
             // one of them cannot go; the one meant is then checked.
-            const chosen = await resolveUnits(typed, contacts.value, {
+            const tak = typed.filter(w => offTakWord(w) === null);
+            const chosenTak = await resolveUnits(tak, contacts.value, {
                 ask:  askUnit(c => (cannotAssign(c, inc) ? `${c.callsign} · ${cannotAssign(c, inc)}` : c.callsign)),
-                none: w => new Error(`No unit matches "${w}".`),
+                none: w => new Error(`No unit matches "${w}".${offTakCallsignProblem(w) ? '' : ` To put a unit that is not on TAK on the incident: A +${w}`}`),
             });
+            // Units not on TAK, typed +E99: settled with the rest, before anything is assigned.
+            const offTak = [...new Map(typed.flatMap(w => (offTakWord(w) === null ? [] : [offTakFor(offTakWord(w) as string)])).map(u => [u.uid, u])).values()];
+            const chosen: { uid: string; callsign: string; off_tak?: boolean }[] = [...chosenTak, ...offTak];
             for (const c of chosen) {
                 const why = cannotAssign(c, inc);
                 if (why) throw new Error(why);
@@ -299,7 +319,7 @@ async function run(p: ParsedLine): Promise<string> {
                 await loadIncidents();   // a refusal: the board shows where the unit is
                 throw e;
             }
-            return `${inc.number}: assigned ${chosen.map(c => c.callsign).join(', ')}`;
+            return `${inc.number}: assigned ${chosen.map(c => `${c.callsign}${offTakTag({ uid: c.uid, off_tak: c.off_tak })}`).join(', ')}`;
         }
 
         case 'O':
@@ -468,6 +488,18 @@ function previewUnits(p: ParsedLine): { text: string; bad: boolean } {
     let bad = false;
     const shown = words(p.rest).map((w) => {
         if (p.verb === 'A') {
+            const plus = offTakWord(w);
+            if (plus !== null) {
+                try {
+                    const u = offTakFor(plus);
+                    const why = cannotAssign(u, target(p));
+                    if (why) bad = true;
+                    return why || `${u.callsign}${offTakTag(u)}`;
+                } catch (e) {
+                    bad = true;
+                    return e instanceof Error ? e.message : String(e);
+                }
+            }
             const pick = pickUnit(w, contacts.value);
             if (pick.kind !== 'one') return `${w}?`;
             const why = cannotAssign(pick.unit, target(p));

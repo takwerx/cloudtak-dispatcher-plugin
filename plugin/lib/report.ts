@@ -1,6 +1,7 @@
 import type { DispatcherEvent, DispatcherIncident, AgencySettings, IncidentCaller, AssignedContact } from './events-client.ts';
 import { firstOnScene, unitStatus, unitTimesLine } from './unit-status.ts';
 import { dispositionLabel } from './dispositions.ts';
+import { isOffTak, offTakTag } from './off-tak.ts';
 
 // After-action report for a standalone Event: stats + generated narrative + exports.
 // Everything is computed client-side from the incident list the server already returns
@@ -289,11 +290,11 @@ export function callerLine(c: IncidentCaller, when: string, operators = false): 
 }
 
 // One unit with its three times: `E12 (cleared) assigned 05:15 PM · on scene 05:22 PM · cleared 05:39 PM`.
-// An older row with no times is just the callsign.
+// An older row with no times is just the callsign. A unit not on TAK says so: `E99 (not on TAK) (on scene) …`.
 export function unitLine(u: AssignedContact, when: (iso: string) => string): string {
     const times = unitTimesLine(u, when);
     const state = unitStatus(u) === 'assigned' ? '' : unitStatus(u) === 'on_scene' ? ' (on scene)' : ' (cleared)';
-    return `${u.callsign}${state}${times ? ` ${times}` : ''}`;
+    return `${u.callsign}${offTakTag(u)}${state}${times ? ` ${times}` : ''}`;
 }
 
 function csvCell(v: string | number | null | undefined): string {
@@ -307,7 +308,7 @@ function csvCell(v: string | number | null | undefined): string {
 export function buildCsv(incidents: DispatcherIncident[], operators = false): string {
     const header = [
         'number', 'report_number', 'caller_name', 'caller_phone', 'callers', 'type', 'status', 'created_at', 'closed_at', 'disposition', 'disposition_note', 'address',
-        'lat', 'lon', 'dispatcher', ...(operators ? ['created_by_no', 'initial_dispatcher_no', 'closed_by_no'] : []), 'assigned_units', 'details', 'notes', 'first_on_scene', 'unit_times',
+        'lat', 'lon', 'dispatcher', ...(operators ? ['created_by_no', 'initial_dispatcher_no', 'closed_by_no'] : []), 'assigned_units', 'details', 'notes', 'first_on_scene', 'unit_times', 'units_not_on_tak',
     ].join(',');
     const rows = incidents.map(i => [
         csvCell(i.number),
@@ -331,6 +332,7 @@ export function buildCsv(incidents: DispatcherIncident[], operators = false): st
         csvCell((i.notes ?? []).map(n => `[${n.time}] ${n.text}${operators && n.by ? ` (${n.by})` : ''}`).join(' | ')),
         csvCell(firstOnScene(i.assigned)),
         csvCell((i.assigned ?? []).map(c => unitLine(c, t => `[${t}]`)).join(' | ')),
+        csvCell((i.assigned ?? []).filter(isOffTak).map(c => c.callsign).join('; ')),
     ].join(','));
     return [header, ...rows].join('\r\n');
 }

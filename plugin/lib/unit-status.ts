@@ -1,4 +1,5 @@
 import type { AssignedContact, DispatcherIncident } from './events-client.ts';
+import { isOffTak } from './off-tak.ts';
 
 // Reading unit status (Assigned, On Scene, Cleared) off an incident. Pure, so
 // plugin/test/unit-status.test.ts runs it with plain node. The server owns the times.
@@ -39,6 +40,12 @@ export function incidentQueue(inc: Pick<DispatcherIncident, 'status' | 'assigned
 // in the order they were assigned. Status is left to the incident itself, so a big call stays one short line.
 export function rowUnits(units: AssignedContact[] | undefined): string[] {
     return (units ?? []).filter(u => unitStatus(u) !== 'cleared').map(u => u.callsign);
+}
+
+// The same units, each with whether it is on TAK, so a list card can mark the ones that are not (a unit a
+// dispatcher typed in: off shift, no TAK device, not signed in).
+export function rowUnitList(units: AssignedContact[] | undefined): { callsign: string; offTak: boolean }[] {
+    return (units ?? []).filter(u => unitStatus(u) !== 'cleared').map(u => ({ callsign: u.callsign, offTak: isOffTak(u) }));
 }
 
 // Bootstrap classes for the board badge (list rows, detail, undocked cards).

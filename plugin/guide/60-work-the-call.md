@@ -36,7 +36,7 @@ The note is saved with the time. Units still on the call get it as a chat messag
 1. Under **Assigned Units**, type the unit’s callsign in the **Search contacts to assign…** box.
 2. Press the unit in the list.
 
-The unit shows as **Assigned**. Its device gets a chat message with the incident and the address.
+The unit shows as **Assigned**. Its device gets a chat message with the incident and the address. (A unit that is not on TAK has no device: see [Put a unit on the call that is not on TAK](#put-a-unit-on-the-call-that-is-not-on-tak).)
 
 To send several units at once, press the people button (👥) next to the box. Tick the units, then press **Assign** (for example **Assign 2 selected**).
 
@@ -46,6 +46,21 @@ A unit that has cleared from this call can be sent back to it: assign it again. 
 
 > [!NOTE]
 > **Two dispatchers, one unit.** If someone else has just sent the same unit to another call, theirs counts and yours doesn’t. You see **E12 is on 002. Clear it there first.** for 10 seconds. If you picked several units, it adds **Nothing was assigned.** None of them went out. Your picks come back with E12 greyed out: press **Assign** again for the rest.
+
+### Put a unit on the call that is not on TAK
+
+Some units call in on the radio but are not on TAK: off shift, no TAK device, or not signed in. You can still put them on the call, so the record shows what they did.
+
+1. Under **Assigned Units**, type the unit’s callsign in the **Search contacts to assign…** box, for example `E99`.
+2. If no contact has that callsign, the list ends with **+ E99 · not on TAK**. Press it.
+
+The unit shows under **Assigned Units** with a **Not on TAK** tag, and in the call’s card in the list. It has the same buttons as any unit: **On Scene**, **Clear**, and the red trash can. The time of each step is saved for you. It gets no message, because it has no device.
+
+- **A callsign is letters, digits and `. _ / -`,** and spaces, up to 40 characters. `E99` and `e99` are the same unit.
+- **On the command line,** put a `+` before the callsign: `A +E99`. Then `O E99` and `C E99` work as for any unit.
+- **If the callsign belongs to a TAK contact,** the list shows that contact instead. Press the contact: the unit is on TAK.
+- **Like any unit,** it works one call at a time. It is greyed out with the call’s number until you clear it there.
+- **Reports:** the report and the CSV list it with the other units and say **(not on TAK)** by its callsign. The CSV has one more column on the end, `units_not_on_tak`, with their callsigns.
 
 ### Update a unit
 
