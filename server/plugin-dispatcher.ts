@@ -393,7 +393,9 @@ function checkNotesList(list: unknown[] | undefined): void {
 // ── Incident types ──────────────────────────────────────────────────────────────
 // The admin's own incident types (setting incident_types) and the switch that hides the built-in
 // ones (incident_types_only), set in Dispatcher Settings → Incident Types. A type is a name with an
-// optional short code; the list is stored as [{ code, name }] with '' for no code. A list of plain
+// optional short code, and optional more codes (aliases) the command line also takes; the list is
+// stored as [{ code, name, aliases? }] with '' for no code and aliases left out when there are none.
+// A list of plain
 // names, which is what older plugins sent and what an older database holds, is accepted and read as
 // names with no code. An incident stores its type's name as text, as before: the code never leaves
 // this list. Same rules as plugin/lib/incident-types.ts, which names the rows of a bad file before
@@ -403,16 +405,18 @@ function checkNotesList(list: unknown[] | undefined): void {
 const INCIDENT_TYPE_CODE_MAX = 8;
 const INCIDENT_TYPE_NAME_MAX = 60;
 const INCIDENT_TYPES_MAX = 300;
+const INCIDENT_TYPE_CODES_MAX = 10;   // codes per type, the first one included
 const INCIDENT_TYPE_KEYS = new Set(['incident_types', 'incident_types_only']);
 
 interface IncidentTypeEntry {
-    code: string;   // upper case letters and digits, or '' for none
+    code: string;        // upper case letters and digits, or '' for none
     name: string;
+    aliases?: string[];  // its other codes, same rules; only when there are some
 }
 
 // Value a client may store under one of the incident type keys. The switch must be a boolean. The
 // list: every type needs a name, a code is letters and digits only, and no code or name may be in
-// the list twice (ignoring case). One bad type refuses the whole list.
+// the list twice (ignoring case), counting every type's aliases. One bad type refuses the whole list.
 function normIncidentTypeSetting(key: string, value: unknown): unknown {
     if (key === 'incident_types_only') {
         if (typeof value !== 'boolean') throw new Err(400, null, 'incident_types_only must be true or false');
@@ -424,22 +428,29 @@ function normIncidentTypeSetting(key: string, value: unknown): unknown {
     const codes = new Set<string>();
     const names = new Set<string>();
     for (const t of value) {
-        const o = (t && typeof t === 'object' ? t : { name: t }) as { code?: unknown; name?: unknown };
-        if (typeof o.name !== 'string' || (o.code !== undefined && o.code !== null && typeof o.code !== 'string')) {
-            throw new Err(400, null, 'Each incident type needs a name, and its code must be text');
+        const o = (t && typeof t === 'object' ? t : { name: t }) as { code?: unknown; name?: unknown; aliases?: unknown };
+        const aliases = o.aliases ?? [];
+        if (typeof o.name !== 'string' || (o.code !== undefined && o.code !== null && typeof o.code !== 'string')
+            || !Array.isArray(aliases) || aliases.some(a => typeof a !== 'string')) {
+            throw new Err(400, null, 'Each incident type needs a name, and its codes must be text');
         }
         const name = o.name.replace(/\s+/g, ' ').trim();
-        const code = String(o.code ?? '').trim().toUpperCase();
         if (!name) throw new Err(400, null, 'An incident type has no name');
         if (name.length > INCIDENT_TYPE_NAME_MAX) throw new Err(400, null, `Incident type "${name.slice(0, 30)}…" is too long (${INCIDENT_TYPE_NAME_MAX} characters max)`);
-        if (code && (code.length > INCIDENT_TYPE_CODE_MAX || !/^[A-Z0-9]+$/.test(code))) {
-            throw new Err(400, null, `Code "${code.slice(0, 30)}" must be letters and digits only, no spaces, ${INCIDENT_TYPE_CODE_MAX} at most`);
-        }
         if (names.has(name.toLowerCase())) throw new Err(400, null, `Incident type "${name}" is in the list twice`);
-        if (code && codes.has(code)) throw new Err(400, null, `Code ${code} is used twice`);
+        // Its codes, the shown one first; an empty one (no code) is dropped.
+        const mine = [String(o.code ?? ''), ...(aliases as string[])].map(c => c.trim().toUpperCase()).filter(Boolean);
+        if (mine.length > INCIDENT_TYPE_CODES_MAX) throw new Err(400, null, `Incident type "${name}" has more than ${INCIDENT_TYPE_CODES_MAX} codes`);
+        for (const code of mine) {
+            if (code.length > INCIDENT_TYPE_CODE_MAX || !/^[A-Z0-9]+$/.test(code)) {
+                throw new Err(400, null, `Code "${code.slice(0, 30)}" must be letters and digits only, no spaces, ${INCIDENT_TYPE_CODE_MAX} at most`);
+            }
+            if (codes.has(code)) throw new Err(400, null, `Code ${code} is used twice`);
+            codes.add(code);
+        }
         names.add(name.toLowerCase());
-        if (code) codes.add(code);
-        list.push({ code, name });
+        const [code = '', ...rest] = mine;
+        list.push(rest.length ? { code, name, aliases: rest } : { code, name });
     }
     return list;
 }

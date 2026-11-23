@@ -1,5 +1,5 @@
 import type { DispatcherEvent, DispatcherIncident, AgencySettings, IncidentCaller, AssignedContact } from './events-client.ts';
-import { firstOnScene, unitStatus, unitTimesLine } from './unit-status.ts';
+import { firstOnScene, isOffTak, unitStatus, unitTimesLine } from './unit-status.ts';
 import { dispositionLabel } from './dispositions.ts';
 
 // After-action report for a standalone Event: stats + generated narrative + exports.
@@ -293,7 +293,7 @@ export function callerLine(c: IncidentCaller, when: string, operators = false): 
 export function unitLine(u: AssignedContact, when: (iso: string) => string): string {
     const times = unitTimesLine(u, when);
     const state = unitStatus(u) === 'assigned' ? '' : unitStatus(u) === 'on_scene' ? ' (on scene)' : ' (cleared)';
-    return `${u.callsign}${state}${times ? ` ${times}` : ''}`;
+    return `${u.callsign}${isOffTak(u) ? ' (not on TAK)' : ''}${state}${times ? ` ${times}` : ''}`;
 }
 
 function csvCell(v: string | number | null | undefined): string {
@@ -326,7 +326,7 @@ export function buildCsv(incidents: DispatcherIncident[], operators = false): st
         csvCell(i.lon),
         csvCell(i.dispatcher),
         ...(operators ? [csvCell(i.created_by_no), csvCell(i.initial_dispatcher_no), csvCell(i.closed_by_no)] : []),
-        csvCell((i.assigned ?? []).map(c => c.callsign).join('; ')),
+        csvCell((i.assigned ?? []).map(c => `${c.callsign}${isOffTak(c) ? ' (not on TAK)' : ''}`).join('; ')),
         csvCell(i.details),
         csvCell((i.notes ?? []).map(n => `[${n.time}] ${n.text}${operators && n.by ? ` (${n.by})` : ''}`).join(' | ')),
         csvCell(firstOnScene(i.assigned)),

@@ -3,7 +3,7 @@
 1. In CloudTAK, press the menu button (☰) at the top right.
 2. Press **Dispatcher** (headset icon). If you don’t see it, type `Dispatcher` in the **Search...** box.
 
-The Dispatcher opens at the side of the map. It may say **Connecting…** for a few seconds, then it shows the **Events** list: **+ New Event** at the top right, one line for each event, and **User Guide** at the bottom. If you reload the page while the Dispatcher is open, it opens again by itself.
+The Dispatcher opens at the side of the map. It may say **Connecting…** for a few seconds, then it shows the **Events** list: **+ New Event** at the top right, one line for each event, and **User Guide** and **Quick Reference** at the bottom. If you reload the page while the Dispatcher is open, it opens again by itself.
 
 At the top right of the Dispatcher are two buttons (once it is popped out, only **Settings**):
 

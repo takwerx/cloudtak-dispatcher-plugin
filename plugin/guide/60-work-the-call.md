@@ -33,7 +33,7 @@ The note is saved with the time. Units still on the call get it as a chat messag
 
 ### Send a unit
 
-1. Under **Assigned Units**, type the unit’s callsign in the **Search contacts to assign…** box.
+1. Under **Assigned Units**, type the unit’s callsign in the **Search or type a unit to assign…** box.
 2. Press the unit in the list.
 
 The unit shows as **Assigned**. Its device gets a chat message with the incident and the address.
@@ -41,6 +41,17 @@ The unit shows as **Assigned**. Its device gets a chat message with the incident
 To send several units at once, press the people button (👥) next to the box. Tick the units, then press **Assign** (for example **Assign 2 selected**).
 
 A unit works one call at a time. A unit still working another call in this event is greyed out in both lists, with the number of that call without the event’s prefix: **E12 · on 002** means E12 is on FAIR-002. You can’t pick it. To send it here, first press **Clear** for it on that call.
+
+### Send a unit that is not on TAK
+
+A unit that is off shift, has no TAK device or is not signed in is not in the list. When it calls in on the radio, you can still put it on the call:
+
+1. Type its name in the **Search or type a unit to assign…** box, such as `E7`.
+2. Press **+ Add “E7” not on TAK**, at the bottom of the list.
+
+The unit is on the call like any other: **On Scene**, **Clear**, the times and the report all work. A yellow phone with a line through it (the “not on TAK” mark) shows next to its name, here and in the list of calls, so everyone can see it has no TAK device. It gets no chat messages. On the report it says **(not on TAK)**.
+
+Type the same name each time for the same unit: `E7` on one call is the same E7 on the next, so it works one call at a time like the others.
 
 A unit that has cleared from this call can be sent back to it: assign it again. It gets a second line under **Assigned Units**, and the first line keeps its times.
 

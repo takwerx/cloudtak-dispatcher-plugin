@@ -123,6 +123,18 @@ test('an incident type is named by its code first', () => {
     assert.deepEqual(m.matchOptions('MED', types).map(t => t.name), ['Medical Emergency']);
 });
 
+test('any of a type\'s codes names it, so one type can be typed several ways', () => {
+    const types = [
+        { code: 'MVA', name: 'Traffic Accident', aliases: ['WRECK', '1050'] },
+        { code: 'FIRE', name: 'Fire' },
+    ];
+    for (const typed of ['mva', 'wreck', '1050', 'traffic', 'acc']) {
+        assert.deepEqual(m.matchOptions(typed, types).map(t => t.name), ['Traffic Accident'], typed);
+    }
+    // an alias is a whole code: the start of one is not enough
+    assert.deepEqual(m.matchOptions('wre', types), []);
+});
+
 test('with no code: the whole name, then the start of the name, then word starts', () => {
     const types = ['Medical Emergency', 'Medical Assist', 'Fire', 'Traffic Accident', 'Gas Leak'].map(name => ({ name }));
     assert.deepEqual(m.matchOptions('fire', types).map(t => t.name), ['Fire']);
@@ -293,6 +305,79 @@ test('a caller with no phone: what follows the name is the note, never stored as
     assert.deepEqual(m.parseCaller('J Smith, apartment 302'), { name: 'J Smith', phone: '', note: 'apartment 302' });
     assert.deepEqual(m.parseCaller('J Smith, 555 0100 ext 4, at work'),
         { name: 'J Smith', phone: '555 0100 ext 4', note: 'at work' });
+});
+
+test('several commands on one line: ; between them, each for the incident numbered before it', () => {
+    const parts = m.parseChain('14 a H35 E6; o H35 E6 ;RN 26-00123, 26-00124; T both cited;; tow called; x rep', null);
+    assert.ok(Array.isArray(parts));
+    assert.deepEqual(parts.map(x => x.parsed), [
+        { incident: '14', verb: 'A', rest: 'H35 E6' },
+        { incident: '14', verb: 'O', rest: 'H35 E6' },
+        { incident: '14', verb: 'RN', rest: '26-00123, 26-00124' },
+        { incident: '14', verb: 'T', rest: 'both cited; tow called' },
+        { incident: '14', verb: 'X', rest: 'rep' },
+    ]);
+    // each part's text runs alone, the number in front and ;; kept, so what is left can go back in the box
+    assert.equal(parts[3].text, '14 T both cited;; tow called');
+    // a second number switches the incident for the parts after it
+    const two = m.parseChain('14 O H35; 15 O E6; C E6', null) as m.ChainPart[];
+    assert.deepEqual(two.map(x => x.parsed.incident), ['14', '15', '15']);
+    // no number at all: the incident being worked, for every part
+    assert.deepEqual((m.parseChain('A H35; T sent', '9') as m.ChainPart[]).map(x => x.parsed.incident), ['9', '9']);
+    assert.match((m.parseChain('A H35; T sent', null) as { error: string }).error, /^Which incident\? Put its number first: 14 A H35; T sent/);
+});
+
+test('one command on a line reads as before, and a trailing ; changes nothing', () => {
+    assert.deepEqual(m.parseChain('o h35', null), [{ text: 'o h35', parsed: { incident: null, verb: 'O', rest: 'h35' } }]);
+    assert.deepEqual((m.parseChain('14 T a;; b;', '3') as m.ChainPart[])[0].parsed, { incident: '14', verb: 'T', rest: 'a; b' });
+    assert.deepEqual(m.parseChain(' ; ', null), null);
+    assert.deepEqual(m.parseChain('zz', null), m.parseLine('zz'));
+});
+
+test('a chained line with one wrong part is refused whole, and only incident commands can share a line', () => {
+    assert.deepEqual(m.parseChain('14 T caller says; door is open', null),
+        { error: 'Part 2: DOOR is not a command. For a ; inside a note, type ;;' });
+    assert.deepEqual(m.parseChain('14 A H35; N fire, 1 main', null), { error: 'Part 2: N goes on a line of its own.' });
+    assert.deepEqual(m.parseChain('14 A H35; 15', null), { error: 'Part 2: An incident number alone goes on a line of its own.' });
+    for (const v of m.CHAIN_VERBS) assert.ok(m.COMMANDS.some(c => c.verb === v), v);
+});
+
+test('Assign: a word that fits no unit on TAK is asked about, to add it as a unit not on TAK', async () => {
+    const units = [unit('E12'), unit('M4')];
+    const asked: string[] = [];
+    const added = await m.resolveUnits(['E12', 'E7'], units, {
+        ask:     async () => { throw new Error('not asked'); },
+        none:    w => new Error(`none ${w}`),
+        missing: async (w) => { asked.push(w); return { uid: `off-tak:${w}`, callsign: w }; },
+    });
+    assert.deepEqual(asked, ['E7']);
+    assert.deepEqual(added.map(u => u.uid), ['E12', 'off-tak:E7']);
+    // without it (On Scene, Clear, remove) a word that fits nothing is still an error
+    await assert.rejects(m.resolveUnits(['E7'], units, { ask: async () => units[0], none: w => new Error(`none ${w}`) }), /none E7/);
+});
+
+test('wiring: A offers a unit not on TAK by one more pick, and the panel offers it under the search', () => {
+    const cmd = readFileSync(new URL('../components/CommandLine.vue', import.meta.url), 'utf8');
+    assert.match(cmd, /missing: \(w\) => \{\s+const u = offTakUnit\(w\) as TakContact;\s+return ask\(`"\$\{w\}" is not on TAK\.`, \[\{ label: `Add \$\{u\.callsign\} \(not on TAK\)`, value: u \}\]\);/);
+    assert.equal((cmd.match(/missing:/g) ?? []).length, 1, 'only Assign adds units');
+    const detail = readFileSync(new URL('../components/IncidentDetail.vue', import.meta.url), 'utf8');
+    assert.match(detail, /if \(!u \|\| matchUnits\(u\.callsign, allContacts\.value\)\.exact\.length\) return null;/);
+    assert.match(detail, /v-if='offTakOffer'[^>]+data-test='assign-off-tak'\s+@click='slAssignContact\(inc, offTakOffer\)'/);
+    assert.match(detail, /<IconDeviceMobileOff\s+v-if='isOffTak\(c\)'/);
+    const row = readFileSync(new URL('../components/IncidentRow.vue', import.meta.url), 'utf8');
+    assert.match(row, /v-if='offTak\.has\(u\)'/);
+    // no TAK message to a unit that has no TAK device
+    const actions = readFileSync(new URL('../lib/incident-actions.ts', import.meta.url), 'utf8');
+    assert.match(actions, /for \(const c of units\.filter\(u => !isOffTak\(u\)\)\) \{\s+try \{ await sendAssignmentMessage/);
+    assert.match(actions, /filter\(u => unitStatus\(u\) !== 'cleared' && !isOffTak\(u\)\)\) \{\s+try \{ await sendUpdateMessage/);
+});
+
+test('wiring: a chained line runs its commands in order and gives back what was not done', () => {
+    const cmd = readFileSync(new URL('../components/CommandLine.vue', import.meta.url), 'utf8');
+    assert.match(cmd, /for \(; at < parts\.length; at\+\+\) \{\s+const said = await run\(parts\[at\]\.parsed\);/);
+    assert.match(cmd, /const left = parts\.slice\(at\)\.map\(x => x\.text\)\.join\('; '\);\s+[^\n]+\n\s+text\.value = left;/);
+    assert.match(cmd, /return parseChain\(line, current\.value \? shortNumber\(current\.value\.number\) : null\);/);
+    assert.doesNotMatch(cmd, /parseLine\(/);
 });
 
 test('wiring: the command line settles units first, and a note is sent as its text alone', () => {

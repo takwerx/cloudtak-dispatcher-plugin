@@ -442,6 +442,15 @@
                             class='fw-semibold'
                             :class='unitStatus(c) === "cleared" ? "text-muted text-decoration-line-through" : ""'
                         >{{ c.callsign }}</span>
+                        <IconDeviceMobileOff
+                            v-if='isOffTak(c)'
+                            :size='16'
+                            stroke='1.5'
+                            class='text-warning flex-shrink-0'
+                            :title='OFF_TAK_TITLE'
+                            :aria-label='OFF_TAK_TITLE'
+                            data-test='unit-off-tak'
+                        />
                         <span
                             class='badge'
                             :class='slUnitBadge(c)'
@@ -494,7 +503,7 @@
                             v-model='slContactSearch'
                             type='text'
                             class='form-control form-control-sm border'
-                            :placeholder='loadingContacts ? "Loading contacts…" : "Search contacts to assign…"'
+                            :placeholder='loadingContacts ? "Loading contacts…" : "Search or type a unit to assign…"'
                             :disabled='loadingContacts'
                         >
                         <button
@@ -508,7 +517,7 @@
                         </button>
                     </div>
                     <div
-                        v-if='filteredContacts.length && slContactSearch'
+                        v-if='slContactSearch && (filteredContacts.length || offTakOffer)'
                         class='border rounded mt-1'
                         style='max-height:120px;overflow-y:auto'
                     >
@@ -529,6 +538,22 @@
                             <template v-else>
                                 + {{ c.callsign }}
                             </template>
+                        </button>
+                        <!-- No unit on TAK has that name: add it as typed (a unit that called in on the radio) -->
+                        <button
+                            v-if='offTakOffer'
+                            class='btn btn-sm w-100 text-start px-2 py-1 border-0 rounded-0 d-flex align-items-center gap-1'
+                            style='font-size:12px'
+                            data-test='assign-off-tak'
+                            @click='slAssignContact(inc, offTakOffer)'
+                        >
+                            + Add “{{ offTakOffer.callsign }}”
+                            <IconDeviceMobileOff
+                                :size='14'
+                                stroke='1.5'
+                                class='text-warning'
+                            />
+                            <span class='text-muted'>not on TAK</span>
                         </button>
                     </div>
 
@@ -732,7 +757,7 @@
 // incident from dispatcherStore.incidents by id, so the shared poll keeps every copy current,
 // and every edit goes through the same server calls whichever copy made it.
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
-import { IconUsers, IconPictureInPictureOn, IconTrash } from '@tabler/icons-vue';
+import { IconUsers, IconPictureInPictureOn, IconTrash, IconDeviceMobileOff } from '@tabler/icons-vue';
 import { useMapStore } from '../../../src/stores/map.ts';
 import { postMissionLog } from '../lib/takcad-client.ts';
 import { dialablePhone as slDialable } from '../lib/map-marker.ts';
@@ -755,7 +780,8 @@ import {
 import type { ActionContext } from '../lib/incident-actions.ts';
 import { registerIncidentView, touchIncidentView } from '../lib/command-state.ts';
 import IncidentForm from './IncidentForm.vue';
-import { BOARD_LABEL, boardState, boardBadgeClass, busyUnits, unitStatus, unitTimesLine, workingUids } from '../lib/unit-status.ts';
+import { BOARD_LABEL, boardState, boardBadgeClass, busyUnits, isOffTak, offTakUnit, unitStatus, unitTimesLine, workingUids } from '../lib/unit-status.ts';
+import { matchUnits } from '../lib/command-line.ts';
 import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, REOPEN_REASON_MAX, dispositionLabel } from '../lib/dispositions.ts';
 
 const props = defineProps<{
@@ -827,6 +853,16 @@ const filteredContacts = computed(() => {
         !assigned.has(c.uid) &&
         (!q || c.callsign.toLowerCase().includes(q))
     ));
+});
+
+// What was typed names no unit on TAK: it can be added as typed, a unit not on TAK (off shift, no
+// device, not signed in) that called in on the radio. Not while the contacts are still loading.
+const OFF_TAK_TITLE = 'Not on TAK: added by name. It gets no TAK messages.';
+const offTakOffer = computed<TakContact | null>(() => {
+    if (loadingContacts.value) return null;
+    const u = offTakUnit(slContactSearch.value);
+    if (!u || matchUnits(u.callsign, allContacts.value).exact.length) return null;
+    return workingUids(inc.value?.assigned).has(u.uid) ? null : u;
 });
 
 // Contacts not yet assigned — the multi-select picker's candidate list.
