@@ -116,7 +116,7 @@ import type { ActionContext } from '../lib/incident-actions.ts';
 import { commandState, setCommandLineShown, panelUndock, incidentList, workOn } from '../lib/command-state.ts';
 import type { CommandActions, ListApi } from '../lib/command-state.ts';
 import {
-    COMMANDS, parseLine, parseChain, runChain, words, targetIncident, pickUnit, resolveUnits, actOnEach, unitRows, matchOptions,
+    COMMANDS, parseChain, runChain, words, targetIncident, pickUnit, resolveUnits, actOnEach, unitRows, matchOptions,
     readDisposition, parseCaller, parseNew, pushHistory,
 } from '../lib/command-line.ts';
 import type { ParsedLine, UnitRow } from '../lib/command-line.ts';
