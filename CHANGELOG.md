@@ -11,6 +11,10 @@
   **If you go back to 1.7.0:** a type with several codes keeps only its first, and a code with no name is not shown,
   until you update again. Nothing is lost.
 
+- **A printable quick reference sheet.** Open the command list with `?` and press **Print quick reference**. One
+  letter-size page comes up with the commands, your incident types and their codes, the dispositions and a few
+  examples, made from what your CloudTAK has now. Print it, or choose Save as PDF in the print window.
+
 ## 1.7.0
 
 New features, most of them contributed by Sentinel6Systems. All of them are for standalone mode; TAK-CAD mode works

@@ -38,6 +38,7 @@ So `14 T caller called back` adds the note “caller called back” to incident 
 - **Read the line under the box.** Before you press **Enter**, it says how your command was read: grey is fine, yellow means it will not work as typed. After, green says what was done, and red means it was not done.
 - **The up arrow key** brings back the lines you typed before.
 - **`?`** lists every command. Type `?` again, or press **Esc**, to close the list.
+- **Need a sheet to keep at the desk?** Open the list with `?`, then press **Print quick reference**. It makes one page: the commands, your incident types and their codes, the dispositions and a few examples, from what your CloudTAK has now. Print it on letter paper, or choose **Save as PDF** in the print window. If nothing opens, allow popups for CloudTAK, or press **Save as file** and print that file.
 
 If one unit on a line is wrong, nothing on that line is done. Fix it and press **Enter** again. If a red line starts with **Done:**, it names what was done and the unit that was not: type a new line for that unit only.
 

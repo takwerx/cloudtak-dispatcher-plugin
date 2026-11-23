@@ -81,6 +81,30 @@
                     >{{ c.example }}</span>
                     <span>{{ c.does }}</span>
                 </div>
+                <div class='d-flex align-items-center gap-2 mt-1'>
+                    <button
+                        class='btn btn-sm btn-outline-secondary'
+                        type='button'
+                        title='A one-page sheet of these commands, this CloudTAK’s incident types and codes, the dispositions and examples. Print it on letter paper or save it as a PDF.'
+                        data-test='quick-reference-print'
+                        @click='printQuickReference'
+                    >
+                        Print quick reference
+                    </button>
+                    <button
+                        class='btn btn-sm btn-link p-0'
+                        type='button'
+                        data-test='quick-reference-save'
+                        @click='saveQuickReference'
+                    >
+                        Save as file
+                    </button>
+                    <span
+                        v-if='sheetError'
+                        class='text-danger'
+                        data-test='quick-reference-error'
+                    >{{ sheetError }}</span>
+                </div>
             </div>
         </div>
     </div>
@@ -129,6 +153,24 @@ const box  = ref<HTMLInputElement | null>(null);
 const text = ref('');
 const busy = ref(false);
 const help = ref(false);
+
+// The quick reference sheet (lib/quick-reference.ts): the types and codes this CloudTAK offers now.
+const sheetError = ref('');
+async function quickReferenceHtml(): Promise<string> {
+    const settings = await getDispatcherSettings().catch(() => ({} as Record<string, unknown>));
+    const agency = settings.agency as { name?: string } | undefined;
+    return buildQuickReferenceHtml({ types: incidentTypeOptions(settings), agencyName: agency?.name || undefined, generatedAt: new Date() });
+}
+async function printQuickReference() {
+    sheetError.value = '';
+    if (!openPrintWindow(await quickReferenceHtml())) {
+        sheetError.value = 'Popup blocked. Allow popups for CloudTAK, or press Save as file and print that file.';
+    }
+}
+async function saveQuickReference() {
+    sheetError.value = '';
+    downloadFile(QUICK_REFERENCE_NAME, 'text/html', await quickReferenceHtml());
+}
 // What the last command did, or why it did not run. A refused line stays in the box to be fixed; `line` is
 // that text, so its reason keeps showing until the dispatcher changes it.
 const result = ref<{ text: string; bad: boolean; line?: string } | null>(null);
