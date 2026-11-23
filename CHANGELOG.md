@@ -15,6 +15,11 @@
   letter-size page comes up with the commands, your incident types and their codes, the dispositions and a few
   examples, made from what your CloudTAK has now. Print it, or choose Save as PDF in the print window.
 
+- **Several commands on one line.** Put a semicolon between commands to work a call in one go:
+  `14 A H35 E6 ; O H35 ; RN 26-00123 ; T 2 patients, one trapped ; X unf` assigns, puts the unit on scene, sets the
+  report number, adds a note and closes incident 014. A mistake in any command refuses the whole line before
+  anything is done. If one fails partway, what came before stays done and the box keeps the rest.
+
 ## 1.7.0
 
 New features, most of them contributed by Sentinel6Systems. All of them are for standalone mode; TAK-CAD mode works

@@ -42,6 +42,21 @@ So `14 T caller called back` adds the note “caller called back” to incident 
 
 If one unit on a line is wrong, nothing on that line is done. Fix it and press **Enter** again. If a red line starts with **Done:**, it names what was done and the unit that was not: type a new line for that unit only.
 
+### Several commands on one line
+
+To work one call in one go, put a semicolon (`;`) between the commands:
+
+`14 A H35 E6 ; O H35 ; RN 26-00123 ; T 2 patients, one trapped ; X unf`
+
+That assigns H35 and E6, puts H35 on scene, sets the report number, adds a note and closes incident 014. The commands run one after another, each as if you had typed it alone. Under the box, before you press **Enter**, a line says how many commands it is.
+
+- **The number goes first, once.** It is for every command on the line. A different number later on is refused: one line works one incident.
+- **A semicolon always starts a new command.** To put one in a note, use a comma instead.
+- **If one command cannot be done,** the ones before it stay done and the ones after it are not run. A red line says what was done and what was not, and the box keeps what is left. Fix it and press **Enter** again.
+- **Only these can be chained:** `A`, `O`, `C`, `UN`, `T`, `X`, `R`, `RN`, `CA` and `CP`. Commands that open a window or a form (`N`, a number alone, `W`, `L`, `EV`, `REP`, `SET`, `POP`, `DOCK`, `SI`, `SO`) go on a line of their own.
+- **A mistake is found before anything is done:** a word that is not a command, or a command that cannot be chained, refuses the whole line.
+- **At most 8 commands** on one line.
+
 ### The commands
 
 In this table, `14` stands for an incident number and `H35` or `E6` for a unit.

@@ -254,10 +254,22 @@ A line is `[incident] COMMAND [units or text]`, then **Enter**:
   same numbered list.
 - Under the box, a line says how the command was read before Enter, and what it did after. **Up** brings back
   earlier lines.
+<<<<<<< HEAD
 - **Quick reference sheet.** `?` lists the commands, and **Print quick reference** under that list makes one letter-size
   page from what this CloudTAK has in use: the commands, the incident types with their codes (the agency's own, or
   the built-in ones), the dispositions and a few examples. The browser's print window prints it or saves it as a
   PDF; **Save as file** keeps it as an HTML file. It is built in `plugin/lib/quick-reference.ts`.
+=======
+- **Several commands on one line** with a semicolon between them, to work a call in one go:
+  `14 A H35 E6 ; O H35 ; RN 26-00123 ; T 2 patients, one trapped ; X unf`. They run one after another, each exactly
+  as if typed alone. The number typed first is for every command on the line, and a different number later is
+  refused (one line works one incident). A semicolon always starts a new command, so a note writes a comma instead.
+  A word that is not a command, or a command that cannot be chained, refuses the whole line before anything is
+  done. If a command fails partway, what came before it stays done, the ones after it are not run, and the box keeps
+  what is left, so Enter does not do the first part twice. Only `A O C UN T X R RN CA CP` can be chained (the ones
+  that open a window or a form go on their own line), at most 8 to a line. The logic is `parseChain` and
+  `runChain` in `plugin/lib/command-line.ts`.
+>>>>>>> origin/claude/issue-87-chain
 
 Every command runs the same code as its button, so the marker, the feed log, the messages to the units and the
 employee number all follow as they do from a click.

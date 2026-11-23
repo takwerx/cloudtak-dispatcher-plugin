@@ -70,6 +70,10 @@
                 <div class='text-muted'>
                     A number first names the incident (14 T text). Left out, it is the incident shown at the left.
                 </div>
+                <div class='text-muted'>
+                    Several commands on one line, with a semicolon between them: 14 A H35 ; O H35 ; RN 26-00123 ; T 2 patients ; X unf.
+                    Only A, O, C, UN, T, X, R, RN, CA and CP can be chained.
+                </div>
                 <div
                     v-for='c in COMMANDS'
                     :key='c.verb'
@@ -136,7 +140,7 @@ import type { ActionContext } from '../lib/incident-actions.ts';
 import { commandState, setCommandLineShown, panelUndock, incidentList, workOn } from '../lib/command-state.ts';
 import type { CommandActions, ListApi } from '../lib/command-state.ts';
 import {
-    COMMANDS, parseLine, words, targetIncident, pickUnit, resolveUnits, actOnEach, unitRows, matchOptions,
+    COMMANDS, parseLine, parseChain, runChain, words, targetIncident, pickUnit, resolveUnits, actOnEach, unitRows, matchOptions,
     readDisposition, parseCaller, parseNew, pushHistory,
 } from '../lib/command-line.ts';
 import type { ParsedLine, UnitRow } from '../lib/command-line.ts';
@@ -523,9 +527,16 @@ function previewUnits(p: ParsedLine): { text: string; bad: boolean } {
 }
 
 const preview = computed<{ text: string; bad: boolean } | null>(() => {
-    const p = parseLine(text.value);
-    if (!p) return null;
-    if ('error' in p) return { text: p.error, bad: true };
+    const chain = parseChain(text.value);
+    if (!chain) return null;
+    if ('error' in chain) return { text: chain.error, bad: true };
+    // Several commands: each is read when its turn comes (a unit assigned by the first can be put On Scene
+    // by the next), so only what each does is said here.
+    if (chain.length > 1) {
+        const says = chain.map(c => COMMANDS.find(d => d.verb === c.parsed.verb)?.does ?? c.parsed.verb);
+        return { text: `→ ${chain.length} commands, one after another: ${says.join(' · ')}`, bad: false };
+    }
+    const p = chain[0].parsed;
     const does = COMMANDS.find(c => c.verb === p.verb)?.does ?? '';
     try {
         if (BY_UNIT.has(p.verb) || p.verb === 'A') {
@@ -554,6 +565,8 @@ const shownLine = computed<{ text: string; cls: string } | null>(() => {
 let history: string[] = [];
 let historyAt = -1;
 
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
 async function submit() {
     const p0 = pick.value;
     if (p0) {
@@ -569,10 +582,10 @@ async function submit() {
     }
     if (busy.value) return;
     const line = text.value;
-    const p = parseLine(line);
-    if (!p) return;
-    if ('error' in p) {
-        result.value = { text: p.error, bad: true, line };
+    const parts = parseChain(line);
+    if (!parts) return;
+    if ('error' in parts) {
+        result.value = { text: parts.error, bad: true, line };
         return;
     }
     history = pushHistory(history, line);
@@ -581,12 +594,24 @@ async function submit() {
     result.value = null;
     busy.value = true;
     try {
-        const said = await run(p);
-        result.value = said ? { text: said, bad: false } : null;
-    } catch (e) {
-        // Nothing was done: the line comes back to be fixed.
-        text.value = line;
-        result.value = e === CANCELLED ? null : { text: e instanceof Error ? e.message : String(e), bad: true, line };
+        const ran = await runChain(parts, run);
+        const { said, stopped } = ran;
+        if (!stopped) {
+            result.value = said.length ? { text: said.join(' · '), bad: false } : null;
+        } else if (stopped.at === 0) {
+            // Nothing was done: the line comes back to be fixed.
+            text.value = line;
+            result.value = stopped.error === CANCELLED ? null : { text: errorText(stopped.error), bad: true, line };
+        } else {
+            // Some of it was done: only the rest comes back, so Enter does not do the first part again.
+            text.value = stopped.rest;
+            const left = parts[stopped.at].text;
+            result.value = {
+                text: `Done: ${said.join(' · ')}. ${stopped.error === CANCELLED ? `Cancelled at ${left}` : `Not done: ${left} (${errorText(stopped.error)})`}. The rest of the line is in the box.`,
+                bad: true,
+                line: text.value,
+            };
+        }
     } finally {
         pick.value = null;
         busy.value = false;
