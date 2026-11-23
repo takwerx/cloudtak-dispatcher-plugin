@@ -71,12 +71,11 @@
                     A number first names the incident (14 T text). Left out, it is the incident shown at the left.
                 </div>
                 <div class='text-muted'>
-<<<<<<< HEAD
                     Several commands on one line, with a semicolon between them: 14 A H35 ; O H35 ; RN 26-00123 ; T 2 patients ; X unf.
                     Only A, O, C, UN, T, X, R, RN, CA and CP can be chained.
-=======
+                </div>
+                <div class='text-muted'>
                     A unit that is not on TAK: put a + before its callsign, A +E99. It stays on the incident like any unit (O E99, C E99) but gets no messages.
->>>>>>> origin/claude/issue-87-offtak
                 </div>
                 <div
                     v-for='c in COMMANDS'
