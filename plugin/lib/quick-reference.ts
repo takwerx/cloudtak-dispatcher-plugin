@@ -21,6 +21,8 @@ export const QUICK_REFERENCE_EXAMPLES: readonly { line: string; says: string }[]
     { line: 'T 2 patients, one trapped', says: 'Add a note.' },
     { line: 'RN 26-00123',               says: 'Set the report number.' },
     { line: '14 T caller called back',   says: 'A number first sends a command to that incident (014).' },
+    { line: '14 A H35 E6 ; O H35 ; T 2 trapped', says: 'Several commands in one go, all for incident 014.' },
+    { line: 'A +E99',                    says: 'Put E99, a unit that is not on TAK, on the incident.' },
     { line: 'C H35',                     says: 'H35 is Clear.' },
     { line: 'X unf',                     says: 'Close the incident as Unfounded.' },
 ];
@@ -87,7 +89,7 @@ export function buildQuickReferenceHtml(input: QuickReferenceInput): string {
 
 <section>
 <h2>Commands</h2>
-<div class='note'>Put an incident number first to send a command to that incident (14 T text). Left out, it is the incident you are working. Capital or small letters both work.</div>
+<div class='note'>Put an incident number first to send a command to that incident (14 T text). Left out, it is the incident you are working. Capital or small letters both work. Put a semicolon between commands to run several in one go (A H35 ; O H35). Put a + before a unit that is not on TAK (A +E99).</div>
 ${commandTables}
 </section>
 

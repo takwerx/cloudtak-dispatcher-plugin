@@ -23,6 +23,13 @@ test('the sheet lists every command, by the same example the command line list s
     }
 });
 
+test('the sheet tells about a line of several commands and a unit not on TAK', () => {
+    const html = buildQuickReferenceHtml({ types: incidentTypeOptions({}), generatedAt: NOW });
+    assert.ok(html.includes('semicolon between commands'));
+    assert.ok(html.includes('A +E99'));
+    assert.ok(QUICK_REFERENCE_EXAMPLES.some(e => e.line.includes(' ; ')));
+});
+
 test('it shows this CloudTAK\'s incident types with their codes, and the dispositions', () => {
     const html = buildQuickReferenceHtml({
         types: incidentTypeOptions({ incident_types: own, incident_types_only: true }), generatedAt: NOW,
