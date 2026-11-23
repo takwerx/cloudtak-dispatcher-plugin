@@ -135,6 +135,9 @@ import { busyUnits, workingUids } from '../lib/unit-status.ts';
 import type { IncidentQueue } from '../lib/unit-status.ts';
 import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, REOPEN_REASON_MAX, dispositionLabel } from '../lib/dispositions.ts';
 import { incidentTypeLabel, incidentTypeOptions } from '../lib/incident-types.ts';
+import { buildQuickReferenceHtml, QUICK_REFERENCE_NAME } from '../lib/quick-reference.ts';
+import { offTakCallsign, offTakCallsignProblem, offTakTag, offTakUnit, offTakWord } from '../lib/off-tak.ts';
+import { downloadFile, openPrintWindow } from '../lib/report.ts';
 import {
     assignAction, unitStatusAction, removeUnitAction, addNoteAction, reportNumberAction, callerAction,
     closeAction, reopenAction, flyToIncident,
@@ -143,7 +146,7 @@ import type { ActionContext } from '../lib/incident-actions.ts';
 import { commandState, setCommandLineShown, panelUndock, incidentList, workOn } from '../lib/command-state.ts';
 import type { CommandActions, ListApi } from '../lib/command-state.ts';
 import {
-    COMMANDS, parseLine, parseChain, runChain, words, targetIncident, pickUnit, resolveUnits, actOnEach, unitRows, matchOptions,
+    COMMANDS, parseChain, runChain, words, targetIncident, pickUnit, resolveUnits, actOnEach, unitRows, matchOptions,
     readDisposition, parseCaller, parseNew, pushHistory,
 } from '../lib/command-line.ts';
 import type { ParsedLine, UnitRow } from '../lib/command-line.ts';
