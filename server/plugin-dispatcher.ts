@@ -632,14 +632,23 @@ function liveUnit(list: UnitEntry[], uid: string): UnitEntry | undefined {
     return list.find(u => u.uid === uid && u.status !== 'cleared');
 }
 
+// A unit not on TAK (one that called in on the radio, added by name in the plugin) has the uid
+// `off-tak:<NAME>`. The server makes that uid from the callsign itself, as the plugin does (upper case,
+// one space between words), so a hand-made request can't store one that names another unit.
+const OFF_TAK_PREFIX = 'off-tak:';
+
 // Assign units (skips any still working the incident; one that cleared from it starts a second
 // trip, a new row). Returns the new list and the notes to log.
 function assignUnitsTo(list: UnitEntry[], add: { uid?: string; callsign?: string }[], now: string): { list: UnitEntry[]; notes: UnitNote[] } {
     const next = [...list];
     const notes: UnitNote[] = [];
     for (const a of add) {
-        const uid = (a.uid ?? '').trim();
-        const callsign = (a.callsign ?? '').trim();
+        let uid = (a.uid ?? '').trim();
+        let callsign = (a.callsign ?? '').trim();
+        if (uid.startsWith(OFF_TAK_PREFIX)) {
+            callsign = callsign.replace(/\s+/g, ' ').toUpperCase();
+            uid = callsign ? `${OFF_TAK_PREFIX}${callsign}` : '';
+        }
         if (!uid || !callsign) throw new Err(400, null, 'A unit needs a uid and a callsign');
         if (callsign.length > 64) throw new Err(400, null, 'Unit callsign is too long (64 characters max)');
         if (liveUnit(next, uid)) continue;
