@@ -44,6 +44,18 @@ server checks too, so two dispatchers assigning the same unit at the same moment
 gets `E12 is on 014. Clear it there first.` (it clears after 10 seconds; with several units picked it adds
 `Nothing was assigned.`, since a refused press assigns none of them).
 
+**Units that are not on TAK.** A unit that is off shift, has no TAK device or is not signed in still calls in on
+the radio, and the dispatcher can put it on the incident to document what it did. Type its callsign in the assign
+search: when no TAK contact has that callsign, the list ends with `+ E99 · not on TAK` (on the command line:
+`A +E99`). It is kept on the incident like any unit (Assigned, On Scene, Cleared, the trash can, a second trip,
+one incident at a time, the server's times) but it has no device, so it gets no assignment or update message. It
+shows a **Not on TAK** tag in the incident panel and on the incident's card in the list; the report and the CSV
+list it with the other units and say `(not on TAK)` after its callsign, and the CSV has one more column on the
+end, `units_not_on_tak`. A callsign is letters, digits and `. _ / -` and spaces, 40 at most (`E99` and `e99` are
+one unit). The server makes the unit's id itself from the callsign (`offtak:E99`) and keeps an `off_tak` flag on
+it; a TAK unit can never take that kind of id, and a callsign that a TAK contact has is that contact. An older
+plugin build reading the incident treats such a unit like any other unit.
+
 A unit that cleared from an incident can be sent back to it: assigning it again adds a second line for the
 second trip, and the first line keeps its times (the report lists both, and the incident's first on-scene
 time stays). The **✕** on a line removes that trip only.

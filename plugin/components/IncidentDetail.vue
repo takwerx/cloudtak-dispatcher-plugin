@@ -446,6 +446,12 @@
                             class='badge'
                             :class='slUnitBadge(c)'
                         >{{ slUnitLabel(c) }}</span>
+                        <span
+                            v-if='isOffTak(c)'
+                            class='badge border text-muted fw-normal'
+                            title='A unit with no TAK device: kept on the incident, but it gets no messages'
+                            data-test='unit-off-tak'
+                        >{{ OFF_TAK_LABEL }}</span>
                         <span class='flex-grow-1' />
                         <button
                             v-if='inc.status === "active" && unitStatus(c) === "assigned"'
@@ -508,7 +514,7 @@
                         </button>
                     </div>
                     <div
-                        v-if='filteredContacts.length && slContactSearch'
+                        v-if='(filteredContacts.length || offTakCandidate) && slContactSearch'
                         class='border rounded mt-1'
                         style='max-height:120px;overflow-y:auto'
                     >
@@ -528,6 +534,23 @@
                             </template>
                             <template v-else>
                                 + {{ c.callsign }}
+                            </template>
+                        </button>
+                        <!-- Not a TAK contact (off shift, no TAK device, not signed in): put it on the incident by its callsign -->
+                        <button
+                            v-if='offTakCandidate'
+                            class='btn btn-sm w-100 text-start px-2 py-1 border-0 border-bottom rounded-0'
+                            style='font-size:12px'
+                            :disabled='slBusy.has(offTakUid(offTakCandidate))'
+                            :title='slBusy.has(offTakUid(offTakCandidate)) ? `Clear it on ${slBusy.get(offTakUid(offTakCandidate))} first` : "A unit with no TAK device: it is kept on the incident but gets no messages"'
+                            data-test='assign-off-tak'
+                            @click='slAssignOffTak(inc)'
+                        >
+                            <template v-if='slBusy.has(offTakUid(offTakCandidate))'>
+                                {{ offTakCandidate }} · on {{ slBusy.get(offTakUid(offTakCandidate)) }}
+                            </template>
+                            <template v-else>
+                                + {{ offTakCandidate }} <span class='text-muted'>· not on TAK</span>
                             </template>
                         </button>
                     </div>
@@ -756,6 +779,7 @@ import type { ActionContext } from '../lib/incident-actions.ts';
 import { registerIncidentView, touchIncidentView } from '../lib/command-state.ts';
 import IncidentForm from './IncidentForm.vue';
 import { BOARD_LABEL, boardState, boardBadgeClass, busyUnits, unitStatus, unitTimesLine, workingUids } from '../lib/unit-status.ts';
+import { OFF_TAK_LABEL, isOffTak, offTakCallsign, offTakCallsignProblem, offTakUid, offTakUnit } from '../lib/off-tak.ts';
 import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, REOPEN_REASON_MAX, dispositionLabel } from '../lib/dispositions.ts';
 
 const props = defineProps<{
@@ -827,6 +851,17 @@ const filteredContacts = computed(() => {
         !assigned.has(c.uid) &&
         (!q || c.callsign.toLowerCase().includes(q))
     ));
+});
+
+// The typed text as a unit that is not on TAK: offered under the TAK contacts when it is a usable callsign, no
+// TAK contact has that callsign (then that contact is the unit), and the unit is not already working this
+// incident. '' when there is nothing to offer.
+const offTakCandidate = computed(() => {
+    const typed = offTakCallsign(slContactSearch.value);
+    if (!typed || offTakCallsignProblem(typed)) return '';
+    if (allContacts.value.some(c => c.callsign.trim().toUpperCase() === typed.toUpperCase())) return '';
+    if (workingUids(inc.value?.assigned).has(offTakUid(typed))) return '';
+    return typed;
 });
 
 // Contacts not yet assigned — the multi-select picker's candidate list.
@@ -926,6 +961,23 @@ async function slAssignContact(inc: DispatcherIncident, contact: TakContact) {
         slAssignFailed(e);
         slContactSearch.value = typed;  // the list again, with the unit greyed where it is busy
         await loadIncidents();  // a refusal: the unit greys out with the incident it is on
+    }
+}
+
+// A unit that is not on TAK, put on the incident by the callsign typed in the search box.
+async function slAssignOffTak(inc: DispatcherIncident) {
+    const callsign = offTakCandidate.value;
+    if (!callsign || slBusy.value.has(offTakUid(callsign))) return;
+    const typed = slContactSearch.value;
+    slContactSearch.value = '';
+    slDetailError.value = '';
+
+    try {
+        await assignAction(slActions, inc, [offTakUnit(callsign)]);
+    } catch (e) {
+        slAssignFailed(e);
+        slContactSearch.value = typed;
+        await loadIncidents();
     }
 }
 

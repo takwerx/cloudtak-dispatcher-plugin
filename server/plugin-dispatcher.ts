@@ -578,6 +578,21 @@ function firstCaller(nameIn: string | undefined, phoneIn: string | undefined, ta
 // Older rows hold { uid, callsign } only: they read as Assigned with no time.
 // The list logic below is pure (no database) so plugin/test/units-server.test.ts can run it.
 // <units-pure>
+// Units that are not on TAK (a callsign a dispatcher typed: off shift, no TAK device, not signed in; ops 1068).
+// Their uid is made HERE from the callsign (`offtak:E99`), never taken from the client, so one callsign is one
+// unit on every incident of an Event and the one-incident-per-unit rule holds. Same rules as
+// plugin/lib/off-tak.ts.
+const OFF_TAK_PREFIX = 'offtak:';
+const OFF_TAK_CALLSIGN_MAX = 40;
+
+function offTakCallsignOf(v: string): string {
+    const c = v.replace(/\s+/g, ' ').trim();
+    if (!c) throw new Err(400, null, 'A unit not on TAK needs a callsign');
+    if (c.length > OFF_TAK_CALLSIGN_MAX) throw new Err(400, null, `A callsign is ${OFF_TAK_CALLSIGN_MAX} characters at most`);
+    if (!/^[A-Za-z0-9][A-Za-z0-9 ._/-]*$/.test(c)) throw new Err(400, null, 'A callsign is letters, digits and . _ / - only, starting with a letter or digit');
+    return c;
+}
+
 type UnitStatus = 'assigned' | 'on_scene' | 'cleared';
 
 interface UnitEntry {
@@ -587,6 +602,7 @@ interface UnitEntry {
     assigned_at: string | null;
     on_scene_at: string | null;
     cleared_at: string | null;
+    off_tak?: true;   // a unit that is not on TAK: no device, no messages (see <off-tak-pure>)
 }
 
 interface UnitNote { text: string; time: string }
@@ -615,6 +631,7 @@ function normalizeUnits(v: unknown): UnitEntry[] {
             assigned_at: unitTime(r.assigned_at),
             on_scene_at: unitTime(r.on_scene_at),
             cleared_at: unitTime(r.cleared_at),
+            ...(r.off_tak === true && r.uid.startsWith(OFF_TAK_PREFIX) ? { off_tak: true as const } : {}),
         });
     }
     return out;
@@ -627,17 +644,20 @@ function liveUnit(list: UnitEntry[], uid: string): UnitEntry | undefined {
 
 // Assign units (skips any still working the incident; one that cleared from it starts a second
 // trip, a new row). Returns the new list and the notes to log.
-function assignUnitsTo(list: UnitEntry[], add: { uid?: string; callsign?: string }[], now: string): { list: UnitEntry[]; notes: UnitNote[] } {
+function assignUnitsTo(list: UnitEntry[], add: { uid?: string; callsign?: string; off_tak?: boolean }[], now: string): { list: UnitEntry[]; notes: UnitNote[] } {
     const next = [...list];
     const notes: UnitNote[] = [];
     for (const a of add) {
-        const uid = (a.uid ?? '').trim();
-        const callsign = (a.callsign ?? '').trim();
+        const offTak = a.off_tak === true;
+        // A unit not on TAK: the callsign is checked and the uid made from it. A TAK unit may not use that id.
+        const callsign = offTak ? offTakCallsignOf(a.callsign ?? '') : (a.callsign ?? '').trim();
+        const uid = offTak ? OFF_TAK_PREFIX + callsign.toUpperCase() : (a.uid ?? '').trim();
         if (!uid || !callsign) throw new Err(400, null, 'A unit needs a uid and a callsign');
+        if (!offTak && uid.startsWith(OFF_TAK_PREFIX)) throw new Err(400, null, 'That unit id is for a unit not on TAK');
         if (callsign.length > 64) throw new Err(400, null, 'Unit callsign is too long (64 characters max)');
         if (liveUnit(next, uid)) continue;
         if (next.length >= UNITS_MAX) throw new Err(400, null, `An incident can have at most ${UNITS_MAX} units`);
-        next.push({ uid, callsign, status: 'assigned', assigned_at: now, on_scene_at: null, cleared_at: null });
+        next.push({ uid, callsign, status: 'assigned', assigned_at: now, on_scene_at: null, cleared_at: null, ...(offTak ? { off_tak: true as const } : {}) });
         notes.push({ text: `${callsign} assigned`, time: now });
     }
     return { list: next, notes };
@@ -1573,7 +1593,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         description: 'Assign one or more units to an incident (each starts as Assigned, stamped now)',
         params: Type.Object({ incidentid: Type.String() }),
         body: Type.Object({
-            units: Type.Array(Type.Object({ uid: Type.String(), callsign: Type.String() })),
+            units: Type.Array(Type.Object({ uid: Type.String(), callsign: Type.String(), off_tak: Type.Optional(Type.Boolean()) })),
             operator: Type.Optional(Type.String()),
         }),
         res: Type.Any(),

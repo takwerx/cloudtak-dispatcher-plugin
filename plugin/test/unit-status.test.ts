@@ -58,7 +58,7 @@ const incident = {
 test('the CSV keeps its old columns and adds first_on_scene and every unit with its three times', () => {
     const rows = buildCsv([incident as never]).split('\r\n');
     const header = rows[0].split(',');
-    assert.deepEqual(header.slice(-2), ['first_on_scene', 'unit_times']);
+    assert.deepEqual(header.slice(-3), ['first_on_scene', 'unit_times', 'units_not_on_tak'], 'new columns go on the end');
     assert.ok(header.includes('assigned_units'), 'the old column stays');
     assert.match(rows[1], /"L1; E12; M4"/);
     assert.ok(rows[1].includes(`"${T2}","L1 (cleared) assigned [${T1}] · on scene [${T2}] · cleared [${T3}] | E12 (on scene) assigned [${T1}] · on scene [${T4}] | M4 assigned [${T1}]"`));
