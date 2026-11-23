@@ -115,6 +115,7 @@ test('wiring: the incident panel offers a callsign not found among the contacts,
 
 test('wiring: A +E99 on the command line, settled before anything is assigned', () => {
     const c = src('components/CommandLine.vue');
+    assert.match(c, /import \{ offTakCallsign, offTakCallsignProblem, offTakTag, offTakUnit, offTakWord \} from '\.\.\/lib\/off-tak\.ts';/);
     assert.match(c, /const tak = typed\.filter\(w => offTakWord\(w\) === null\);/);
     assert.match(c, /const offTak = \[\.\.\.new Map\(typed\.flatMap\(w => \(offTakWord\(w\) === null \? \[\] : \[offTakFor\(offTakWord\(w\) as string\)\]\)\)/);
     assert.match(c, /is on TAK: type A \$\{c\}, without the \+\./);
