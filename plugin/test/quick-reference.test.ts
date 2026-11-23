@@ -67,6 +67,9 @@ test('text from the agency is escaped, so a name or a type cannot put markup on 
 
 test('wiring: the command line help has a print button and a save button, built from the settings now in use', () => {
     const src = readFileSync(new URL('../components/CommandLine.vue', import.meta.url), 'utf8');
+    // every name the component uses is imported (a missing import is a build error only inside CloudTAK)
+    assert.match(src, /import \{ buildQuickReferenceHtml, QUICK_REFERENCE_NAME \} from '\.\.\/lib\/quick-reference\.ts';/);
+    assert.match(src, /import \{ downloadFile, openPrintWindow \} from '\.\.\/lib\/report\.ts';/);
     assert.match(src, /data-test='quick-reference-print'[\s\S]*?@click='printQuickReference'/);
     assert.match(src, /data-test='quick-reference-save'[\s\S]*?@click='saveQuickReference'/);
     assert.match(src, /buildQuickReferenceHtml\(\{ types: incidentTypeOptions\(settings\)/);

@@ -128,6 +128,8 @@ import { busyUnits, workingUids } from '../lib/unit-status.ts';
 import type { IncidentQueue } from '../lib/unit-status.ts';
 import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, REOPEN_REASON_MAX, dispositionLabel } from '../lib/dispositions.ts';
 import { incidentTypeOptions } from '../lib/incident-types.ts';
+import { buildQuickReferenceHtml, QUICK_REFERENCE_NAME } from '../lib/quick-reference.ts';
+import { downloadFile, openPrintWindow } from '../lib/report.ts';
 import {
     assignAction, unitStatusAction, removeUnitAction, addNoteAction, reportNumberAction, callerAction,
     closeAction, reopenAction, flyToIncident,
