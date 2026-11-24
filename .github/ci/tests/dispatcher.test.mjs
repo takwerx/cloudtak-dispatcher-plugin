@@ -262,3 +262,119 @@ test('broadcast + two callers: the Core Event remarks carry both, primary first,
     const one = writes().find(c => c.method === 'PATCH' && c.url === '/api/core/event/core-9')
     assert.ok(!/Pat Doe/.test(one.body.remarks) && /Caller: Sam Lee/.test(one.body.remarks), 'removing the primary leaves the other caller only')
 })
+
+// --- TAK-CAD routes: who may use a connection (ops #1201) -------------------------------------
+// Loads the real server/plugin-takcad.ts. CloudTAK's auth, node-tak and typebox are the stand-ins in
+// ./stubs; the access rule in stubs/cloudtak-auth.mjs is a copy of CloudTAK's own Auth.is_connection.
+
+const takcad = await import('../../../server/plugin-takcad.ts')
+
+const ROUTES = ['GET /marti/plugins/takcad/submit', 'POST /marti/plugins/takcad/submit',
+    'PUT /marti/plugins/takcad/submit/result', 'DELETE /marti/plugins/takcad/submit']
+
+const loadRoutes = async () => {
+    const routes = {}
+    const schema = {}
+    for (const m of ['get', 'post', 'put', 'delete']) {
+        schema[m] = async (path, _opts, handler) => { routes[`${m.toUpperCase()} ${path}`] = handler }
+    }
+    await takcad.default(schema, { server: { api: 'https://tak.example:8443' }, models: {
+        Profile: { from: async (email) => globalThis.__profiles[email] },
+        // Plain row lookup, as CloudTAK's model gives it.
+        Connection: { from: async (id) => globalThis.__connections[id] },
+    } })
+    return routes
+}
+
+const callRoute = async (handler, query) => {
+    const out = { status: 200, body: undefined }
+    const res = { status(s) { out.status = s; return res }, json(b) { out.body = b; return res } }
+    await handler({ query, body: { x: 1 } }, res)
+    return out
+}
+
+const signIn = (email) => { globalThis.__caller = { email } }
+
+beforeEach(() => {
+    globalThis.__tak = { clients: [], requests: [] }
+    globalThis.__connections = {
+        5: { id: 5, agency: 100, auth: { cert: 'CERT-AGENCY-100', key: 'KEY-100' } },
+        6: { id: 6, agency: 200, auth: { cert: 'CERT-AGENCY-200', key: 'KEY-200' } },
+        7: { id: 7, agency: null, auth: { cert: 'CERT-NO-AGENCY', key: 'KEY-7' } },
+    }
+    globalThis.__profiles = {
+        'sys@x': { email: 'sys@x', system_admin: true, auth: { cert: 'CERT-SYS', key: 'K' } },
+        'agency100@x': { email: 'agency100@x', system_admin: false, agency_admin: [100], auth: { cert: 'CERT-OWN-100', key: 'K' } },
+        'plain@x': { email: 'plain@x', system_admin: false, agency_admin: null, auth: { cert: 'CERT-OWN-PLAIN', key: 'K' } },
+        'notyet@x': { email: 'notyet@x', system_admin: false, agency_admin: null, auth: null },
+    }
+})
+
+const queryFor = (_route, extra = {}) => ({ fn: 'getIncidents', uid: 'u-1', ...extra })
+
+test('TAK-CAD: all four proxy routes are registered', async () => {
+    const routes = await loadRoutes()
+    for (const r of ROUTES) assert.equal(typeof routes[r], 'function', `${r} is registered`)
+})
+
+test('TAK-CAD: a user who does not administer the connection\'s agency is refused on every route, and nothing reaches TAK Server', async () => {
+    const routes = await loadRoutes()
+    for (const who of ['plain@x', 'agency100@x']) {
+        signIn(who)
+        for (const r of ROUTES) {
+            // agency100 may use connection 5 but not 6 (other agency) or 7 (no agency); plain may use none
+            const refused = who === 'plain@x' ? [5, 6, 7] : [6, 7]
+            for (const id of refused) {
+                globalThis.__tak = { clients: [], requests: [] }
+                const out = await callRoute(routes[r], queryFor(r, { connection: id }))
+                assert.equal(out.status, 401, `${who} on ${r} connection ${id}: refused`)
+                assert.deepEqual(globalThis.__tak.requests, [], `${who} on ${r} connection ${id}: no request sent to TAK Server`)
+                assert.deepEqual(globalThis.__tak.clients, [], `${who} on ${r} connection ${id}: no certificate used`)
+            }
+        }
+    }
+})
+
+test('TAK-CAD: an agency admin and a system admin can use the connections they administer, with that connection\'s certificate', async () => {
+    const routes = await loadRoutes()
+    for (const r of ROUTES) {
+        signIn('agency100@x')
+        globalThis.__tak = { clients: [], requests: [] }
+        let out = await callRoute(routes[r], queryFor(r, { connection: 5 }))
+        assert.equal(out.status, 200, `agency admin on ${r}`)
+        assert.deepEqual(globalThis.__tak.requests.map(q => q.cert), ['CERT-AGENCY-100'], `agency admin on ${r} uses connection 5's certificate`)
+
+        signIn('sys@x')
+        for (const [id, cert] of [[5, 'CERT-AGENCY-100'], [6, 'CERT-AGENCY-200'], [7, 'CERT-NO-AGENCY']]) {
+            globalThis.__tak = { clients: [], requests: [] }
+            out = await callRoute(routes[r], queryFor(r, { connection: id }))
+            assert.equal(out.status, 200, `system admin on ${r} connection ${id}`)
+            assert.deepEqual(globalThis.__tak.requests.map(q => q.cert), [cert], `system admin on ${r} connection ${id} uses its certificate`)
+        }
+    }
+})
+
+test('TAK-CAD: with no connection given, every route still uses the caller\'s own certificate (the way the plugin calls them)', async () => {
+    const routes = await loadRoutes()
+    for (const who of ['plain@x', 'agency100@x', 'sys@x']) {
+        signIn(who)
+        for (const r of ROUTES) {
+            globalThis.__tak = { clients: [], requests: [] }
+            const out = await callRoute(routes[r], queryFor(r))
+            assert.equal(out.status, 200, `${who} on ${r}`)
+            assert.deepEqual(globalThis.__tak.requests.map(q => q.cert), [globalThis.__profiles[who].auth.cert], `${who} on ${r} uses their own certificate`)
+        }
+    }
+})
+
+test('TAK-CAD: a signed-in user who has not logged in to CloudTAK yet is still told so, and a request with no sign-in is refused', async () => {
+    const routes = await loadRoutes()
+    signIn('notyet@x')
+    const out = await callRoute(routes[ROUTES[0]], queryFor(ROUTES[0]))
+    assert.equal(out.status, 401)
+    assert.match(out.body.message, /not yet logged in/)
+    globalThis.__caller = undefined
+    const anon = await callRoute(routes[ROUTES[0]], queryFor(ROUTES[0], { connection: 5 }))
+    assert.equal(anon.status, 401)
+    assert.deepEqual(globalThis.__tak.requests, [])
+})
