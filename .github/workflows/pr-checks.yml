@@ -18,7 +18,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [dev, main]
+    branches: [dev, main, claude/issue-1187-red]
 
 concurrency:
   # PRs by number, pushes by branch (github.ref), so a push to dev never cancels a PR run and the
