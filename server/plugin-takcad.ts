@@ -54,6 +54,25 @@ function nominatimToSuggestion(f: NominatimFeature) {
     };
 }
 
+// The TAK Server client every proxy route below uses. Without ?connection= it acts as the
+// caller's own profile certificate. With ?connection= it acts as that connection's certificate,
+// so the caller must be allowed to use that connection: Auth.is_connection (the same check
+// CloudTAK's own marti.ts proxy makes) lets a system admin, or an agency admin of that
+// connection's agency, through and refuses everyone else. Every route must get its client here,
+// never straight from config.models.Connection (the proof test in dispatcher.test.mjs checks it).
+async function takServerApi(config: ConfigStateless, req: any): Promise<TAKAPI> {
+    if (req.query.connection) {
+        const { connection } = await Auth.is_connection(config, req, {}, Number(req.query.connection));
+        return await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(connection.auth.cert, connection.auth.key));
+    }
+
+    const user = await Auth.as_user(config, req);
+    const profile = await config.models.Profile.from(user.email);
+    const auth = profile.auth;
+    if (!auth) throw new Err(401, null, 'User has been provisioned but has not yet logged in');
+    return await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(auth.cert, auth.key));
+}
+
 export default async function router(schema: Schema, config: ConfigStateless) {
     // Forward geocode — CloudTAK's CSP (connect-src 'self') blocks the browser from
     // calling openrouteservice.org directly, so proxy it through the API host.
@@ -130,17 +149,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         try {
             await Auth.is_auth(config, req);
 
-            let api;
-            if (req.query.connection) {
-                const connection = await config.models.Connection.from(parseInt(String(req.query.connection)));
-                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(connection.auth.cert, connection.auth.key));
-            } else {
-                const user = await Auth.as_user(config, req);
-                const profile = await config.models.Profile.from(user.email);
-                const auth = profile.auth;
-                if (!auth) throw new Err(401, null, 'User has been provisioned but has not yet logged in');
-                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(auth.cert, auth.key));
-            }
+            const api = await takServerApi(config, req);
 
             const params = new URLSearchParams();
             params.set('fn', String(req.query.fn));
@@ -174,17 +183,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         try {
             await Auth.is_auth(config, req);
 
-            let api;
-            if (req.query.connection) {
-                const connection = await config.models.Connection.from(parseInt(String(req.query.connection)));
-                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(connection.auth.cert, connection.auth.key));
-            } else {
-                const user = await Auth.as_user(config, req);
-                const profile = await config.models.Profile.from(user.email);
-                const auth = profile.auth;
-                if (!auth) throw new Err(401, null, 'User has been provisioned but has not yet logged in');
-                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(auth.cert, auth.key));
-            }
+            const api = await takServerApi(config, req);
 
             const params = new URLSearchParams();
             params.set('fn', String(req.query.fn));
@@ -216,17 +215,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         try {
             await Auth.is_auth(config, req);
 
-            let api;
-            if (req.query.connection) {
-                const connection = await config.models.Connection.from(parseInt(String(req.query.connection)));
-                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(connection.auth.cert, connection.auth.key));
-            } else {
-                const user = await Auth.as_user(config, req);
-                const profile = await config.models.Profile.from(user.email);
-                const auth = profile.auth;
-                if (!auth) throw new Err(401, null, 'User has been provisioned but has not yet logged in');
-                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(auth.cert, auth.key));
-            }
+            const api = await takServerApi(config, req);
 
             const data = await api.fetch(new URL(`${TAKCAD_BASE}/result?fn=${encodeURIComponent(String(req.query.fn))}`, String(config.server.api)), {
                 method: 'PUT',
@@ -254,17 +243,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         try {
             await Auth.is_auth(config, req);
 
-            let api;
-            if (req.query.connection) {
-                const connection = await config.models.Connection.from(parseInt(String(req.query.connection)));
-                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(connection.auth.cert, connection.auth.key));
-            } else {
-                const user = await Auth.as_user(config, req);
-                const profile = await config.models.Profile.from(user.email);
-                const auth = profile.auth;
-                if (!auth) throw new Err(401, null, 'User has been provisioned but has not yet logged in');
-                api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(auth.cert, auth.key));
-            }
+            const api = await takServerApi(config, req);
 
             const params = new URLSearchParams();
             params.set('fn', String(req.query.fn));
