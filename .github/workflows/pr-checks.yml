@@ -152,6 +152,8 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -I .github/ci/test_workflow_pins.py
+      # The CI tools lock holds no known-vulnerable Vue package (ops #1198). Run locally: python3 -I .github/ci/test_ci_tools_lock.py
+      - run: python3 -I .github/ci/test_ci_tools_lock.py
 
   # The push trigger and the concurrency group stay as ops #1187 set them.
   # Run locally: python3 -I .github/ci/test_push_checks.py
