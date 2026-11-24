@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.1
+
+Security update. Update to this version when you can. Nothing changes in how you use Dispatcher.
+
+- **TAK-CAD mode checks access to a connection** before it uses it. Normal use is the same as before.
+
 ## 1.8.0
 
 Faster work at the desk, mostly for the command line. Most of it came from Sentinel6Systems. All of it is for
