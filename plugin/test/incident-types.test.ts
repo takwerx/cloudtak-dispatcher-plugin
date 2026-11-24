@@ -8,9 +8,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-    DEFAULT_INCIDENT_TYPES, INCIDENT_TYPE_CODE_MAX, INCIDENT_TYPE_NAME_MAX, INCIDENT_TYPES_MAX,
+    DEFAULT_INCIDENT_TYPES, INCIDENT_TYPE_CODE_MAX, INCIDENT_TYPE_CODES_MAX, INCIDENT_TYPE_NAME_MAX, INCIDENT_TYPES_MAX,
     INCIDENT_TYPE_EXAMPLE_CSV,
-    incidentTypeLabel, incidentTypeOptions, incidentTypeProblems, incidentTypesOnly, isIncidentTypeCode,
+    incidentTypeCodes, incidentTypeLabel, incidentTypeOptions, incidentTypeProblems, incidentTypesOnly, isIncidentTypeCode,
     parseIncidentTypeCsv, savedIncidentTypes,
 } from '../lib/incident-types.ts';
 import type { IncidentTypeOption } from '../lib/incident-types.ts';
@@ -78,8 +78,24 @@ test('switch off: a type named like a built-in one gives it its code and is not 
     assert.deepEqual(list[list.length - 1], { code: 'OTH', name: 'Other' });
 });
 
+test('saved aliases load with their type; a taken or malformed one is dropped, and a list without any loads as before', () => {
+    assert.deepEqual(savedIncidentTypes([
+        { code: 'MVA', name: 'Traffic Accident', aliases: ['wreck', '1050', 'MVA', 'B AD', 7] },
+        { code: '', name: 'Fire', aliases: ['WRECK', 'F1'] },
+        { code: 'X', name: 'Junk', aliases: 'not a list' },
+    ]), [
+        { code: 'MVA', name: 'Traffic Accident', aliases: ['WRECK', '1050'] },
+        { code: 'F1', name: 'Fire' },
+        { code: 'X', name: 'Junk' },
+    ]);
+    // switch off: a built-in type named in the admin's list takes all of its codes
+    const list = incidentTypeOptions({ incident_types: [{ code: 'MVA', name: 'traffic accident', aliases: ['WRECK'] }] });
+    assert.deepEqual(list.find(t => t.name === 'Traffic Accident'), { code: 'MVA', name: 'Traffic Accident', aliases: ['WRECK'] });
+});
+
 test('the dropdown shows the code beside the name when there is one', () => {
     assert.equal(incidentTypeLabel({ code: 'MVA', name: 'Traffic Accident' }), 'MVA - Traffic Accident');
+    assert.equal(incidentTypeLabel({ code: 'MVA', name: 'Traffic Accident', aliases: ['WRECK'] }), 'MVA - Traffic Accident');
     assert.equal(incidentTypeLabel({ code: '', name: 'Welfare Check' }), 'Welfare Check');
 });
 
@@ -155,24 +171,41 @@ test('CSV: only a row of header words is skipped as the header', () => {
     assert.deepEqual(parseIncidentTypeCsv('code\nAlarm\n').types.map(t => t.name), ['code', 'Alarm']);
 });
 
-test('the example file loads clean and shows a code, a comma in a name and a type with no code', () => {
+test('the example file loads clean and shows a code, a second code, a comma in a name and a type with no code', () => {
     const read = parseIncidentTypeCsv(INCIDENT_TYPE_EXAMPLE_CSV);
     assert.deepEqual(read.errors, []);
     assert.equal(read.types.length, 5);
     assert.ok(read.types.some(t => t.code === '' && t.name));
     assert.ok(read.types.some(t => t.name.includes(',')));
+    assert.ok(read.types.some(t => incidentTypeCodes(t).length > 1));
 });
 
-test('CSV: a duplicated code or name refuses the whole file and names the rows', () => {
-    const read = parseIncidentTypeCsv('code,name\nMVA,Traffic Accident\nFIRE,Fire\nmva,Vehicle Crash\nF2,fire\nMVA,Third\n');
+test('CSV: more rows with one name give that type more codes; the first is shown, the type keeps its first place', () => {
+    const read = parseIncidentTypeCsv('code,name\nMVA,Traffic Accident\nFIRE,Fire\nwreck,traffic accident\n1050,Traffic Accident\n,Welfare Check\n');
+    assert.deepEqual(read.errors, []);
+    assert.deepEqual(read.types, [
+        { code: 'MVA', name: 'Traffic Accident', aliases: ['WRECK', '1050'] },
+        { code: 'FIRE', name: 'Fire' },
+        { code: '', name: 'Welfare Check' },
+    ]);
+    assert.equal(incidentTypeLabel(read.types[0]), 'MVA - Traffic Accident');
+    // a type first listed with no code takes the code of its next row
+    assert.deepEqual(parseIncidentTypeCsv(',Fire\nF1,Fire\nF2,Fire\n').types, [{ code: 'F1', name: 'Fire', aliases: ['F2'] }]);
+});
+
+test('CSV: a duplicated code, a repeated row that adds no code, or too many codes refuses the file and names the rows', () => {
+    const read = parseIncidentTypeCsv('code,name\nMVA,Traffic Accident\nFIRE,Fire\nmva,Vehicle Crash\n,fire\nMVA,Traffic Accident\n');
     assert.deepEqual(read.types, []);
     assert.deepEqual(read.errors, [
         'Rows 2, 4 and 6: the code MVA is used more than once.',
-        'Rows 3 and 5: the name "Fire" is used more than once.',
+        'Row 5: "Fire" is already on row 3. Another row for the same type must add a code.',
     ]);
+    const lots = Array.from({ length: INCIDENT_TYPE_CODES_MAX + 1 }, (_, i) => `C${i},Fire`).join('\n');
+    assert.deepEqual(parseIncidentTypeCsv(lots).errors, [`Row ${INCIDENT_TYPE_CODES_MAX + 1}: "Fire" has more than ${INCIDENT_TYPE_CODES_MAX} codes.`]);
+    assert.equal(incidentTypeCodes(parseIncidentTypeCsv(lots.slice(0, lots.lastIndexOf('\n'))).types[0]).length, INCIDENT_TYPE_CODES_MAX);
 });
 
-test('CSV: a malformed code, a missing name, an unquoted comma and a long name are each named by row', () => {
+test('CSV: a malformed code, an unquoted comma and a long name are each named by row', () => {
     const read = parseIncidentTypeCsv([
         'code,name',
         'M VA,Traffic Accident',
@@ -183,12 +216,25 @@ test('CSV: a malformed code, a missing name, an unquoted comma and a long name a
         `OK,${'x'.repeat(INCIDENT_TYPE_NAME_MAX)}`,
     ].join('\n'));
     assert.deepEqual(read.types, []);
-    assert.equal(read.errors.length, 5, 'in row order');
+    assert.equal(read.errors.length, 4, 'in row order');
     assert.match(read.errors[0], /^Row 2: the code "M VA" must be letters and digits only/);
     assert.match(read.errors[1], /^Row 3: the code "TOOLONG99"/);
-    assert.equal(read.errors[2], 'Row 4: the name is missing.');
-    assert.match(read.errors[3], /^Row 5: more than two columns/);
-    assert.equal(read.errors[4], `Row 6: the name is longer than ${INCIDENT_TYPE_NAME_MAX} characters.`);
+    assert.match(read.errors[2], /^Row 5: more than two columns/);
+    assert.equal(read.errors[3], `Row 6: the name is longer than ${INCIDENT_TYPE_NAME_MAX} characters.`);
+});
+
+test('CSV: a code with the name left empty is a type named by its code', () => {
+    const read = parseIncidentTypeCsv('code,name\nMVA,Traffic Accident\nsmoke,\n , \nSTR,Structure Fire\n');
+    assert.deepEqual(read.errors, []);
+    assert.deepEqual(read.types, [
+        { code: 'MVA', name: 'Traffic Accident' },
+        { code: 'SMOKE', name: 'SMOKE' },
+        { code: 'STR', name: 'Structure Fire' },
+    ]);
+    assert.equal(incidentTypeLabel(read.types[1]), 'SMOKE');
+    assert.equal(incidentTypeLabel(read.types[0]), 'MVA - Traffic Accident');
+    // the same code twice is still refused, named or not
+    assert.match(parseIncidentTypeCsv('SMOKE,\nSMOKE,Smoke Report').errors[0], /^Rows 1 and 2: the code SMOKE is used more than once/);
 });
 
 test('CSV: an empty file, or one with only a header, says so; too many types is refused', () => {
@@ -200,8 +246,11 @@ test('CSV: an empty file, or one with only a header, says so; too many types is 
     assert.equal(parseIncidentTypeCsv(many.slice(0, many.lastIndexOf('\n'))).types.length, INCIDENT_TYPES_MAX);
 });
 
-test('a list checked without a file numbers the types by their place', () => {
-    assert.deepEqual(incidentTypeProblems([{ code: 'A', name: 'One' }, { code: '', name: 'Two' }]), []);
+test('a list checked without a file numbers the types by their place, every code of a type counted', () => {
+    assert.deepEqual(incidentTypeProblems([{ code: 'A', name: 'One', aliases: ['B', 'C'] }, { code: '', name: 'Two' }]), []);
+    assert.deepEqual(incidentTypeProblems([{ code: 'A', name: 'One', aliases: ['B'] }, { code: 'b', name: 'Two' }]), [
+        'Rows 1 and 2: the code B is used more than once.',
+    ]);
     assert.deepEqual(incidentTypeProblems([{ code: 'A', name: 'One' }, { code: 'a', name: 'one' }]), [
         'Rows 1 and 2: the code A is used more than once.',
         'Rows 1 and 2: the name "One" is used more than once.',
@@ -245,4 +294,8 @@ test('wiring: the New Incident form builds its dropdown from the store, and Sett
     const card = readFileSync(new URL('../components/IncidentTypesSettings.vue', import.meta.url), 'utf8');
     assert.equal(card.split(":disabled='!isAdmin").length - 1, 5, 'switch, file, code, name and Add are admin only');
     assert.match(card, /v-if='isAdmin'[^>]*>?[\s\S]{0,400}removeType\(t\)/);
+    // the list shows every code of a type, and Add with a name already there gives it one more code
+    assert.match(card, /\{\{ incidentTypeCodes\(t\)\.join\(', '\) \|\| '—' \}\}/);
+    assert.match(card, /withIncidentTypeCodes\(t\.name, \[\.\.\.incidentTypeCodes\(t\), code\]\)/);
+    assert.match(card, /types\.value\.find\(t => incidentTypeCodes\(t\)\.includes\(code\)\)/);
 });

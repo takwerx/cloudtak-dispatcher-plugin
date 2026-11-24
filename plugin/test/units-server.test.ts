@@ -236,3 +236,24 @@ test('a unit is held elsewhere while Assigned or On Scene there, however the lis
     assert.deepEqual(m.heldElsewhere(others, ['u2']), []);
     assert.equal(m.busyRefusal(m.heldElsewhere(others, ['u1']), 1), 'E12 is on 014, E12 is on 008. Clear them there first.');
 });
+
+test('a unit not on TAK: the server makes its uid from the callsign, whatever uid was sent', () => {
+    const { list } = m.assignUnitsTo([], [
+        { uid: 'off-tak:E7', callsign: 'E7' },
+        { uid: 'off-tak:SOMETHING-ELSE', callsign: ' engine   9 ' },
+    ], T1);
+    assert.deepEqual(list.map((u: U) => [u.uid, u.callsign]), [['off-tak:E7', 'E7'], ['off-tak:ENGINE 9', 'ENGINE 9']]);
+    // the same name is the same unit: no second row while it is working
+    assert.equal(m.assignUnitsTo(list, [{ uid: 'off-tak:x', callsign: 'e7' }], T2).list.length, 2);
+    refuses(() => m.assignUnitsTo([], [{ uid: 'off-tak:E7', callsign: '  ' }], T1), 400, /uid and a callsign/);
+    // a TAK unit's uid is kept as sent
+    assert.equal(m.assignUnitsTo([], [{ uid: 'ANDROID-abc', callsign: 'e12' }], T1).list[0].uid, 'ANDROID-abc');
+});
+
+test('the plugin and the server build a unit not on TAK the same way', async () => {
+    const { offTakUnit } = await import('../lib/unit-status.ts');
+    for (const name of ['E7', ' engine   9 ', 'Medic 4']) {
+        const u = offTakUnit(name)!;
+        assert.deepEqual(m.assignUnitsTo([], [u], T1).list.map((x: U) => [x.uid, x.callsign]), [[u.uid, u.callsign]]);
+    }
+});

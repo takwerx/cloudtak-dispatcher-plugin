@@ -69,6 +69,7 @@
             >
                 <div class='text-muted'>
                     A number first names the incident (14 T text). Left out, it is the incident shown at the left.
+                    Several on one line, with ; between them: 14 A H35; O H35; X report (;; for a ; in a note).
                 </div>
                 <div
                     v-for='c in COMMANDS'
@@ -100,7 +101,7 @@ import type { TakContact } from '../lib/contacts-client.ts';
 import { fetchContactsShared, loadIncidents } from '../lib/incident-poll.ts';
 import { undockIncident, closeUndocked, closeAllUndocked } from '../lib/undock-panes.ts';
 import { popOutDispatcher, dockDispatcher } from '../lib/float-pane.ts';
-import { busyUnits, workingUids } from '../lib/unit-status.ts';
+import { busyUnits, offTakUnit, shortNumber, workingUids } from '../lib/unit-status.ts';
 import type { IncidentQueue } from '../lib/unit-status.ts';
 import { DISPOSITIONS, DISPOSITION_OTHER, DISPOSITION_NOTE_MAX, REOPEN_REASON_MAX, dispositionLabel } from '../lib/dispositions.ts';
 import { incidentTypeOptions } from '../lib/incident-types.ts';
@@ -112,10 +113,10 @@ import type { ActionContext } from '../lib/incident-actions.ts';
 import { commandState, setCommandLineShown, panelUndock, incidentList, workOn } from '../lib/command-state.ts';
 import type { CommandActions, ListApi } from '../lib/command-state.ts';
 import {
-    COMMANDS, parseLine, words, targetIncident, pickUnit, resolveUnits, actOnEach, unitRows, matchOptions,
+    COMMANDS, parseChain, words, targetIncident, pickUnit, resolveUnits, actOnEach, unitRows, matchOptions,
     readDisposition, parseCaller, parseNew, pushHistory,
 } from '../lib/command-line.ts';
-import type { ParsedLine, UnitRow } from '../lib/command-line.ts';
+import type { ChainPart, ParsedLine, UnitRow } from '../lib/command-line.ts';
 
 const props = defineProps<{
     // The Dispatcher frame's own buttons (CadMain.vue).
@@ -270,7 +271,7 @@ async function run(p: ParsedLine): Promise<string> {
                 const m = matchOptions(type, types);
                 if (!m.length) throw new Error(`No incident type matches "${type}". For an address alone: N , 120 main`);
                 name = m.length === 1 ? m[0].name : (await ask(`Which type is "${type}"?`,
-                    m.map(t => ({ label: t.code ? `${t.code}  ${t.name}` : t.name, value: t })))).name;
+                    m.map(t => ({ label: t.code && t.code !== t.name ? `${t.code}  ${t.name}` : t.name, value: t })))).name;
             }
             const list = await board();
             keepForm(list);
@@ -288,6 +289,12 @@ async function run(p: ParsedLine): Promise<string> {
             const chosen = await resolveUnits(typed, contacts.value, {
                 ask:  askUnit(c => (cannotAssign(c, inc) ? `${c.callsign} · ${cannotAssign(c, inc)}` : c.callsign)),
                 none: w => new Error(`No unit matches "${w}".`),
+                // Not on TAK (a unit that called in on the radio): one more Enter adds it by that name, so a
+                // typo never adds a unit by itself.
+                missing: (w) => {
+                    const u = offTakUnit(w) as TakContact;
+                    return ask(`"${w}" is not on TAK.`, [{ label: `Add ${u.callsign} (not on TAK)`, value: u }]);
+                },
             });
             for (const c of chosen) {
                 const why = cannotAssign(c, inc);
@@ -469,6 +476,7 @@ function previewUnits(p: ParsedLine): { text: string; bad: boolean } {
     const shown = words(p.rest).map((w) => {
         if (p.verb === 'A') {
             const pick = pickUnit(w, contacts.value);
+            if (pick.kind === 'none') return `${w}? not on TAK`;
             if (pick.kind !== 'one') return `${w}?`;
             const why = cannotAssign(pick.unit, target(p));
             if (why) bad = true;
@@ -480,10 +488,23 @@ function previewUnits(p: ParsedLine): { text: string; bad: boolean } {
     return { text: shown.join(', '), bad };
 }
 
+// The line read as parseChain reads it: several commands stay on the incident being worked now.
+function readLine(line: string): ChainPart[] | { error: string } | null {
+    return parseChain(line, current.value ? shortNumber(current.value.number) : null);
+}
+
+// The first command as Enter will read it, then the others by their letters: they are read when their
+// turn comes, after the ones before them are done (O H35 after A H35 finds H35 assigned by then).
 const preview = computed<{ text: string; bad: boolean } | null>(() => {
-    const p = parseLine(text.value);
-    if (!p) return null;
-    if ('error' in p) return { text: p.error, bad: true };
+    const parts = readLine(text.value);
+    if (!parts) return null;
+    if ('error' in parts) return { text: parts.error, bad: true };
+    const first = previewOf(parts[0].parsed);
+    const then = parts.slice(1).map(x => x.parsed.verb).join(', ');
+    return then ? { text: `${first.text} · then ${then}`, bad: first.bad } : first;
+});
+
+function previewOf(p: ParsedLine): { text: string; bad: boolean } {
     const does = COMMANDS.find(c => c.verb === p.verb)?.does ?? '';
     try {
         if (BY_UNIT.has(p.verb) || p.verb === 'A') {
@@ -499,7 +520,7 @@ const preview = computed<{ text: string; bad: boolean } | null>(() => {
     } catch (e) {
         return { text: e instanceof Error ? e.message : String(e), bad: true };
     }
-});
+}
 
 const shownLine = computed<{ text: string; cls: string } | null>(() => {
     if (result.value?.bad && result.value.line === text.value) return { text: result.value.text, cls: 'text-danger' };
@@ -527,10 +548,10 @@ async function submit() {
     }
     if (busy.value) return;
     const line = text.value;
-    const p = parseLine(line);
-    if (!p) return;
-    if ('error' in p) {
-        result.value = { text: p.error, bad: true, line };
+    const parts = readLine(line);
+    if (!parts) return;
+    if ('error' in parts) {
+        result.value = { text: parts.error, bad: true, line };
         return;
     }
     history = pushHistory(history, line);
@@ -538,10 +559,24 @@ async function submit() {
     text.value = '';
     result.value = null;
     busy.value = true;
+    const done: string[] = [];
+    let at = 0;
     try {
-        const said = await run(p);
-        result.value = said ? { text: said, bad: false } : null;
+        // One command at a time, in order, each after the one before it is done.
+        for (; at < parts.length; at++) {
+            const said = await run(parts[at].parsed);
+            if (said) done.push(said);
+        }
+        result.value = done.length ? { text: done.join(' · '), bad: false } : null;
     } catch (e) {
+        if (at > 0) {
+            // Part of the line was done and cannot be taken back: what was not done comes back to be fixed.
+            const left = parts.slice(at).map(x => x.text).join('; ');
+            const why = e === CANCELLED ? 'Stopped' : `Not done: ${parts[at].text} (${e instanceof Error ? e.message : String(e)})`;
+            text.value = left;
+            result.value = { text: `Done: ${done.join(' · ')}. ${why}. The rest is back in the box.`, bad: true, line: left };
+            return;
+        }
         // Nothing was done: the line comes back to be fixed.
         text.value = line;
         result.value = e === CANCELLED ? null : { text: e instanceof Error ? e.message : String(e), bad: true, line };

@@ -5,7 +5,7 @@ import { sendAssignmentMessage, sendUpdateMessage } from './contacts-client.ts';
 import { patchIncident, assignUnits, setUnitStatus, removeUnit } from './events-client.ts';
 import type { DispatcherEvent, DispatcherIncident, AssignedContact } from './events-client.ts';
 import { dispatcherStore } from './dispatcher-store.ts';
-import { respondingLine, unitStatus } from './unit-status.ts';
+import { isOffTak, respondingLine, unitStatus } from './unit-status.ts';
 import { dispositionLabel } from './dispositions.ts';
 
 // What each button on an incident does, in one place: the server call, then everything that follows it
@@ -79,8 +79,8 @@ export async function assignAction(ctx: ActionContext, inc: DispatcherIncident, 
     const updated = await assignUnits(inc.id, units.map(c => ({ uid: c.uid, callsign: c.callsign })));
     applyIncident(updated);
 
-    // One GeoChat per newly-assigned responder
-    for (const c of units) {
+    // One GeoChat per newly-assigned responder (a unit not on TAK has nothing to receive it)
+    for (const c of units.filter(u => !isOffTak(u))) {
         try { await sendAssignmentMessage(ctx.mapStore, c, { name: `${updated.number} ${updated.type ?? ''}`, address: updated.address ?? '' }); }
         catch (e) { console.warn('[dispatcher] assignment message failed', e); }
     }
@@ -125,7 +125,7 @@ export async function addNoteAction(ctx: ActionContext, inc: DispatcherIncident,
     // DataSync log entry
     await feedLog(ctx, updated, `UPDATE ${updated.number}: ${text}`);
     // Push the update to every assigned responder as a direct GeoChat
-    for (const c of (updated.assigned ?? []).filter(u => unitStatus(u) !== 'cleared')) {
+    for (const c of (updated.assigned ?? []).filter(u => unitStatus(u) !== 'cleared' && !isOffTak(u))) {
         try { await sendUpdateMessage(ctx.mapStore, c, { name: `${updated.number} ${updated.type ?? ''}` }, text); }
         catch (e) { console.warn('[dispatcher] update message failed', e); }
     }

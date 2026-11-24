@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.8.0
+
+Faster work at the desk, mostly for the command line. Most of it came from Sentinel6Systems. All of it is for
+standalone mode; TAK-CAD mode works as before.
+
+- **More than one code for an incident type.** Give a type several codes, so `N mva`, `N wreck` and `N 1050`
+  can all start a Traffic Accident. In the CSV file, add one more row for each extra code with the same name
+  (`WRECK,Traffic Accident`). A type can have up to 10 codes. The Incident Type list shows the first one. A code
+  with no name (`SMOKE,`) makes a type named by its code until you give it a name.
+- **Quick Reference sheet.** A **Quick Reference** button, under **User Guide** at the bottom of the Events
+  list, opens one printable page: every command, your incident types with all their codes, the dispositions and
+  three examples. Press **Print / Save as PDF**. Print it again after your types change.
+- **Several commands on one line.** Put `;` between commands and they run in order:
+  `14 A H35 E6; O H35 E6; T both drivers cited; X report`. Type the incident number once. Use `;;` for a
+  semicolon inside a note. If a command is wrong, nothing on the line is done.
+- **Units that are not on TAK.** A unit that is off shift or has no TAK device can still be put on a call. Type
+  its name in the assign box (`E7`) and press **+ Add "E7" not on TAK**, or type `A E7` on the command line. It
+  works like any other unit: On Scene, Clear, times and the report. A small phone icon marks it, and it gets no
+  chat messages.
+- **A steadier unit ID for units not on TAK.** The server now builds the unit's ID from its name, so the same
+  name is always the same unit and one request cannot use another unit's ID.
+
+**If you go back to 1.7.0:** a type's extra codes are ignored. Only its first code works. If you save the
+incident types list while on 1.7.0, the extra codes are dropped.
+
 ## 1.7.0
 
 New features, most of them contributed by Sentinel6Systems. All of them are for standalone mode; TAK-CAD mode works

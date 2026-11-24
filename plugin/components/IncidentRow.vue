@@ -38,7 +38,19 @@
             class='small text-truncate'
             :title='units.join(", ")'
         >
-            <span class='text-muted'>Units</span> {{ units.join(', ') }}
+            <span class='text-muted'>Units</span>
+            <template
+                v-for='(u, i) in units'
+                :key='i'
+            >
+                {{ u }}<IconDeviceMobileOff
+                    v-if='offTak.has(u)'
+                    :size='12'
+                    stroke='1.5'
+                    class='text-warning ms-1'
+                    aria-label='not on TAK'
+                />{{ i < units.length - 1 ? ', ' : '' }}
+            </template>
         </div>
     </div>
 </template>
@@ -53,7 +65,8 @@
 import { computed } from 'vue';
 import type { DispatcherIncident } from '../lib/events-client.ts';
 import { dispatcherStore } from '../lib/dispatcher-store.ts';
-import { BOARD_LABEL, boardState, boardBadgeClass, rowUnits } from '../lib/unit-status.ts';
+import { IconDeviceMobileOff } from '@tabler/icons-vue';
+import { BOARD_LABEL, boardState, boardBadgeClass, isOffTak, rowUnits } from '../lib/unit-status.ts';
 
 const props = defineProps<{ inc: DispatcherIncident }>();
 const emit = defineEmits<{ (e: 'open', id: string): void }>();
@@ -61,6 +74,8 @@ const emit = defineEmits<{ (e: 'open', id: string): void }>();
 const labels = computed(() => dispatcherStore.displayMode !== 'multi');
 const undocked = computed(() => dispatcherStore.undocked.includes(props.inc.id));
 const units = computed(() => rowUnits(props.inc.assigned));
+// The names of the units not on TAK, for their icon.
+const offTak = computed(() => new Set((props.inc.assigned ?? []).filter(isOffTak).map(u => u.callsign)));
 const address = computed(() =>
     props.inc.address || `${(props.inc.lat ?? 0).toFixed(5)}, ${(props.inc.lon ?? 0).toFixed(5)}`);
 

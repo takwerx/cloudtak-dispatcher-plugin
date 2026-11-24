@@ -23,7 +23,7 @@ writeFileSync(sfile, `
 export class Err extends Error { status: number; constructor(status: number, _x: unknown, message: string) { super(message); this.status = status; } }
 ${cut('cjis-pure')}
 ${block}
-export { isAdminOnlySetting, normIncidentTypeSetting, INCIDENT_TYPE_KEYS, INCIDENT_TYPE_CODE_MAX, INCIDENT_TYPE_NAME_MAX, INCIDENT_TYPES_MAX };
+export { isAdminOnlySetting, normIncidentTypeSetting, INCIDENT_TYPE_KEYS, INCIDENT_TYPE_CODE_MAX, INCIDENT_TYPE_NAME_MAX, INCIDENT_TYPES_MAX, INCIDENT_TYPE_CODES_MAX };
 `);
 const s = await import(pathToFileURL(sfile).href);
 
@@ -36,6 +36,7 @@ test('server and plugin agree on the setting names and the caps', () => {
     assert.equal(s.INCIDENT_TYPE_CODE_MAX, lib.INCIDENT_TYPE_CODE_MAX);
     assert.equal(s.INCIDENT_TYPE_NAME_MAX, lib.INCIDENT_TYPE_NAME_MAX);
     assert.equal(s.INCIDENT_TYPES_MAX, lib.INCIDENT_TYPES_MAX);
+    assert.equal(s.INCIDENT_TYPE_CODES_MAX, lib.INCIDENT_TYPE_CODES_MAX);
 });
 
 test('the list and its switch are admin-only', () => {
@@ -73,6 +74,27 @@ test('a list of plain names, as an older plugin sends it, is still accepted: nam
 
 test('what the server stores is what the plugin reads back', () => {
     const stored = norm([{ code: 'mva', name: 'Traffic Accident' }, 'Brush Fire']);
+    assert.deepEqual(lib.savedIncidentTypes(stored), stored);
+    assert.deepEqual(lib.incidentTypeProblems(stored as lib.IncidentTypeOption[]), []);
+});
+
+test('aliases: stored upper case after the shown code, checked like codes and across the whole list', () => {
+    assert.deepEqual(norm([{ code: 'mva', name: 'Traffic Accident', aliases: ['wreck', ' 1050 ', ''] }, { code: 'F', name: 'Fire', aliases: [] }]), [
+        { code: 'MVA', name: 'Traffic Accident', aliases: ['WRECK', '1050'] },
+        { code: 'F', name: 'Fire' },
+    ]);
+    // no shown code: the first alias becomes it
+    assert.deepEqual(norm([{ code: '', name: 'Fire', aliases: ['F1'] }]), [{ code: 'F1', name: 'Fire' }]);
+    refuses(() => norm([{ code: 'MVA', name: 'One', aliases: ['X'] }, { code: 'x', name: 'Two' }]), 400, /Code X is used twice/);
+    refuses(() => norm([{ code: 'MVA', name: 'One', aliases: ['mva'] }]), 400, /Code MVA is used twice/);
+    refuses(() => norm([{ code: 'A', name: 'One', aliases: ['B 1'] }]), 400, /letters and digits only/);
+    refuses(() => norm([{ code: 'A', name: 'One', aliases: 'B' }]), 400, /codes must be text/);
+    refuses(() => norm([{ code: 'A', name: 'One', aliases: [7] }]), 400, /codes must be text/);
+    const ten = Array.from({ length: s.INCIDENT_TYPE_CODES_MAX - 1 }, (_, i) => `A${i}`);
+    assert.equal(norm([{ code: 'X', name: 'One', aliases: ten }])[0].aliases.length, s.INCIDENT_TYPE_CODES_MAX - 1);
+    refuses(() => norm([{ code: 'X', name: 'One', aliases: [...ten, 'Z'] }]), 400, /more than 10 codes/);
+    // what is stored reads back the same in the plugin
+    const stored = norm([{ code: 'mva', name: 'Traffic Accident', aliases: ['wreck'] }, 'Brush Fire']);
     assert.deepEqual(lib.savedIncidentTypes(stored), stored);
     assert.deepEqual(lib.incidentTypeProblems(stored as lib.IncidentTypeOption[]), []);
 });

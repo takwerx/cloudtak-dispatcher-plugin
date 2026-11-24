@@ -4,7 +4,7 @@ A dispatcher plugin for [CloudTAK](https://github.com/dfpc-coe/CloudTAK) — cre
 incidents on the map, organize them under named **Events**, assign responders, and notify them
 via mission chat and direct GeoChat.
 
-**Current version: 1.7.0.** What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+**Current version: 1.8.0.** What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 ## Modes
 
@@ -44,6 +44,14 @@ server checks too, so two dispatchers assigning the same unit at the same moment
 gets `E12 is on 014. Clear it there first.` (it clears after 10 seconds; with several units picked it adds
 `Nothing was assigned.`, since a refused press assigns none of them).
 
+**Units not on TAK.** A unit that is off shift, has no TAK device or is not signed in is not a TAK contact, but
+it can still call in on the radio and be put on a call. Typed into the assign search (now **Search or type a
+unit to assign…**), a name that no TAK contact has gives one more row, **+ Add "E7" not on TAK**. On the command
+line, `A E7` asks the same as a numbered list (**1** then **Enter**), so a typo never adds a unit by itself.
+Such a unit is stored by its name (uid `off-tak:E7`), so the same name is the same unit: one incident at a time,
+On Scene, Clear, its times and the report work as for any unit. A phone-off icon marks it in the incident and
+the incident list, the report and CSV add `(not on TAK)`, and it is sent no GeoChat. No server change.
+
 A unit that cleared from an incident can be sent back to it: assigning it again adds a second line for the
 second trip, and the first line keeps its times (the report lists both, and the incident's first on-scene
 time stays). The **✕** on a line removes that trip only.
@@ -73,26 +81,35 @@ Types** is locked to the same admin account.
 
 The **Incident Type** list on a new incident starts as the plugin's built-in types. **Dispatcher Settings →
 Incident Types** (CloudTAK system admin only) holds the agency's own types, each a **name** with an optional
-short **code** (`MVA` for `Traffic Accident`):
+short **code** (`MVA` for `Traffic Accident`), and up to 10 codes in all for the command line (`MVA`, `WRECK` and
+`1050` can all start a Traffic Accident):
 
 - **Load from a CSV file**: two columns, code then name, one type per row (`MVA,Traffic Accident`). The code can
-  be left empty (`,Welfare Check`), a header row (`code,name`, or `name` over a list of names) is skipped, and a
+  be left empty (`,Welfare Check`). With the name left empty (`SMOKE,`), the code is used as the name until the
+  file gives it one. A header row (`code,name`, or `name` over a list of names) is skipped, and a
   name with a comma in it goes in quotes. A file with semicolons or tabs between the two columns is read the
-  same way. **Download example CSV** gives a file to start from. Loading a file replaces the list. If a code or
-  a name is in the file twice (upper and lower case count as the same), or a code is malformed, nothing is
-  loaded and the rows at fault are named, numbered as a spreadsheet numbers them.
-- **Add** one type by hand with the Code and name boxes, or remove one with its trash can.
+  same way. **Download example CSV** gives a file to start from. Loading a file replaces the list. For more
+  codes for one type, give it one more row per code with the same name (`WRECK,Traffic Accident`): the first
+  row's code is the one the list shows, and the type keeps the place of its first row. If a code is in the
+  file twice (upper and lower case count as the same), a name is repeated on a row with no code, or a code is
+  malformed, nothing is loaded and the rows at fault are named, numbered as a spreadsheet numbers them.
+- **Add** one type by hand with the Code and name boxes, or remove one with its trash can. Adding a name that is
+  already in the list with a new code gives that type one more code. A code with no name adds a type named by its
+  code.
 - A code is letters and digits only, no spaces, 8 at most, and is stored in upper case.
 - **Use only these incident types**: on, the built-in types are removed and dispatchers pick from the agency's
   list only, in the order of the list (the first one is preselected). Off (the default), the agency's types are
   added to the built-in ones, as before; a type named like a built-in one gives that one its code. With the
   switch on and an empty list, the built-in types stay, so the list is never empty.
 
-The list shows the code beside the name (`MVA - Traffic Accident`). An incident stores the **name**, as before,
+The list shows the first code beside the name (`MVA - Traffic Accident`); on the command line any of the type's
+codes picks it (`N wreck, 120 main`). An incident stores the **name**, as before,
 so markers, the feed log and reports show the name and never the code, and incidents created earlier keep the
 type they have. A change reaches each dispatcher the next time they start a new incident: the list is read
 again when the board starts, when an incident is opened and when the New Incident form opens. A list saved by
-an older version (names only) keeps working, as names with no code. TAK-CAD mode keeps the types from its server.
+an older version (names only) keeps working, as names with no code. A version before more codes per type keeps
+each type's first code and does not read the others; saving the list there drops them. TAK-CAD mode keeps the
+types from its server.
 
 ### The Dispatcher header and Dispatcher Settings (standalone)
 
@@ -248,8 +265,14 @@ A line is `[incident] COMMAND [units or text]`, then **Enter**:
   and any one part names the unit: for `AGENCY-NAME-H202`, type `H202` or the name. When two units fit, a
   numbered list asks which one. Part of an ID (`H2`) only ever lists; it never acts. Every unit on a line is
   settled before any of them is changed, so a line with one wrong word does nothing.
-- **Types and dispositions are typed by the start of their words:** `N fire`, `X unf`. Several fits give the
-  same numbered list.
+- **Types and dispositions are typed by the start of their words:** `N fire`, `X unf`. A type's code, or any of
+  its other codes, works too: `N mva`, `N wreck`. Several fits give the same numbered list.
+- **Several commands on one line**, with `;` between them, are done in order:
+  `14 A H35 E6; O H35 E6; RN 26-00123; T both drivers cited; X report`. A command with no number is for the
+  incident numbered before it on the line (else the one at the left of the box), so the line stays on one
+  incident. `;;` is a semicolon in a note. Only the commands for an incident (`A O C UN T X R RN CA CP M`) can
+  share a line. Every part is read before anything is done; if one fails while the line runs, the ones before
+  it stay done and the rest comes back in the box.
 - Under the box, a line says how the command was read before Enter, and what it did after. **Up** brings back
   earlier lines.
 
@@ -307,6 +330,15 @@ Each Event chooses how its incidents reach field devices when it is created:
   user's own **Settings → Display → Remove Stale Elements** (Immediate, 10 Minutes, 30 Minutes,
   1 Hour or Never). Needs a CloudTAK with Core Events and
   its Admin Connection connected. The incidents also appear in CloudTAK's own Core Events list.
+
+### Quick Reference (standalone)
+
+**Quick Reference**, under User Guide at the bottom of the Events list, opens a printable sheet for the desk, the
+same way as the Event report (**Print / Save as PDF**, no PDF library): every command-line command, the incident
+types this CloudTAK offers right now (built-in, or the agency's own with all their codes, honoring "Use only these
+incident types"), the dispositions, and three worked examples, simple to complex. The new-incident example uses one
+of the agency's own types. Letter paper; a list of more than 18 types gets the back of the sheet. Built by
+`plugin/lib/quick-reference.ts` from the same lists the command line runs on.
 
 ### User Guide (standalone)
 

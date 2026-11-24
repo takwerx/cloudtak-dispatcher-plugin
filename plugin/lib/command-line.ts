@@ -72,6 +72,52 @@ export function parseLine(line: string): ParsedLine | { error: string } | null {
     return { incident, verb, rest };
 }
 
+// ── Several commands on one line ─────────────────────────────────────────────────────────────────────
+
+// The commands that may share a line: the ones that work on an incident.
+export const CHAIN_VERBS: ReadonlySet<string> = new Set(['A', 'O', 'C', 'UN', 'T', 'X', 'R', 'RN', 'CA', 'CP', 'M']);
+
+/** One command of a line, and its text as it would be typed alone (incident number included). */
+export interface ChainPart { text: string; parsed: ParsedLine }
+
+/**
+ * A line of one or more commands separated by ";": `14 A H35 E6; O H35 E6; X report`. ";;" is a semicolon
+ * in the text (a note). A line of one command reads as parseLine reads it. With several, a part with no
+ * incident number is for the incident numbered before it on the line, else for `current` (the short
+ * number of the incident being worked), so the whole line stays on one incident even when a command in it
+ * changes which one is shown. Every part is read before anything runs: one wrong part refuses the line.
+ */
+export function parseChain(line: string, current: string | null): ChainPart[] | { error: string } | null {
+    const texts: string[] = [];
+    let part = '';
+    for (let i = 0; i < line.length; i++) {
+        if (line[i] !== ';') part += line[i];
+        else if (line[i + 1] === ';') { part += ';'; i++; }
+        else { texts.push(part); part = ''; }
+    }
+    texts.push(part);
+    const filled = texts.map(t => t.trim()).filter(Boolean);
+    if (filled.length <= 1) {
+        const p = parseLine(filled[0] ?? '');
+        return p && !('error' in p) ? [{ text: filled[0], parsed: p }] : p;
+    }
+    const parts: ChainPart[] = [];
+    let incident = current;
+    for (const [i, text] of filled.entries()) {
+        const p = parseLine(text);
+        if (!p) continue;
+        if ('error' in p) return { error: `Part ${i + 1}: ${p.error.replace(' Type ? for the list.', '')} For a ; inside a note, type ;;` };
+        if (!CHAIN_VERBS.has(p.verb)) {
+            return { error: `Part ${i + 1}: ${p.verb ? `${p.verb} goes` : 'An incident number alone goes'} on a line of its own.` };
+        }
+        incident = p.incident ?? incident;
+        if (!incident) return { error: `Which incident? Put its number first: 14 ${filled.join('; ')}` };
+        const parsed = { ...p, incident };
+        parts.push({ text: [incident, p.verb, p.rest.replace(/;/g, ';;')].filter(Boolean).join(' '), parsed });
+    }
+    return parts;
+}
+
 /** The words of a unit or type list: split on spaces and commas. */
 export function words(rest: string): string[] {
     return rest.split(/[\s,]+/).filter(Boolean);
@@ -148,16 +194,22 @@ export function pickUnit<T extends { callsign: string }>(word: string, candidate
 /**
  * Every typed word as the unit it means, in order, each unit once. `ask` puts a list to the dispatcher
  * and gives back the one picked (it rejects when they cancel); `none` is the error for a word that fits
- * nothing. Nothing is changed here: a line with one wrong word stops before anything is done.
+ * nothing, unless `missing` is given: it asks about that word instead (Assign: add it as a unit not on
+ * TAK). Nothing is changed here: a line with one wrong word stops before anything is done.
  */
 export async function resolveUnits<T extends { callsign: string }>(
     typed: readonly string[], candidates: readonly T[],
-    opts: { ask: (word: string, options: T[]) => Promise<T>; none: (word: string) => Error },
+    opts: { ask: (word: string, options: T[]) => Promise<T>; none: (word: string) => Error; missing?: (word: string) => Promise<T> },
 ): Promise<T[]> {
     const out: T[] = [];
     for (const w of typed) {
         const p = pickUnit(w, candidates);
-        if (p.kind === 'none') throw opts.none(w);
+        if (p.kind === 'none') {
+            if (!opts.missing) throw opts.none(w);
+            const unit = await opts.missing(w);
+            if (!out.includes(unit)) out.push(unit);
+            continue;
+        }
         const unit = p.kind === 'one' ? p.unit : await opts.ask(w, p.options);
         if (!out.includes(unit)) out.push(unit);
     }
@@ -197,19 +249,20 @@ export function unitRows(incidents: readonly DispatcherIncident[], want: 'assign
 
 // ── Incident types and dispositions ──────────────────────────────────────────────────────────────────
 
-export interface NamedOption { code?: string; name: string }
+export interface NamedOption { code?: string; name: string; aliases?: readonly string[] }
 
 const nameWords = (s: string) => s.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
 
 /**
- * The options a typed text names, best kind of match first: a code, the whole name, the start of the
+ * The options a typed text names, best kind of match first: a code (the shown one or any alias of an
+ * incident type, so an agency can give one type several words to type), the whole name, the start of the
  * name, then every typed word starting a word of the name ("med em" is Medical Emergency). One option
  * back is the answer; several are offered as a numbered list; none is an error.
  */
 export function matchOptions<T extends NamedOption>(typed: string, options: readonly T[]): T[] {
     const text = typed.trim().toUpperCase();
     if (!text) return [];
-    const byCode = options.filter(o => (o.code ?? '').toUpperCase() === text);
+    const byCode = options.filter(o => [o.code ?? '', ...(o.aliases ?? [])].some(c => c.toUpperCase() === text));
     if (byCode.length) return byCode;
     const whole = options.filter(o => o.name.toUpperCase() === text);
     if (whole.length) return whole;
