@@ -362,6 +362,61 @@ function normCjisSetting(key: string, value: unknown): unknown {
 }
 // </cjis-pure>
 
+// Who may use the Dispatcher (Dispatcher Settings → Who Can Use Dispatcher, CloudTAK system admin only).
+// The admin lists TAK groups. An empty list lets every signed-in user in, as before the list existed.
+// With groups listed, a CloudTAK system admin or a member of at least one of them gets in, and anyone
+// else is refused on every Dispatcher route. Names match without regard to case. Each route file loads
+// on its own, so plugin-dispatcher.ts and plugin-addressing.ts both carry this block;
+// plugin/test/group-access-server.test.ts runs it and checks that the two copies are the same.
+// <access-pure>
+const ALLOWED_GROUPS_SETTING = 'allowed_groups';
+const ALLOWED_GROUPS_MAX = 200;
+const ALLOWED_GROUP_NAME_MAX = 128;
+const DISPATCHER_NOT_ALLOWED = 'The Dispatcher is not turned on for your group. Ask your CloudTAK admin.';
+
+// The list an admin may store: each name trimmed, blanks dropped, each group once (the first spelling kept).
+function normAllowedGroups(value: unknown): string[] {
+    if (!Array.isArray(value) || value.some(v => typeof v !== 'string')) {
+        throw new Err(400, null, 'allowed_groups must be a list of TAK group names');
+    }
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const v of value as string[]) {
+        const name = v.trim();
+        if (!name || seen.has(name.toLowerCase())) continue;
+        if (name.length > ALLOWED_GROUP_NAME_MAX) throw new Err(400, null, `A group name is at most ${ALLOWED_GROUP_NAME_MAX} characters`);
+        seen.add(name.toLowerCase());
+        out.push(name);
+    }
+    if (out.length > ALLOWED_GROUPS_MAX) throw new Err(400, null, `At most ${ALLOWED_GROUPS_MAX} groups`);
+    return out;
+}
+
+// The list as read back: the names in whatever is stored (a JSON text is unwrapped), never a refusal.
+function allowedGroupsFrom(stored: unknown): string[] {
+    let x = stored;
+    for (let i = 0; i < 4 && typeof x === 'string'; i++) {
+        try {
+            x = JSON.parse(x);
+        } catch {
+            return [];
+        }
+    }
+    if (!Array.isArray(x)) return [];
+    return x.filter((v): v is string => typeof v === 'string').map(v => v.trim()).filter(Boolean);
+}
+
+// True when this caller may use the Dispatcher: `groups` are the caller's TAK groups.
+function mayUseDispatcher(groups: Iterable<string>, allowed: string[], isAdmin: boolean): boolean {
+    if (isAdmin || !allowed.length) return true;
+    const want = new Set(allowed.map(g => g.toLowerCase()));
+    for (const g of groups) {
+        if (want.has(g.toLowerCase())) return true;
+    }
+    return false;
+}
+// </access-pure>
+
 // ── Notes ───────────────────────────────────────────────────────────────────────
 // A dispatcher's note is sent as its text alone (`note_add`) and added here to the notes the incident
 // has NOW, under the row lock. A browser's copy of the list can be up to a poll old, so sending the
@@ -961,6 +1016,35 @@ async function requireIncidentAccess(config: ConfigStateless, email: string, inc
     await requireEventAccess(config, email, rows[0].event_id);
 }
 
+// The door check every Dispatcher route makes right after sign-in (the rule is <access-pure> above).
+// The list is read on every request (one row by its key), so a change takes effect at once; a user's
+// groups come from userChannels (cached 60 s), so a user added to or removed from a group is let in or
+// out within a minute. A route that already has the signed-in user passes it, so sign-in is not checked
+// twice. While the list has groups, a caller whose groups cannot be read (provisioned but never logged in
+// to CloudTAK, or TAK Server not answering) is not let in: nothing shows they are a member.
+type SignedInUser = Awaited<ReturnType<typeof Auth.as_user>>;
+
+async function dispatcherAccess(config: ConfigStateless, req: any, signedIn?: SignedInUser): Promise<boolean> {
+    const rows = await query<{ value: unknown }>(config, sql`
+        SELECT value FROM dispatcher_settings WHERE key = ${ALLOWED_GROUPS_SETTING}
+    `);
+    const allowed = allowedGroupsFrom(rows[0]?.value);
+    if (!allowed.length) return true;
+    const user = signedIn ?? await Auth.as_user(config, req);
+    if (user.is_admin()) return true;
+    let groups: Set<string>;
+    try {
+        groups = await userChannels(config, user.email);
+    } catch {
+        return false;
+    }
+    return mayUseDispatcher(groups, allowed, false);
+}
+
+async function requireDispatcherAccess(config: ConfigStateless, req: any, signedIn?: SignedInUser): Promise<void> {
+    if (!(await dispatcherAccess(config, req, signedIn))) throw new Err(403, null, DISPATCHER_NOT_ALLOWED);
+}
+
 export default async function router(schema: Schema, config: ConfigStateless) {
     // Idempotent schema bootstrap. Best-effort so a transient DB hiccup can't block CloudTAK
     // startup; CREATE TABLE IF NOT EXISTS is safe to re-run on every load.
@@ -1143,6 +1227,22 @@ export default async function router(schema: Schema, config: ConfigStateless) {
 
     // ── Settings (shared per-CloudTAK, e.g. agency identity on reports) ─────────
 
+    // Who Can Use Dispatcher: whether the plugin shows itself to this caller (menu item and page). Small
+    // on purpose: every CloudTAK page load asks it, for every user.
+    await schema.get('/dispatcher/access', {
+        name: 'Get Dispatcher Access',
+        group: 'Dispatcher',
+        description: 'Whether the caller may use the Dispatcher (Who Can Use Dispatcher)',
+        res: Type.Any(),
+    }, async (req, res) => {
+        try {
+            await Auth.is_auth(config, req);
+            res.json({ may_use: await dispatcherAccess(config, req) });
+        } catch (err) {
+            Err.respond(err, res);
+        }
+    });
+
     await schema.get('/dispatcher/settings', {
         name: 'Get Dispatcher Settings',
         group: 'Dispatcher',
@@ -1151,6 +1251,11 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             await Auth.is_auth(config, req);
+            // A caller who may not use the Dispatcher (Who Can Use Dispatcher) gets no settings.
+            if (!(await dispatcherAccess(config, req))) {
+                res.json({ settings: {} });
+                return;
+            }
             const rows = await query<{ key: string; value: unknown }>(config, sql`
                 SELECT key, value FROM dispatcher_settings
             `);
@@ -1174,15 +1279,17 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             let value: unknown = req.body.value;
-            if (isAdminOnlySetting(req.params.key) || req.params.key === OPERATOR_SETTING) {
+            if (isAdminOnlySetting(req.params.key) || req.params.key === OPERATOR_SETTING || req.params.key === ALLOWED_GROUPS_SETTING) {
                 // Auth.as_user re-reads the profile for session tokens, so this is the live flag.
                 const user = await Auth.as_user(config, req);
                 if (!user.is_admin()) throw new Err(403, null, 'Only a CloudTAK system admin can change this setting');
                 if (req.params.key === OPERATOR_SETTING) value = normOperatorSetting(value);
+                else if (req.params.key === ALLOWED_GROUPS_SETTING) value = normAllowedGroups(value);
                 else if (INCIDENT_TYPE_KEYS.has(req.params.key)) value = normIncidentTypeSetting(req.params.key, value);
                 else value = normCjisSetting(req.params.key, value);
             } else {
                 await Auth.is_auth(config, req);
+                await requireDispatcherAccess(config, req);
             }
             const encoded = JSON.stringify(value ?? null);
             // Settings carry small blobs (agency logo as a downscaled data URI) — cap the
@@ -1214,6 +1321,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            await requireDispatcherAccess(config, req, user);
             if (req.query.fresh) { feedCache.delete(user.email); channelCache.delete(user.email); }
             const feeds = await userFeeds(config, user.email);
             const channels = await userChannels(config, user.email);
@@ -1255,6 +1363,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            await requireDispatcherAccess(config, req, user);
             const channel = (req.body.channel || '').trim() || null;
             if (channel && !(await userChannels(config, user.email)).has(channel)) {
                 throw new Err(403, null, `You are not a member of channel "${channel}"`);
@@ -1294,6 +1403,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            await requireDispatcherAccess(config, req, user);
             const ev = await requireEventAccess(config, user.email, req.params.eventid);
             const nextChannel = req.body.channel !== undefined
                 ? ((req.body.channel || '').trim() || null)
@@ -1328,6 +1438,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            await requireDispatcherAccess(config, req, user);
             await requireEventAccess(config, user.email, req.params.eventid);
             await config.pg.execute(sql`DELETE FROM dispatcher_events WHERE id = ${req.params.eventid}`);
             res.json({ status: 200, message: 'deleted' });
@@ -1347,6 +1458,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            await requireDispatcherAccess(config, req, user);
             await requireEventAccess(config, user.email, req.params.eventid);
             const incidents = await query<IncidentRow>(config, sql`
                 SELECT id, event_id, number, type, address, lat, lon, dispatcher, details,
@@ -1383,6 +1495,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            await requireDispatcherAccess(config, req, user);
             await requireEventAccess(config, user.email, req.params.eventid);
             const reportNumber = normReportNumber(req.body.report_number);
             const operator = requestOperator(await operatorNumbersEnabled(config), req.body.operator);
@@ -1453,6 +1566,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            await requireDispatcherAccess(config, req, user);
             // Checked before the lock: it asks TAK Server, which must not be waited on with the row held.
             await requireIncidentAccess(config, user.email, req.params.incidentid);
             const numbersOn = await operatorNumbersEnabled(config);
@@ -1596,6 +1710,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            await requireDispatcherAccess(config, req, user);
             await requireIncidentAccess(config, user.email, req.params.incidentid);
             const numbersOn = await operatorNumbersEnabled(config);
             const operator = requestOperator(numbersOn, req.body.operator);
@@ -1620,6 +1735,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            await requireDispatcherAccess(config, req, user);
             await requireIncidentAccess(config, user.email, req.params.incidentid);
             const operator = requestOperator(await operatorNumbersEnabled(config), req.body.operator);
             const incident = await editUnits(config, req.params.incidentid, (list, now) => advanceUnit(list, req.params.uid, req.body.status, now), { operator });
@@ -1643,6 +1759,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            await requireDispatcherAccess(config, req, user);
             await requireIncidentAccess(config, user.email, req.params.incidentid);
             const incident = await editUnits(config, req.params.incidentid, list => ({ list: removeUnitFrom(list, req.params.uid, req.query.at), notes: [] }));
             res.json({ incident });
@@ -1673,6 +1790,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            await requireDispatcherAccess(config, req, user);
             await requireIncidentAccess(config, user.email, req.params.incidentid);
             const takenBy = requestOperator(await operatorNumbersEnabled(config), req.body.operator);
             const incident = await editCallers(config, req.params.incidentid, list => addCallerTo(list, req.body, takenBy));
@@ -1698,6 +1816,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            await requireDispatcherAccess(config, req, user);
             await requireIncidentAccess(config, user.email, req.params.incidentid);
             const incident = await editCallers(config, req.params.incidentid, list => updateCallerIn(list, req.params.callerid, req.body));
             res.json({ incident });
@@ -1715,6 +1834,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             const user = await Auth.as_user(config, req);
+            await requireDispatcherAccess(config, req, user);
             await requireIncidentAccess(config, user.email, req.params.incidentid);
             const incident = await editCallers(config, req.params.incidentid, list => removeCallerFrom(list, req.params.callerid));
             res.json({ incident });

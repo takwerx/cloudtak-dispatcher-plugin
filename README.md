@@ -77,6 +77,16 @@ the wording for the whole CloudTAK; only the CloudTAK system admin account (the 
 first launch) can change it, and the server refuses the change for anyone else. **Dispatcher Settings → Incident
 Types** is locked to the same admin account.
 
+### Who can use it (standalone)
+
+On a CloudTAK shared by several agencies, **Dispatcher Settings → Who Can Use Dispatcher** (CloudTAK system
+admin only) limits the Dispatcher to members of the TAK groups listed there. Everyone else gets no menu item,
+the page says it is not turned on for their group, and the server refuses every Dispatcher route to them
+(`/dispatcher/*`, including address search). CloudTAK system admins always get in. While the list is empty,
+everyone signed in can use it, as before. Stored as `allowed_groups` in `dispatcher_settings`; group names match
+without regard to case. The TAK-CAD proxy routes are not limited: they act with the caller's own certificate,
+so TAK Server's own group rules already apply to them.
+
 ### Incident types (standalone)
 
 The **Incident Type** list on a new incident starts as the plugin's built-in types. **Dispatcher Settings →

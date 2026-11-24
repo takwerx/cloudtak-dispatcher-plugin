@@ -14,7 +14,21 @@ A setting marked **CloudTAK admin only** can be changed only when you are signed
 | **Report Header** | Your agency’s name, agency ID and logo, at the top of every event’s report. Press **Save header**. | Anyone |
 | **CJIS Reminder** | The yellow line at the top of every incident. Turn it off, or change its words and press **Save text**. An empty box puts the default words back. | CloudTAK admin only |
 | **Employee Numbers** | Turns on the employee number sign-in (see [Sign in with your employee number](30-your-settings.md#sign-in-with-your-employee-number)). Use it when desks share one CloudTAK login. It is not a password: it records who did what. Off by default. | CloudTAK admin only |
+| **Who Can Use Dispatcher** | Which TAK groups can use the Dispatcher. Empty: everyone (see [Choose who can use the Dispatcher](#choose-who-can-use-the-dispatcher)). | CloudTAK admin only |
 | **Broadcast Mode Incident Closed Marker Retention** | How long a closed incident stays on field units’ maps, marked CLOSED, in an event that uses **Broadcast to channel**. 60 minutes unless you change it. | CloudTAK admin only |
+
+### Choose who can use the Dispatcher
+
+When several agencies share one CloudTAK, you can let only some of them use the Dispatcher, for example the ones that have signed an agreement for it. CloudTAK admin only.
+
+- Under **Who Can Use Dispatcher**, pick or type a TAK group, then press **Add**. The list offers the groups you are in. A group you are not in can be typed by its name, exactly as TAK Server shows it (`County Fire Main`, for example). For a name that is not one of your groups, a yellow line asks you to check the spelling: press **Add** again to add it. A name that matches no group lets no one in but CloudTAK admins.
+- To take a group out, press its red trash can.
+
+While the list is empty, everyone on this CloudTAK can use the Dispatcher. Once it has a group:
+
+- Only members of the listed groups, and CloudTAK admins, see **Dispatcher** in the menu.
+- Anyone else does not see it. If they open its address anyway, it says the Dispatcher is not turned on for their group, and the server refuses every Dispatcher request from them.
+- A change reaches each user the next time CloudTAK loads in their browser. A user added to or removed from a group in TAK Server is let in or out within a minute.
 
 ### Load your incident types
 

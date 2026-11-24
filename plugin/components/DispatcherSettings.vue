@@ -192,6 +192,11 @@
 
             <hr class='my-1'>
 
+            <!-- Who Can Use Dispatcher: the TAK groups let in (empty = everyone). CloudTAK system admin only. -->
+            <GroupAccessSettings :is-admin='isAdmin' />
+
+            <hr class='my-1'>
+
             <!-- CJIS reminder line on every standalone incident. CloudTAK system admin only. -->
             <div>
                 <div class='small text-muted fw-semibold text-uppercase mb-1 d-flex align-items-center gap-2'>
@@ -390,6 +395,7 @@ import { dispatcherStore, applyOperatorNumbers } from '../lib/dispatcher-store.t
 import { CJIS_REMINDER_DEFAULT_TEXT, cjisReminderFrom, isSystemAdmin } from '../lib/cjis-reminder.ts';
 import { OPERATOR_SETTING, operatorNumbersFrom } from '../lib/operator.ts';
 import IncidentTypesSettings from './IncidentTypesSettings.vue';
+import GroupAccessSettings from './GroupAccessSettings.vue';
 import {
     CLOSED_MARKER_MINUTE_CHOICES, closedMarkerMinutes, closedMarkerMinutesFrom, isClosedMarkerMinutes,
     setClosedMarkerMinutes,
@@ -403,7 +409,8 @@ const emit = defineEmits<{
 }>();
 
 // CloudTAK system admin (profile flag). Gates the CJIS reminder, employee numbers, the closed-marker
-// window and the incident types (IncidentTypesSettings); the server refuses those writes for anyone else anyway.
+// window, the incident types (IncidentTypesSettings) and who can use the Dispatcher (GroupAccessSettings);
+// the server refuses those writes for anyone else anyway.
 const isAdmin = ref(false);
 
 // ── Caller details on markers (deployment-shared; default on) ──

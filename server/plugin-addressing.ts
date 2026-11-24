@@ -20,6 +20,7 @@ import zlib from 'node:zlib';
 import Schema from '@openaddresses/batch-schema';
 import Err from '@openaddresses/batch-error';
 import Auth from '../../common/auth.js';
+import { TAKAPI, APIAuthCertificate } from '@tak-ps/node-tak';
 import type ConfigStateless from '../config.js';
 
 // ── Pure helpers (also exercised by plugin/test/addressing-server.test.ts) ───────────────────
@@ -806,6 +807,97 @@ async function readSettings(config: ConfigStateless): Promise<AddressSettings> {
     return normAddressSettings(rows.length ? unwrap(rows[0].value, {}) : {});
 }
 
+// Who may use the Dispatcher (Dispatcher Settings → Who Can Use Dispatcher, CloudTAK system admin only).
+// The admin lists TAK groups. An empty list lets every signed-in user in, as before the list existed.
+// With groups listed, a CloudTAK system admin or a member of at least one of them gets in, and anyone
+// else is refused on every Dispatcher route. Names match without regard to case. Each route file loads
+// on its own, so plugin-dispatcher.ts and plugin-addressing.ts both carry this block;
+// plugin/test/group-access-server.test.ts runs it and checks that the two copies are the same.
+// <access-pure>
+const ALLOWED_GROUPS_SETTING = 'allowed_groups';
+const ALLOWED_GROUPS_MAX = 200;
+const ALLOWED_GROUP_NAME_MAX = 128;
+const DISPATCHER_NOT_ALLOWED = 'The Dispatcher is not turned on for your group. Ask your CloudTAK admin.';
+
+// The list an admin may store: each name trimmed, blanks dropped, each group once (the first spelling kept).
+function normAllowedGroups(value: unknown): string[] {
+    if (!Array.isArray(value) || value.some(v => typeof v !== 'string')) {
+        throw new Err(400, null, 'allowed_groups must be a list of TAK group names');
+    }
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const v of value as string[]) {
+        const name = v.trim();
+        if (!name || seen.has(name.toLowerCase())) continue;
+        if (name.length > ALLOWED_GROUP_NAME_MAX) throw new Err(400, null, `A group name is at most ${ALLOWED_GROUP_NAME_MAX} characters`);
+        seen.add(name.toLowerCase());
+        out.push(name);
+    }
+    if (out.length > ALLOWED_GROUPS_MAX) throw new Err(400, null, `At most ${ALLOWED_GROUPS_MAX} groups`);
+    return out;
+}
+
+// The list as read back: the names in whatever is stored (a JSON text is unwrapped), never a refusal.
+function allowedGroupsFrom(stored: unknown): string[] {
+    let x = stored;
+    for (let i = 0; i < 4 && typeof x === 'string'; i++) {
+        try {
+            x = JSON.parse(x);
+        } catch {
+            return [];
+        }
+    }
+    if (!Array.isArray(x)) return [];
+    return x.filter((v): v is string => typeof v === 'string').map(v => v.trim()).filter(Boolean);
+}
+
+// True when this caller may use the Dispatcher: `groups` are the caller's TAK groups.
+function mayUseDispatcher(groups: Iterable<string>, allowed: string[], isAdmin: boolean): boolean {
+    if (isAdmin || !allowed.length) return true;
+    const want = new Set(allowed.map(g => g.toLowerCase()));
+    for (const g of groups) {
+        if (want.has(g.toLowerCase())) return true;
+    }
+    return false;
+}
+// </access-pure>
+
+// The same door check as plugin-dispatcher.ts (dispatcherAccess there): the address routes are part of
+// the Dispatcher, so who may use it may use them. The caller's TAK groups are read with their own
+// client certificate and kept 60 s, as there.
+const GROUP_CACHE_TTL_MS = 60_000;
+const groupCache = new Map<string, { ts: number; groups: Set<string> }>();
+
+async function userGroups(config: ConfigStateless, email: string): Promise<Set<string>> {
+    const hit = groupCache.get(email);
+    if (hit && Date.now() - hit.ts < GROUP_CACHE_TTL_MS) return hit.groups;
+    const profile = await config.models.Profile.from(email);
+    const auth = profile.auth;
+    if (!auth) throw new Err(401, null, 'User has been provisioned but has not yet logged in');
+    const api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(auth.cert, auth.key));
+    const list = await api.Group.list({}) as { data?: { name: string }[] };
+    const groups = new Set((list.data ?? []).map(g => g.name));
+    groupCache.set(email, { ts: Date.now(), groups });
+    return groups;
+}
+
+async function requireDispatcherAccess(config: ConfigStateless, req: any): Promise<void> {
+    const rows = await query<{ value: unknown }>(config, sql`
+        SELECT value FROM dispatcher_settings WHERE key = ${ALLOWED_GROUPS_SETTING}
+    `);
+    const allowed = allowedGroupsFrom(rows[0]?.value);
+    if (!allowed.length) return;
+    const user = await Auth.as_user(config, req);
+    if (user.is_admin()) return;
+    let groups: Set<string>;
+    try {
+        groups = await userGroups(config, user.email);
+    } catch {
+        groups = new Set();   // groups that cannot be read show no membership (as in plugin-dispatcher.ts)
+    }
+    if (!mayUseDispatcher(groups, allowed, false)) throw new Err(403, null, DISPATCHER_NOT_ALLOWED);
+}
+
 async function requireAdmin(config: ConfigStateless, req: any): Promise<void> {
     const user = await Auth.as_user(config, req);
     if (!user.is_admin()) throw new Err(403, null, 'Only a CloudTAK system admin can change local address data');
@@ -1357,6 +1449,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             await Auth.is_auth(config, req);
+            await requireDispatcherAccess(config, req);
             res.json({ settings: await readSettings(config) });
         } catch (err) {
             Err.respond(err, res);
@@ -1394,6 +1487,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             await Auth.is_auth(config, req);
+            await requireDispatcherAccess(config, req);
             res.json({ sources: await sources(config), refreshing: Array.from(refreshing) });
         } catch (err) {
             Err.respond(err, res);
@@ -1634,6 +1728,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             await Auth.is_auth(config, req);
+            await requireDispatcherAccess(config, req);
             const settings = await readSettings(config);
             const q = String(req.query.q ?? '').trim();
             const lim = req.query.limit ?? settings.result_limit;
@@ -1668,6 +1763,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
     }, async (req, res) => {
         try {
             await Auth.is_auth(config, req);
+            await requireDispatcherAccess(config, req);
             const settings = await readSettings(config);
             let best: Suggestion | null = null;
             let alternates: Suggestion[] = [];

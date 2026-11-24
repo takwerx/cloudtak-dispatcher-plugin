@@ -21,6 +21,23 @@
             </button>
         </div>
 
+        <!-- Who Can Use Dispatcher: this user is not in a group the admin let in (the menu item is hidden too).
+             Nothing else shows until the server has answered, so the board never loads only to be refused. -->
+        <div
+            v-else-if='access === "checking"'
+            class='p-3 text-center text-muted small'
+            data-test='access-checking'
+        >
+            Connecting…
+        </div>
+        <div
+            v-else-if='access === "no"'
+            class='p-3 text-center text-muted small'
+            data-test='not-allowed'
+        >
+            The Dispatcher is not turned on for your group. Ask your CloudTAK admin.
+        </div>
+
         <div
             v-else-if='setupError'
             class='alert alert-danger m-2 small'
@@ -429,7 +446,7 @@ import CommandLine from './CommandLine.vue';
 import { getIncidentTypes, getVehicleTypes, getVehicles, getPersonnel, getRoles, getIncidentMetadata, getMissions, getSubscribedFeedGuids } from '../lib/takcad-client.ts';
 import type { MissionRef } from '../lib/takcad-client.ts';
 import type { IncidentTypeRef, VehicleType, VehicleRef, PersonRef, Role } from '../lib/takcad-types.ts';
-import { listIncidents } from '../lib/events-client.ts';
+import { listIncidents, getDispatcherAccess } from '../lib/events-client.ts';
 import type { DispatcherEvent } from '../lib/events-client.ts';
 import { dispatcherStore as store, saveLastEventId } from '../lib/dispatcher-store.ts';
 import { popOutDispatcher, dockDispatcher, focusWorkspace } from '../lib/float-pane.ts';
@@ -616,7 +633,12 @@ async function retryDetection() {
 onMounted(() => { if (!props.floating) savePanelOpen(true); });
 onBeforeUnmount(() => { if (!props.floating) savePanelOpen(false); });
 
+// Who Can Use Dispatcher: the board shows once the server lets this user in (lib/group-access.ts).
+const access = ref<'checking' | 'yes' | 'no'>('checking');
+
 onMounted(async () => {
+    access.value = (await getDispatcherAccess()) ? 'yes' : 'no';
+    if (access.value === 'no') return;
     // Dispatcher identity = the user's CloudTAK callsign (no separate prompt). Same callsign
     // GeoChat messages are sent from; it also lands in incident-marker remarks.
     const callsign = (await ProfileConfig.get('tak_callsign'))?.value;

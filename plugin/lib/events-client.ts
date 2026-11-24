@@ -254,6 +254,26 @@ export async function getDispatcherSettings(): Promise<Record<string, unknown>> 
     return r?.settings ?? {};
 }
 
+// Whether this user may use the Dispatcher (Who Can Use Dispatcher, lib/group-access.ts). Only a server
+// that says no hides it: an older server (no access route), a failed request or no answer within
+// ACCESS_WAIT_MS leaves it shown, and the server refuses the Dispatcher routes to anyone it does not let
+// in either way.
+export const ACCESS_WAIT_MS = 10_000;
+
+export async function getDispatcherAccess(): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        const asked = std('/api/dispatcher/access', { method: 'GET' }) as Promise<{ may_use?: unknown } | null>;
+        const waited = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), ACCESS_WAIT_MS); });
+        const r = await Promise.race([asked, waited]);
+        return r?.may_use !== false;
+    } catch {
+        return true;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 // Shared setting: put caller name / phone on the CoT incident marker (default on).
 // Stored as dispatcher_settings key 'caller_on_markers'; anything but false means on.
 export async function getCallerOnMarkers(): Promise<boolean> {
