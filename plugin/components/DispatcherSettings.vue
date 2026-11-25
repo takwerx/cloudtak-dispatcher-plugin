@@ -266,6 +266,101 @@
 
             <hr class='my-1'>
 
+            <!-- Who can use the Dispatcher: limit it to chosen TAK groups. Off (empty list) by default. CloudTAK system admin only. -->
+            <div>
+                <div class='small text-muted fw-semibold text-uppercase mb-1 d-flex align-items-center gap-2'>
+                    Who Can Use The Dispatcher
+                    <span
+                        class='badge bg-secondary text-white fw-normal'
+                        title='Only a CloudTAK system admin can change this'
+                    >CloudTAK admin only</span>
+                </div>
+                <div class='card border'>
+                    <div class='card-body py-2 px-3 d-flex flex-column gap-2 small'>
+                        <div class='text-muted small'>
+                            Leave the list empty and everyone signed in to CloudTAK gets the Dispatcher. Add TAK
+                            groups and only members of those groups get it. CloudTAK system admins always do.
+                            Everyone else loses the menu item, and the server refuses them too.
+                        </div>
+                        <div
+                            v-if='allowedGroups.length'
+                            class='d-flex flex-wrap gap-1'
+                            data-test='allowed-groups'
+                        >
+                            <span
+                                v-for='g in allowedGroups'
+                                :key='g'
+                                class='badge bg-secondary text-white fw-normal d-inline-flex align-items-center gap-1'
+                            >
+                                {{ g }}
+                                <button
+                                    v-if='isAdmin'
+                                    type='button'
+                                    class='btn btn-sm p-0 text-white lh-1'
+                                    :title='`Remove ${g}`'
+                                    :disabled='savingGroups'
+                                    @click='removeGroup(g)'
+                                ><IconX
+                                    :size='14'
+                                    stroke='2'
+                                /></button>
+                            </span>
+                        </div>
+                        <div
+                            v-else
+                            class='text-muted small'
+                        >
+                            No groups listed: everyone can use the Dispatcher.
+                        </div>
+                        <div class='d-flex align-items-center gap-2'>
+                            <input
+                                v-model='newGroup'
+                                type='text'
+                                class='form-control form-control-sm border'
+                                list='dispatcherAllowedGroupChoices'
+                                placeholder='TAK group name'
+                                maxlength='200'
+                                data-test='allowed-group-input'
+                                :disabled='!isAdmin || savingGroups'
+                                @keyup.enter='addGroup'
+                            >
+                            <datalist id='dispatcherAllowedGroupChoices'>
+                                <option
+                                    v-for='g in myGroups'
+                                    :key='g'
+                                    :value='g'
+                                />
+                            </datalist>
+                            <button
+                                type='button'
+                                class='btn btn-sm btn-primary'
+                                data-test='allowed-group-add'
+                                :disabled='!isAdmin || savingGroups || !newGroup.trim()'
+                                @click='addGroup'
+                            >
+                                Add
+                            </button>
+                            <span
+                                v-if='savingGroups'
+                                class='spinner-border spinner-border-sm'
+                            />
+                        </div>
+                        <div class='text-muted small'>
+                            The suggestions are your own TAK groups. You can type any group name, even one you are not in.
+                            A change reaches each user within about a minute.
+                        </div>
+                        <div
+                            v-if='groupsError'
+                            class='text-danger small'
+                        >
+                            {{ groupsError }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <hr class='my-1'>
+
             <!-- Employee numbers (who took, dispatched and closed each call). Off by default. CloudTAK system admin only. -->
             <div>
                 <div class='small text-muted fw-semibold text-uppercase mb-1 d-flex align-items-center gap-2'>
@@ -384,7 +479,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue';
 import { IconX, IconCheck } from '@tabler/icons-vue';
-import { getDispatcherSettings, putDispatcherSetting } from '../lib/events-client.ts';
+import { getDispatcherSettings, putDispatcherSetting, getAccessGroups } from '../lib/events-client.ts';
 import type { AgencySettings } from '../lib/events-client.ts';
 import { dispatcherStore, applyOperatorNumbers } from '../lib/dispatcher-store.ts';
 import { CJIS_REMINDER_DEFAULT_TEXT, cjisReminderFrom, isSystemAdmin } from '../lib/cjis-reminder.ts';
@@ -397,6 +492,7 @@ import {
 import { saveDisplayMode } from '../lib/display-mode.ts';
 import type { DisplayMode } from '../lib/display-mode.ts';
 import AddressSources from './AddressSources.vue';
+import { ALLOWED_GROUPS_SETTING, allowedGroupsFrom, withGroup, withoutGroup } from '../lib/access.ts';
 
 const emit = defineEmits<{
     (e: 'close'): void;
@@ -546,6 +642,42 @@ async function saveClosedMinutes() {
     }
 }
 
+// ── Who can use the Dispatcher (deployment-shared; default everyone; CloudTAK system admin only) ──
+// A list of TAK group names. Empty: everyone signed in gets the Dispatcher. With names: only members of those
+// groups, and CloudTAK system admins. The server refuses everyone else; their menu item is hidden.
+const allowedGroups      = ref<string[]>([]);
+const myGroups           = ref<string[]>([]);
+const newGroup           = ref('');
+const savingGroups       = ref(false);
+const groupsError        = ref('');
+
+async function saveAllowedGroups(next: string[]) {
+    savingGroups.value = true;
+    groupsError.value = '';
+    try {
+        await putDispatcherSetting(ALLOWED_GROUPS_SETTING, next);
+        allowedGroups.value = next;
+    } catch (e) {
+        groupsError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+        savingGroups.value = false;
+    }
+}
+
+async function addGroup() {
+    const next = withGroup(allowedGroups.value, newGroup.value);
+    if (!next) {
+        if (newGroup.value.trim()) groupsError.value = 'That group is already in the list, or the list is full.';
+        return;
+    }
+    await saveAllowedGroups(next);
+    if (!groupsError.value) newGroup.value = '';
+}
+
+async function removeGroup(name: string) {
+    await saveAllowedGroups(withoutGroup(allowedGroups.value, name));
+}
+
 // ── Agency header (moved here from ReportView; reports read it at export time) ──
 const agency       = reactive<AgencySettings>({ name: '', id: '', logo: null });
 const savingAgency = ref(false);
@@ -593,7 +725,10 @@ function onLogoFile(ev: Event) {
 }
 
 onMounted(async () => {
-    isSystemAdmin().then((admin) => { isAdmin.value = admin; });
+    isSystemAdmin().then(async (admin) => {
+        isAdmin.value = admin;
+        if (admin) { try { myGroups.value = await getAccessGroups(); } catch { /* typing a name still works */ } }
+    });
     try {
         const s = await getDispatcherSettings();
         callerOnMarkers.value = s.caller_on_markers !== false;
@@ -605,6 +740,7 @@ onMounted(async () => {
         operatorNumbers.value = operatorNumbersFrom(s);
         applyOperatorNumbers(operatorNumbers.value);
         closedMinutes.value = setClosedMarkerMinutes(closedMarkerMinutesFrom(s));
+        allowedGroups.value = allowedGroupsFrom(s);
         const saved = s.agency as Partial<AgencySettings> | undefined;
         if (saved) {
             agency.name = saved.name ?? '';

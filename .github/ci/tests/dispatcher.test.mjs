@@ -279,7 +279,10 @@ const loadRoutes = async () => {
     for (const m of ['get', 'post', 'put', 'delete']) {
         schema[m] = async (path, _opts, handler) => { routes[`${m.toUpperCase()} ${path}`] = handler }
     }
-    await takcad.default(schema, { server: { api: 'https://tak.example:8443' }, models: {
+    await takcad.default(schema, { server: { api: 'https://tak.example:8443' },
+        // The admin's "who can use the Dispatcher" list, read per request (ops #1257): globalThis.__limit, none by default.
+        pg: { execute: async () => globalThis.__limit === undefined ? [] : [{ value: globalThis.__limit }] },
+        models: {
         Profile: { from: async (email) => globalThis.__profiles[email] },
         // Plain row lookup, as CloudTAK's model gives it.
         Connection: { from: async (id) => globalThis.__connections[id] },
@@ -294,10 +297,12 @@ const callRoute = async (handler, query) => {
     return out
 }
 
-const signIn = (email) => { globalThis.__caller = { email } }
+const signIn = (email) => { globalThis.__caller = { email, is_admin: () => globalThis.__profiles[email]?.system_admin === true } }
 
 beforeEach(() => {
     globalThis.__tak = { clients: [], requests: [] }
+    globalThis.__limit = undefined
+    globalThis.__groupsByCert = {}
     globalThis.__connections = {
         5: { id: 5, agency: 100, auth: { cert: 'CERT-AGENCY-100', key: 'KEY-100' } },
         6: { id: 6, agency: 200, auth: { cert: 'CERT-AGENCY-200', key: 'KEY-200' } },
@@ -430,4 +435,51 @@ test('chat on CloudTAK 14.0.x: still sent the old way (room named by callsign, w
     assert.equal(s.worker, ms.worker, 'the map worker is passed through')
     assert.deepEqual(s.recipient, CONTACT)
     assert.deepEqual(s.sender, SENDER)
+})
+
+// --- Who can use the Dispatcher (ops #1257) -----------------------------------------------------
+// With the admin's list on, every TAK-CAD route refuses a user outside the listed TAK groups before it does
+// anything, and TAK Server is asked nothing for the request. System admins and members get through as before.
+
+test('limit on: a user outside the listed groups is refused on every TAK-CAD route, and nothing reaches TAK Server', async () => {
+    const routes = await loadRoutes()
+    globalThis.__limit = ['Fire Dispatch']
+    globalThis.__groupsByCert = { 'CERT-OWN-100': ['EMS'] }
+    signIn('agency100@x')
+    for (const r of ROUTES) {
+        globalThis.__tak = { clients: [], requests: [] }
+        const out = await callRoute(routes[r], queryFor(r, { connection: 5 }))
+        assert.equal(out.status, 403, `${r} is refused`)
+        assert.deepEqual(globalThis.__tak.requests, [], `${r} sent nothing to TAK Server`)
+    }
+})
+
+test('limit on: a member of a listed group (any case) and a system admin use the routes as before', async () => {
+    const routes = await loadRoutes()
+    globalThis.__limit = ['Fire Dispatch']
+    // plain@x, not the user above: the route file keeps a user's groups for a minute, as it does in production.
+    globalThis.__groupsByCert = { 'CERT-OWN-PLAIN': ['fire dispatch'] }
+    signIn('plain@x')
+    for (const r of ROUTES) {
+        globalThis.__tak = { clients: [], requests: [] }
+        const out = await callRoute(routes[r], queryFor(r))
+        assert.equal(out.status, 200, `${r} works for a member`)
+        assert.ok(globalThis.__tak.requests.length >= 1, `${r} reached TAK Server`)
+    }
+    signIn('sys@x')
+    for (const r of ROUTES) {
+        globalThis.__tak = { clients: [], requests: [] }
+        const out = await callRoute(routes[r], queryFor(r, { connection: 6 }))
+        assert.equal(out.status, 200, `${r} works for a system admin who is in no listed group`)
+    }
+})
+
+test('limit off (empty list): the routes work as before for a user in no group', async () => {
+    const routes = await loadRoutes()
+    globalThis.__limit = []
+    signIn('agency100@x')
+    for (const r of ROUTES) {
+        const out = await callRoute(routes[r], queryFor(r, { connection: 5 }))
+        assert.equal(out.status, 200, `${r} works with no limit`)
+    }
 })

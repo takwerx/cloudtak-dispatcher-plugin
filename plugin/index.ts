@@ -8,6 +8,8 @@ import { dockDispatcher } from './lib/float-pane.ts';
 import { closeAllUndocked } from './lib/undock-panes.ts';
 import { loadPanelOpen, shouldReopenPanel } from './lib/panel-state.ts';
 import { closeGuide } from './lib/guide-pane.ts';
+import { getDispatcherAccess } from './lib/events-client.ts';
+import { menuAllowed } from './lib/access.ts';
 
 const MENU_KEY   = 'plugin-tak-dispatcher';
 const ROUTE_NAME = 'home-menu-tak-dispatcher';
@@ -29,6 +31,14 @@ export default class DispatcherPlugin implements PluginInstance {
     }
 
     async enable(): Promise<void> {
+        // An admin can limit the Dispatcher to chosen TAK groups. For someone outside them there is no menu
+        // item (the server refuses their calls too). If the server cannot say, keep the menu.
+        let access: unknown = null;
+        try { access = await getDispatcherAccess(); } catch { /* keep the menu */ }
+        if (!menuAllowed(access)) {
+            try { this.api.menu.remove(MENU_KEY); } catch { /* not there */ }
+            return;
+        }
         this.api.menu.add({
             key:         MENU_KEY,
             label:       'Dispatcher',
