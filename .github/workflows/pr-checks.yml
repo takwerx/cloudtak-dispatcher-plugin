@@ -127,6 +127,19 @@ jobs:
           PGUSER: postgres
           PGPASSWORD: postgres
           PGDATABASE: postgres
+      # Committing and cancelling an address load (#108): the real route file against this Postgres, with
+      # the database client CloudTAK runs (postgres-js, from the CI tools lock; npm ci, never npm install).
+      - run: |
+          mkdir -p "$RUNNER_TEMP/ci-tools"
+          cp .github/ci/tools/package.json .github/ci/tools/package-lock.json "$RUNNER_TEMP/ci-tools/"
+          npm ci --prefix "$RUNNER_TEMP/ci-tools" --ignore-scripts --no-audit --no-fund
+      - run: node --import ./.github/ci/tests/register.mjs --test .github/ci/tests/address-load-db.test.mjs
+        env:
+          CI_TOOLS: ${{ runner.temp }}/ci-tools
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: postgres
 
   # install.sh against a throwaway CloudTAK folder: the Dockerfile.dockerignore it writes must keep every
   # installed plugin in the image build, and must leave an infra-TAK-written one alone (ops #504).
