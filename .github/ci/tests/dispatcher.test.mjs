@@ -380,6 +380,58 @@ test('TAK-CAD: a signed-in user who has not logged in to CloudTAK yet is still t
     assert.deepEqual(globalThis.__tak.requests, [])
 })
 
+// --- Address loads: a big commit the page stops waiting on (#108) -------------------------------
+// The server carries on with a commit whatever the page does. The page must not call a load that
+// went live "Upload cancelled", and must not cancel it. The server side is address-load-db.test.mjs.
+
+const addr = await import('../../../plugin/lib/addressing.ts')
+const LOAD_URL = '/api/dispatcher/address/sources/s1/loads/l1'
+const timedOut = () => { throw new Error(`Request timed out after 20000ms: ${LOAD_URL}/commit`) }
+const noSleep = async () => {}
+const answer = (states) => (url, opts) => {
+    if (url === `${LOAD_URL}/commit`) return timedOut()
+    if (url === LOAD_URL && opts.method === 'GET') return states.shift()
+    return { ok: true }
+}
+
+test('address load: the commit and a web pull get far more than the 20 s default to finish', async () => {
+    await addr.commitAddressLoad('s1', 'l1', { dropped: 0 })
+    await addr.refreshAddressSource('s1')
+    for (const c of calls()) assert.ok(c.timeout >= 10 * MINUTE, `${c.url} waits at least 10 minutes (got ${c.timeout})`)
+})
+
+test('address load: a commit the page lost the answer to, that the server finished, counts as loaded and is not cancelled', async () => {
+    const source = { id: 's1', record_count: 1460000, status: 'ok', last_error: null }
+    globalThis.__respond = answer([{ state: 'committing' }, { state: 'committing' }, { state: 'live', source, unresolved: [] }])
+    const done = await addr.commitAndConfirm('s1', 'l1', { dropped: 0 }, { pollMs: 1, sleep: noSleep })
+    assert.equal(done.source.record_count, 1460000)
+    assert.ok(!calls().some(c => c.url.endsWith('/abort')), 'no abort is sent for a load that went live')
+    assert.equal(calls().filter(c => c.url === LOAD_URL).length, 3, 'it asked the server until the commit was done')
+})
+
+test('address load: a commit that never reached the server is cancelled and the error shown', async () => {
+    globalThis.__respond = answer([{ state: 'staged' }])
+    await assert.rejects(addr.commitAndConfirm('s1', 'l1', {}, { pollMs: 1, sleep: noSleep }), /timed out/)
+    assert.equal(calls().filter(c => c.url === `${LOAD_URL}/abort`).length, 1)
+})
+
+test('address load: a commit the server refused keeps the server\'s own reason (no extra abort)', async () => {
+    globalThis.__respond = (url, opts) => {
+        if (url === `${LOAD_URL}/commit`) throw new Error('The load has no usable rows; the previous data is kept')
+        if (url === LOAD_URL && opts.method === 'GET') return { state: 'gone' }
+        return {}
+    }
+    await assert.rejects(addr.commitAndConfirm('s1', 'l1', {}, { pollMs: 1, sleep: noSleep }), /no usable rows/)
+    assert.ok(!calls().some(c => c.url.endsWith('/abort')), 'no abort overwrites the server\'s reason with Upload cancelled')
+})
+
+test('address load: the page gives up asking after the wait limit, and still sends no abort while the server is committing', async () => {
+    globalThis.__respond = answer(Array.from({ length: 10 }, () => ({ state: 'committing' })))
+    await assert.rejects(addr.commitAndConfirm('s1', 'l1', {}, { pollMs: 1, maxWaitMs: 5, sleep: noSleep }), /timed out/)
+    assert.equal(calls().filter(c => c.url === LOAD_URL).length, 5)
+    assert.ok(!calls().some(c => c.url.endsWith('/abort')))
+})
+
 // --- assignment and update chat messages on CloudTAK 14.0.x and 14.1.0 (ops #1211) -------------
 // 14.1.0 (Chatroom Revamp) changed the chat code: a room is made with Chatroom.direct({uid, callsign})
 // and send() takes (message, sender, opts). The plugin's old call (new Chatroom(callsign), send with a
