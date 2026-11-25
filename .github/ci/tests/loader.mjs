@@ -5,6 +5,7 @@
 const STUBS = [
     [/(^|\/)src\/std\.ts$/,                  './stubs/std.mjs'],
     [/(^|\/)src\/base\/profile\.ts$/,        './stubs/profile.mjs'],
+    [/(^|\/)src\/base\/chatroom\.ts$/,       './stubs/chatroom.mjs'],
     [/(^|\/)src\/base\/subscription-chat\.ts$/, './stubs/subscription-chat.mjs'],
     [/^@tak-ps\/node-cot\/normalize_geojson$/, './stubs/normalize-geojson.mjs'],
     // The server route files (server/plugin-takcad.ts, ops #1201).

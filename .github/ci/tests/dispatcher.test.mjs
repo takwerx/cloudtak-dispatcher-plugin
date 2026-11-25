@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 const fd = await import('../../../plugin/lib/field-delivery.ts')
 const mm = await import('../../../plugin/lib/map-marker.ts')
 const cw = await import('../../../plugin/lib/closed-window.ts')
+const cc = await import('../../../plugin/lib/contacts-client.ts')
 
 const MINUTE = 60 * 1000
 const incident = (over = {}) => ({
@@ -429,4 +430,56 @@ test('address load: the page gives up asking after the wait limit, and still sen
     await assert.rejects(addr.commitAndConfirm('s1', 'l1', {}, { pollMs: 1, maxWaitMs: 5, sleep: noSleep }), /timed out/)
     assert.equal(calls().filter(c => c.url === LOAD_URL).length, 5)
     assert.ok(!calls().some(c => c.url.endsWith('/abort')))
+})
+
+// --- assignment and update chat messages on CloudTAK 14.0.x and 14.1.0 (ops #1211) -------------
+// 14.1.0 (Chatroom Revamp) changed the chat code: a room is made with Chatroom.direct({uid, callsign})
+// and send() takes (message, sender, opts). The plugin's old call (new Chatroom(callsign), send with a
+// worker and a contact) fails the type check on 14.1.0 and the stub below throws the way 14.1.0 would.
+
+const CONTACT = { uid: 'ANDROID-abc', callsign: 'Engine 7' }
+const INC = { name: '26-001 Fire', address: '1 Main St' }
+const SENDER = { uid: 'ANDROID-CloudTAK-tester', callsign: 'tester' }
+
+const withChatroom = (version) => { globalThis.__chatroomVersion = version; globalThis.__sent = []; globalThis.__rooms = []; globalThis.__serverRefuses = false }
+
+test('chat on CloudTAK 14.1.0: an assignment message goes to the contact\'s direct room, with two arguments', async () => {
+    withChatroom('14.1.0')
+    const ms = mapStore()
+    await cc.sendAssignmentMessage(ms, CONTACT, INC)
+    assert.equal(globalThis.__sent.length, 1, 'exactly one chat is sent')
+    const [s] = globalThis.__sent
+    assert.equal(s.version, '14.1.0')
+    assert.equal(s.room, 'room-ANDROID-abc', 'sent to the direct room made for the contact uid')
+    assert.equal(s.message, 'You have been assigned to: 26-001 Fire at 1 Main St. Incident on your map.')
+    assert.deepEqual(s.sender, SENDER)
+})
+
+test('chat on CloudTAK 14.1.0: an update message reaches the same room as the assignment', async () => {
+    withChatroom('14.1.0')
+    await cc.sendAssignmentMessage(mapStore(), CONTACT, INC)
+    await cc.sendUpdateMessage(mapStore(), CONTACT, { name: '26-001 Fire' }, 'Location changed to 2 Oak St')
+    assert.equal(globalThis.__sent.length, 2)
+    assert.equal(globalThis.__sent[1].room, globalThis.__sent[0].room, 'one room per contact, not a new room per message')
+    assert.equal(globalThis.__sent[1].message, 'UPDATE \u2014 26-001 Fire: Location changed to 2 Oak St')
+    assert.equal(globalThis.__rooms.length, 1)
+})
+
+test('chat on CloudTAK 14.1.0: a message the server refuses is reported to the caller, not lost silently', async () => {
+    withChatroom('14.1.0')
+    globalThis.__serverRefuses = true
+    await assert.rejects(() => cc.sendAssignmentMessage(mapStore(), CONTACT, INC), /was not sent/)
+})
+
+test('chat on CloudTAK 14.0.x: still sent the old way (room named by callsign, worker and contact passed)', async () => {
+    withChatroom('14.0.x')
+    const ms = mapStore()
+    await cc.sendAssignmentMessage(ms, CONTACT, INC)
+    assert.equal(globalThis.__sent.length, 1)
+    const [s] = globalThis.__sent
+    assert.equal(s.version, '14.0.x')
+    assert.equal(s.room, 'Engine 7')
+    assert.equal(s.worker, ms.worker, 'the map worker is passed through')
+    assert.deepEqual(s.recipient, CONTACT)
+    assert.deepEqual(s.sender, SENDER)
 })
