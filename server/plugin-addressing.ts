@@ -1514,15 +1514,21 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             await requireAdmin(config, req);
             const cur = await sourceById(config, req.params.sourceid);
             const b = req.body;
+            if (b.name !== undefined && !b.name.trim()) throw new Err(400, null, 'A source needs a name');
             if (b.url !== undefined && b.url && !/^https?:\/\//i.test(b.url)) throw new Err(400, null, 'The web address must start with http:// or https://');
+            // Only the fields sent change; every other column keeps its value as it is when the
+            // UPDATE runs, not as it was read above. A rename that waits on a running commit (which
+            // holds this row) must not put back the old as-of date afterwards (#108).
+            const setUrl = b.url !== undefined;
+            const setKeep = b.status_keep !== undefined;
             await config.pg.execute(sql`
                 UPDATE dispatcher_address_sources SET
-                    name = ${b.name?.trim() ?? cur.name},
-                    url = ${b.url !== undefined ? b.url : cur.url},
-                    refresh_hours = ${b.refresh_hours ?? cur.refresh_hours},
-                    mapping = ${JSON.stringify(b.mapping ?? cur.mapping)}::text::jsonb,
-                    status_keep = ${b.status_keep !== undefined ? (b.status_keep ? JSON.stringify(b.status_keep) : null) : (cur.status_keep ? JSON.stringify(cur.status_keep) : null)}::text::jsonb,
-                    data_as_of = ${b.data_as_of ?? cur.data_as_of}::timestamptz
+                    name = COALESCE(${b.name?.trim() ?? null}::text, name),
+                    url = CASE WHEN ${setUrl}::boolean THEN ${setUrl ? b.url : null}::text ELSE url END,
+                    refresh_hours = COALESCE(${b.refresh_hours ?? null}::int, refresh_hours),
+                    mapping = COALESCE(${b.mapping ? JSON.stringify(b.mapping) : null}::text::jsonb, mapping),
+                    status_keep = CASE WHEN ${setKeep}::boolean THEN ${b.status_keep ? JSON.stringify(b.status_keep) : null}::text::jsonb ELSE status_keep END,
+                    data_as_of = COALESCE(${b.data_as_of ?? null}::timestamptz, data_as_of)
                 WHERE id = ${cur.id}
             `);
             res.json({ source: await sourceById(config, cur.id) });

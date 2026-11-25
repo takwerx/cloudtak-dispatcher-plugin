@@ -177,3 +177,89 @@ test('regression, a real cancel still works: staged rows go, the previous data s
     assert.equal(f.streets, 'KEEP')
     assert.equal(f.record_count, 2)
 })
+
+// Rename (#108, item 4). The page sends only { name }; nothing else on the source may change.
+const patch = (src, body) => call('PATCH /dispatcher/address/sources/:sourceid', { sourceid: src }, body)
+const row = async (src) => (await raw(`
+    SELECT name, mapping, status_keep, data_as_of, record_count, status, last_error,
+           (SELECT count(*)::int FROM dispatcher_address_rows r WHERE r.source_id = s.id AND r.active) AS live_rows
+    FROM dispatcher_address_sources s WHERE s.id = '${src}'`))[0]
+
+test('rename: only the name changes; the records, mapping, filter and as-of date stay', async () => {
+    await source('ren')
+    await raw(`UPDATE dispatcher_address_sources SET mapping = '{"house_number":"NUM"}'::jsonb, status_keep = '["CURRENT"]'::jsonb WHERE id = 'ren'`)
+    await live('ren', [point(1, 'Oak'), point(2, 'Oak')])
+    const before = await row('ren')
+    const r = await patch('ren', { name: '  North region  ' })
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.equal(r.body.source.name, 'North region', 'the name is saved, trimmed')
+    const after = await row('ren')
+    assert.equal(after.name, 'North region')
+    assert.deepEqual(after.mapping, before.mapping)
+    assert.deepEqual(after.status_keep, before.status_keep)
+    assert.equal(after.data_as_of.getTime(), before.data_as_of.getTime())
+    assert.equal(after.record_count, 2)
+    assert.equal(after.live_rows, 2, 'the loaded records are still searchable')
+    assert.equal(after.status, 'ok')
+})
+
+test('rename: a blank name is refused and the old name kept', async () => {
+    await source('blank')
+    const r = await patch('blank', { name: '   ' })
+    assert.equal(r.status, 400)
+    assert.equal((await row('blank')).name, 'blank')
+})
+
+test('rename sent while a load is being committed: the rename waits, and the load\'s as-of date and count are kept', async () => {
+    await source('renrace')
+    const load = await stage('renrace', [point(1, 'Pine'), point(2, 'Pine')])
+    assert.equal((await row('renrace')).data_as_of, null, 'no load has gone live yet')
+
+    let reached, release
+    const atCount = new Promise(r => { reached = r })
+    const gate = new Promise(r => { release = r })
+    afterStatement = async (text) => {
+        if (text.includes('count(*)::int AS n FROM dispatcher_address_rows')) { afterStatement = async () => {}; reached(); await gate }
+    }
+    const committing = commit('renrace', load)
+    await atCount
+    let renamed = false
+    const renaming = patch('renrace', { name: 'Pine county' }).then(r => { renamed = true; return r })
+    await Promise.race([renaming, new Promise(r => setTimeout(r, 1000))])
+    const renameWaited = !renamed
+    release()
+    assert.equal((await committing).status, 200)
+    const r = await renaming
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+
+    const f = await row('renrace')
+    assert.equal(f.name, 'Pine county')
+    assert.notEqual(f.data_as_of, null, 'the commit\'s as-of date was not put back to the value the rename read')
+    assert.equal(f.record_count, 2)
+    assert.equal(f.live_rows, 2)
+    assert.equal(f.status, 'ok')
+    assert.equal(renameWaited, true, 'the rename waits for the running commit')
+})
+
+test('regression, Replace file still saves a new mapping and filter, and can clear the filter', async () => {
+    await source('remap')
+    let r = await patch('remap', { mapping: { house_number: 'ADDR_NUM' }, status_keep: ['ACTIVE'] })
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    let f = await row('remap')
+    assert.deepEqual(f.mapping, { house_number: 'ADDR_NUM' })
+    assert.deepEqual(f.status_keep, ['ACTIVE'])
+    assert.equal(f.name, 'remap', 'the name is not touched')
+    r = await patch('remap', { mapping: { house_number: 'NUM' }, status_keep: null })
+    assert.equal(r.status, 200)
+    f = await row('remap')
+    assert.deepEqual(f.mapping, { house_number: 'NUM' })
+    assert.equal(f.status_keep, null, 'null clears the filter, as the page sends it')
+    // A web source's address and interval.
+    r = await patch('remap', { url: 'https://example.org/a.csv', refresh_hours: 12, data_as_of: '2026-01-02T12:00:00Z' })
+    assert.equal(r.status, 200)
+    const w = (await raw(`SELECT url, refresh_hours, data_as_of FROM dispatcher_address_sources WHERE id = 'remap'`))[0]
+    assert.equal(w.url, 'https://example.org/a.csv')
+    assert.equal(w.refresh_hours, 12)
+    assert.equal(w.data_as_of.toISOString(), '2026-01-02T12:00:00.000Z')
+    assert.equal((await patch('remap', { url: 'ftp://x' })).status, 400)
+})
