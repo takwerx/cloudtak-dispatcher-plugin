@@ -296,7 +296,7 @@
                                 <button
                                     v-if='isAdmin'
                                     type='button'
-                                    class='btn btn-sm p-0 text-white lh-1'
+                                    class='btn btn-sm p-0 border-0 bg-transparent text-white lh-1'
                                     :title='`Remove ${g}`'
                                     :disabled='savingGroups'
                                     @click='removeGroup(g)'
