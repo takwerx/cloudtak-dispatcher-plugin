@@ -30,17 +30,58 @@ async function dispatcherSender(): Promise<{ uid: string; callsign: string }> {
     };
 }
 
-// Send a direct GeoChat to a contact via CloudTAK's Chatroom — the same path
-// MenuChat.vue uses (worker.conn.sendCOT under the hood). The old POST /api/marti/chats
-// had no backing route and silently failed.
+// CloudTAK changed its chat code in 14.1.0 (Chatroom Revamp, ops #1211), and users run either one:
+//   14.0.x and older: new Chatroom(callsign), then room.chats.send(message, sender, worker, contact)
+//   14.1.0 and newer: await Chatroom.direct(contact), then room.chats.send(message, sender)
+// Chatroom.direct only exists in 14.1.0 and newer, so its presence picks the path. Both are typed
+// loosely here on purpose: the plugin must pass `npm run check` against either CloudTAK version,
+// and a typed call to one of them fails the build on the other.
+type ChatContact = { uid: string; callsign: string };
+type ChatSender = { uid: string; callsign: string };
+type ChatRoom = {
+    chats: {
+        send: (...args: unknown[]) => Promise<void>;
+        list: () => Promise<Array<{ sender_uid: string; message: string; status?: string }>>;
+    };
+};
+export type ChatroomClass = {
+    new (name: string): ChatRoom;
+    direct?: (contact: ChatContact) => Promise<ChatRoom>;
+};
+
+// Send a direct GeoChat to a contact via CloudTAK's Chatroom, the same path MenuChat.vue uses.
+// The old POST /api/marti/chats had no backing route and silently failed.
+export async function sendDirectChatWith(
+    Room: ChatroomClass,
+    worker: unknown,
+    sender: ChatSender,
+    contact: ChatContact,
+    message: string
+): Promise<void> {
+    if (typeof Room.direct === 'function') {
+        const room = await Room.direct({ uid: contact.uid, callsign: contact.callsign });
+        await room.chats.send(message, sender);
+
+        // 14.1.0 send() does not throw when the server refuses the message: it stores the chat as
+        // failed. Throw here so the caller's catch sees it, instead of losing the message silently.
+        const sent = (await room.chats.list())
+            .filter(c => c.sender_uid === sender.uid && c.message === message)
+            .pop();
+        if (sent?.status === 'failed') throw new Error(`Chat to ${contact.callsign} was not sent`);
+        return;
+    }
+
+    const room = new Room(contact.callsign);
+    await room.chats.send(message, sender, worker, { uid: contact.uid, callsign: contact.callsign });
+}
+
 async function sendDirectChat(
     mapStore: MapStore,
     contact: { uid: string; callsign: string },
     message: string
 ): Promise<void> {
     const sender = await dispatcherSender();
-    const room = new Chatroom(contact.callsign);
-    await room.chats.send(message, sender, mapStore.worker, { uid: contact.uid, callsign: contact.callsign });
+    await sendDirectChatWith(Chatroom as unknown as ChatroomClass, mapStore.worker, sender, contact, message);
 }
 
 // Assignment notification sent to a contact when they're added to an incident.

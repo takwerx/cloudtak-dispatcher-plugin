@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 const fd = await import('../../../plugin/lib/field-delivery.ts')
 const mm = await import('../../../plugin/lib/map-marker.ts')
 const cw = await import('../../../plugin/lib/closed-window.ts')
+const cc = await import('../../../plugin/lib/contacts-client.ts')
 
 const MINUTE = 60 * 1000
 const incident = (over = {}) => ({
@@ -261,4 +262,172 @@ test('broadcast + two callers: the Core Event remarks carry both, primary first,
     await fd.showIncident(mapStore(), incident({ uid: 'b-two', coreEventId: 'core-9', callers: callers.slice(0, 1) }))
     const one = writes().find(c => c.method === 'PATCH' && c.url === '/api/core/event/core-9')
     assert.ok(!/Pat Doe/.test(one.body.remarks) && /Caller: Sam Lee/.test(one.body.remarks), 'removing the primary leaves the other caller only')
+})
+
+// --- TAK-CAD routes: who may use a connection (ops #1201) -------------------------------------
+// Loads the real server/plugin-takcad.ts. CloudTAK's auth, node-tak and typebox are the stand-ins in
+// ./stubs; the access rule in stubs/cloudtak-auth.mjs is a copy of CloudTAK's own Auth.is_connection.
+
+const takcad = await import('../../../server/plugin-takcad.ts')
+
+const ROUTES = ['GET /marti/plugins/takcad/submit', 'POST /marti/plugins/takcad/submit',
+    'PUT /marti/plugins/takcad/submit/result', 'DELETE /marti/plugins/takcad/submit']
+
+const loadRoutes = async () => {
+    const routes = {}
+    const schema = {}
+    for (const m of ['get', 'post', 'put', 'delete']) {
+        schema[m] = async (path, _opts, handler) => { routes[`${m.toUpperCase()} ${path}`] = handler }
+    }
+    await takcad.default(schema, { server: { api: 'https://tak.example:8443' }, models: {
+        Profile: { from: async (email) => globalThis.__profiles[email] },
+        // Plain row lookup, as CloudTAK's model gives it.
+        Connection: { from: async (id) => globalThis.__connections[id] },
+    } })
+    return routes
+}
+
+const callRoute = async (handler, query) => {
+    const out = { status: 200, body: undefined }
+    const res = { status(s) { out.status = s; return res }, json(b) { out.body = b; return res } }
+    await handler({ query, body: { x: 1 } }, res)
+    return out
+}
+
+const signIn = (email) => { globalThis.__caller = { email } }
+
+beforeEach(() => {
+    globalThis.__tak = { clients: [], requests: [] }
+    globalThis.__connections = {
+        5: { id: 5, agency: 100, auth: { cert: 'CERT-AGENCY-100', key: 'KEY-100' } },
+        6: { id: 6, agency: 200, auth: { cert: 'CERT-AGENCY-200', key: 'KEY-200' } },
+        7: { id: 7, agency: null, auth: { cert: 'CERT-NO-AGENCY', key: 'KEY-7' } },
+    }
+    globalThis.__profiles = {
+        'sys@x': { email: 'sys@x', system_admin: true, auth: { cert: 'CERT-SYS', key: 'K' } },
+        'agency100@x': { email: 'agency100@x', system_admin: false, agency_admin: [100], auth: { cert: 'CERT-OWN-100', key: 'K' } },
+        'plain@x': { email: 'plain@x', system_admin: false, agency_admin: null, auth: { cert: 'CERT-OWN-PLAIN', key: 'K' } },
+        'notyet@x': { email: 'notyet@x', system_admin: false, agency_admin: null, auth: null },
+    }
+})
+
+const queryFor = (_route, extra = {}) => ({ fn: 'getIncidents', uid: 'u-1', ...extra })
+
+test('TAK-CAD: all four proxy routes are registered', async () => {
+    const routes = await loadRoutes()
+    for (const r of ROUTES) assert.equal(typeof routes[r], 'function', `${r} is registered`)
+})
+
+test('TAK-CAD: a user who does not administer the connection\'s agency is refused on every route, and nothing reaches TAK Server', async () => {
+    const routes = await loadRoutes()
+    for (const who of ['plain@x', 'agency100@x']) {
+        signIn(who)
+        for (const r of ROUTES) {
+            // agency100 may use connection 5 but not 6 (other agency) or 7 (no agency); plain may use none
+            const refused = who === 'plain@x' ? [5, 6, 7] : [6, 7]
+            for (const id of refused) {
+                globalThis.__tak = { clients: [], requests: [] }
+                const out = await callRoute(routes[r], queryFor(r, { connection: id }))
+                assert.equal(out.status, 401, `${who} on ${r} connection ${id}: refused`)
+                assert.deepEqual(globalThis.__tak.requests, [], `${who} on ${r} connection ${id}: no request sent to TAK Server`)
+                assert.deepEqual(globalThis.__tak.clients, [], `${who} on ${r} connection ${id}: no certificate used`)
+            }
+        }
+    }
+})
+
+test('TAK-CAD: an agency admin and a system admin can use the connections they administer, with that connection\'s certificate', async () => {
+    const routes = await loadRoutes()
+    for (const r of ROUTES) {
+        signIn('agency100@x')
+        globalThis.__tak = { clients: [], requests: [] }
+        let out = await callRoute(routes[r], queryFor(r, { connection: 5 }))
+        assert.equal(out.status, 200, `agency admin on ${r}`)
+        assert.deepEqual(globalThis.__tak.requests.map(q => q.cert), ['CERT-AGENCY-100'], `agency admin on ${r} uses connection 5's certificate`)
+
+        signIn('sys@x')
+        for (const [id, cert] of [[5, 'CERT-AGENCY-100'], [6, 'CERT-AGENCY-200'], [7, 'CERT-NO-AGENCY']]) {
+            globalThis.__tak = { clients: [], requests: [] }
+            out = await callRoute(routes[r], queryFor(r, { connection: id }))
+            assert.equal(out.status, 200, `system admin on ${r} connection ${id}`)
+            assert.deepEqual(globalThis.__tak.requests.map(q => q.cert), [cert], `system admin on ${r} connection ${id} uses its certificate`)
+        }
+    }
+})
+
+test('TAK-CAD: with no connection given, every route still uses the caller\'s own certificate (the way the plugin calls them)', async () => {
+    const routes = await loadRoutes()
+    for (const who of ['plain@x', 'agency100@x', 'sys@x']) {
+        signIn(who)
+        for (const r of ROUTES) {
+            globalThis.__tak = { clients: [], requests: [] }
+            const out = await callRoute(routes[r], queryFor(r))
+            assert.equal(out.status, 200, `${who} on ${r}`)
+            assert.deepEqual(globalThis.__tak.requests.map(q => q.cert), [globalThis.__profiles[who].auth.cert], `${who} on ${r} uses their own certificate`)
+        }
+    }
+})
+
+test('TAK-CAD: a signed-in user who has not logged in to CloudTAK yet is still told so, and a request with no sign-in is refused', async () => {
+    const routes = await loadRoutes()
+    signIn('notyet@x')
+    const out = await callRoute(routes[ROUTES[0]], queryFor(ROUTES[0]))
+    assert.equal(out.status, 401)
+    assert.match(out.body.message, /not yet logged in/)
+    globalThis.__caller = undefined
+    const anon = await callRoute(routes[ROUTES[0]], queryFor(ROUTES[0], { connection: 5 }))
+    assert.equal(anon.status, 401)
+    assert.deepEqual(globalThis.__tak.requests, [])
+})
+
+// --- assignment and update chat messages on CloudTAK 14.0.x and 14.1.0 (ops #1211) -------------
+// 14.1.0 (Chatroom Revamp) changed the chat code: a room is made with Chatroom.direct({uid, callsign})
+// and send() takes (message, sender, opts). The plugin's old call (new Chatroom(callsign), send with a
+// worker and a contact) fails the type check on 14.1.0 and the stub below throws the way 14.1.0 would.
+
+const CONTACT = { uid: 'ANDROID-abc', callsign: 'Engine 7' }
+const INC = { name: '26-001 Fire', address: '1 Main St' }
+const SENDER = { uid: 'ANDROID-CloudTAK-tester', callsign: 'tester' }
+
+const withChatroom = (version) => { globalThis.__chatroomVersion = version; globalThis.__sent = []; globalThis.__rooms = []; globalThis.__serverRefuses = false }
+
+test('chat on CloudTAK 14.1.0: an assignment message goes to the contact\'s direct room, with two arguments', async () => {
+    withChatroom('14.1.0')
+    const ms = mapStore()
+    await cc.sendAssignmentMessage(ms, CONTACT, INC)
+    assert.equal(globalThis.__sent.length, 1, 'exactly one chat is sent')
+    const [s] = globalThis.__sent
+    assert.equal(s.version, '14.1.0')
+    assert.equal(s.room, 'room-ANDROID-abc', 'sent to the direct room made for the contact uid')
+    assert.equal(s.message, 'You have been assigned to: 26-001 Fire at 1 Main St. Incident on your map.')
+    assert.deepEqual(s.sender, SENDER)
+})
+
+test('chat on CloudTAK 14.1.0: an update message reaches the same room as the assignment', async () => {
+    withChatroom('14.1.0')
+    await cc.sendAssignmentMessage(mapStore(), CONTACT, INC)
+    await cc.sendUpdateMessage(mapStore(), CONTACT, { name: '26-001 Fire' }, 'Location changed to 2 Oak St')
+    assert.equal(globalThis.__sent.length, 2)
+    assert.equal(globalThis.__sent[1].room, globalThis.__sent[0].room, 'one room per contact, not a new room per message')
+    assert.equal(globalThis.__sent[1].message, 'UPDATE \u2014 26-001 Fire: Location changed to 2 Oak St')
+    assert.equal(globalThis.__rooms.length, 1)
+})
+
+test('chat on CloudTAK 14.1.0: a message the server refuses is reported to the caller, not lost silently', async () => {
+    withChatroom('14.1.0')
+    globalThis.__serverRefuses = true
+    await assert.rejects(() => cc.sendAssignmentMessage(mapStore(), CONTACT, INC), /was not sent/)
+})
+
+test('chat on CloudTAK 14.0.x: still sent the old way (room named by callsign, worker and contact passed)', async () => {
+    withChatroom('14.0.x')
+    const ms = mapStore()
+    await cc.sendAssignmentMessage(ms, CONTACT, INC)
+    assert.equal(globalThis.__sent.length, 1)
+    const [s] = globalThis.__sent
+    assert.equal(s.version, '14.0.x')
+    assert.equal(s.room, 'Engine 7')
+    assert.equal(s.worker, ms.worker, 'the map worker is passed through')
+    assert.deepEqual(s.recipient, CONTACT)
+    assert.deepEqual(s.sender, SENDER)
 })

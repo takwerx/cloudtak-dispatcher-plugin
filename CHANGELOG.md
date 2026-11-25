@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.8.1
+
+Security update. Update to this version when you can. Nothing changes in how you use Dispatcher.
+
+- **TAK-CAD mode checks access to a connection** before it uses it. Normal use is the same as before.
+- **Assignment and update chat messages work with CloudTAK 14.1.0** (and still with 14.0.x). A chat message that
+  CloudTAK 14.1.0 refuses is now reported instead of lost silently.
+
 ## 1.8.0
 
 Faster work at the desk, mostly for the command line. Most of it came from Sentinel6Systems. All of it is for
