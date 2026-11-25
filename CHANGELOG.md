@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Limit the Dispatcher to chosen TAK groups.** For a CloudTAK shared by several agencies. In Dispatcher
+  Settings, **Who Can Use The Dispatcher** (CloudTAK admin only) takes a list of TAK groups. Only members of
+  those groups, and CloudTAK system admins, get the Dispatcher: everyone else loses the menu item, and the
+  server refuses them too, on every part of the Dispatcher (events, incidents, address search, TAK-CAD). An empty
+  list, which is the default, changes nothing. A change reaches each user within about a minute.
+
 ## 1.8.1
 
 Security update. Update to this version when you can. Nothing changes in how you use Dispatcher.

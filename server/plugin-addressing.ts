@@ -21,6 +21,101 @@ import Schema from '@openaddresses/batch-schema';
 import Err from '@openaddresses/batch-error';
 import Auth from '../../common/auth.js';
 import type ConfigStateless from '../config.js';
+import { TAKAPI, APIAuthCertificate } from '@tak-ps/node-tak';
+
+// ── Who may use the Dispatcher ──────────────────────────────────────────────────
+// Optional limit set by a CloudTAK system admin in Dispatcher Settings (dispatcher_settings key
+// `allowed_groups`, a list of TAK group names). An empty or missing list is OFF: every signed-in user
+// gets the Dispatcher, exactly as before. With names in the list, a signed-in user gets it only when
+// they are a CloudTAK system admin or a member of one of those TAK groups; anyone else is refused
+// with a 403 on every route of the plugin, and the plugin hides its menu item (GET /dispatcher/access).
+// The list is read on every request, so a change takes effect at once. A user's TAK groups come from
+// TAK Server with their own certificate and are cached for a minute. If the list cannot be read or the
+// groups cannot be looked up, the user is refused (never let in by accident); admins never need the lookup.
+// The same block is in plugin-dispatcher.ts, plugin-addressing.ts and plugin-takcad.ts (CloudTAK loads
+// each route file on its own, so they cannot share one); plugin/test/access-server.test.ts fails if the
+// three copies differ. Group names are compared ignoring upper and lower case, spaces at the ends ignored.
+// <access-gate>
+const ALLOWED_GROUPS_SETTING = 'allowed_groups';
+const ACCESS_DENIED = 'The Dispatcher is limited to certain TAK groups, and your account is not in one of them. Ask your CloudTAK admin.';
+const ACCESS_GROUP_TTL_MS = 60_000;
+const accessGroupCache = new Map<string, { ts: number; groups: string[] }>();
+
+// The stored setting as a limit. Off for no value, '' or an empty list. A list with names is on. Anything
+// else (a hand-edited value that is not a list) is on with no names, so only admins get in until an admin fixes it.
+function parseAllowedGroups(stored: unknown): { limited: boolean; groups: string[] } {
+    let v: unknown = stored;
+    for (let i = 0; i < 2 && typeof v === 'string'; i++) {
+        try { v = JSON.parse(v); } catch { break; }
+    }
+    if (v === null || v === undefined || v === '') return { limited: false, groups: [] };
+    if (!Array.isArray(v)) return { limited: true, groups: [] };
+    if (v.length === 0) return { limited: false, groups: [] };
+    const groups = v.filter((g): g is string => typeof g === 'string').map(g => g.trim()).filter(g => g.length > 0);
+    return { limited: true, groups };
+}
+
+// May this user use the Dispatcher: no limit, or an admin, or a member of one of the listed groups.
+function mayUseDispatcher(limit: { limited: boolean; groups: string[] }, isAdmin: boolean, memberOf: Iterable<string>): boolean {
+    if (!limit.limited || isAdmin) return true;
+    const wanted = new Set(limit.groups.map(g => g.toLowerCase()));
+    for (const g of memberOf) {
+        if (typeof g === 'string' && wanted.has(g.trim().toLowerCase())) return true;
+    }
+    return false;
+}
+
+async function readDispatcherLimit(config: ConfigStateless): Promise<{ limited: boolean; groups: string[] }> {
+    try {
+        const rows = await config.pg.execute(sql`
+            SELECT value FROM dispatcher_settings WHERE key = ${ALLOWED_GROUPS_SETTING}
+        `) as unknown as { value: unknown }[];
+        return parseAllowedGroups(rows[0]?.value);
+    } catch (err) {
+        console.error('[dispatcher] could not read who may use the Dispatcher', err);
+        throw new Err(503, null, 'Could not check who may use the Dispatcher. Try again in a moment.');
+    }
+}
+
+// The TAK groups the user belongs to, as TAK Server shows them with the user's own certificate.
+async function dispatcherUserGroups(config: ConfigStateless, email: string): Promise<string[]> {
+    const hit = accessGroupCache.get(email);
+    if (hit && Date.now() - hit.ts < ACCESS_GROUP_TTL_MS) return hit.groups;
+    try {
+        const profile = await config.models.Profile.from(email);
+        const auth = profile.auth;
+        if (!auth) throw new Error('no certificate yet');
+        const api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(auth.cert, auth.key));
+        const list = await api.Group.list({}) as { data?: { name: string }[] };
+        const groups = (list.data ?? []).map(g => String(g.name));
+        accessGroupCache.set(email, { ts: Date.now(), groups });
+        return groups;
+    } catch (err) {
+        console.error('[dispatcher] could not read the TAK groups of a user', err);
+        throw new Err(503, null, 'Could not check your TAK groups right now. Try again in a moment.');
+    }
+}
+
+// What the caller may do: `limited` says whether the admin's list is on; `allowed` whether this caller gets in.
+async function dispatcherAccess(config: ConfigStateless, req: any): Promise<{ allowed: boolean; limited: boolean; admin: boolean }> {
+    const auth = await Auth.is_auth(config, req) as any;
+    const limit = await readDispatcherLimit(config);
+    const isUser = !!auth && typeof auth.is_admin === 'function' && typeof auth.email === 'string' && auth.email.length > 0;
+    const admin = isUser && auth.is_admin() === true;
+    if (!limit.limited) return { allowed: true, limited: false, admin };
+    // A resource token (layer or connection) is not a person in a TAK group: refused while the limit is on.
+    if (!isUser) return { allowed: false, limited: true, admin: false };
+    if (admin) return { allowed: true, limited: true, admin: true };
+    const groups = await dispatcherUserGroups(config, auth.email);
+    return { allowed: mayUseDispatcher(limit, false, groups), limited: true, admin: false };
+}
+
+// First line of every route: signed in, and allowed by the admin's list.
+async function requireDispatcherAccess(config: ConfigStateless, req: any): Promise<void> {
+    const access = await dispatcherAccess(config, req);
+    if (!access.allowed) throw new Err(403, null, ACCESS_DENIED);
+}
+// </access-gate>
 
 // ── Pure helpers (also exercised by plugin/test/addressing-server.test.ts) ───────────────────
 // <addressing-pure>
@@ -1417,6 +1512,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await Auth.is_auth(config, req);
             res.json({ settings: await readSettings(config) });
         } catch (err) {
@@ -1432,6 +1528,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const next = normAddressSettings({ ...(await readSettings(config)), ...(req.body.settings ?? {}) });
             const encoded = JSON.stringify(next);
@@ -1454,6 +1551,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await Auth.is_auth(config, req);
             res.json({ sources: await sources(config), refreshing: Array.from(refreshing) });
         } catch (err) {
@@ -1478,6 +1576,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const b = req.body;
             if (b.mode === 'url' && !b.url) throw new Err(400, null, 'A web address is required for a web source');
@@ -1511,6 +1610,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const cur = await sourceById(config, req.params.sourceid);
             const b = req.body;
@@ -1545,6 +1645,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             await sourceById(config, req.params.sourceid);
             await config.pg.execute(sql`DELETE FROM dispatcher_address_sources WHERE id = ${req.params.sourceid}`);
@@ -1565,6 +1666,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const src = await sourceById(config, req.params.sourceid);
             const loadId = randomUUID();
@@ -1584,6 +1686,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const src = await sourceById(config, req.params.sourceid);
             const rows: DbRow[] = [];
@@ -1612,6 +1715,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const src = await sourceById(config, req.params.sourceid);
             try {
@@ -1636,6 +1740,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const cancelled = await failLoad(config, req.params.sourceid, req.params.loadid, 'Upload cancelled');
             res.json({ ok: true, cancelled });
@@ -1654,6 +1759,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const src = await sourceById(config, req.params.sourceid);
             const state = await loadState(config, src.id, req.params.loadid);
@@ -1673,6 +1779,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             if (!/^https?:\/\//i.test(req.body.url)) throw new Err(400, null, 'The web address must start with http:// or https://');
             const probe = await probeUrl(req.body.url);
@@ -1693,6 +1800,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const src = await sourceById(config, req.params.sourceid);
             if (src.mode !== 'url') throw new Err(400, null, 'Only web sources can be refreshed; upload the file again instead');
@@ -1716,6 +1824,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await Auth.is_auth(config, req);
             const settings = await readSettings(config);
             const q = String(req.query.q ?? '').trim();
@@ -1750,6 +1859,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await Auth.is_auth(config, req);
             const settings = await readSettings(config);
             let best: Suggestion | null = null;
