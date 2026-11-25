@@ -216,7 +216,7 @@ test('a list that is not a list of text is refused with a plain 400', () => {
 // /dispatcher/access must answer for a user the gate would refuse (the plugin asks it to decide about the menu),
 // and /dispatcher/groups does its own admin check. Every other route calls requireDispatcherAccess first.
 const OWN_CHECK = new Set(['/dispatcher/access', '/dispatcher/groups']);
-const ROUTES_MIN: Record<string, number> = { 'server/plugin-dispatcher.ts': 17, 'server/plugin-addressing.ts': 14, 'server/plugin-takcad.ts': 6 };
+const ROUTES_MIN: Record<string, number> = { 'server/plugin-dispatcher.ts': 17, 'server/plugin-addressing.ts': 15, 'server/plugin-takcad.ts': 6 };
 for (const f of FILES) {
     test(`every route in ${f} refuses a user outside the list`, () => {
         const parts = src[f].split(/^\s*await schema\.(?:get|post|put|patch|delete)\(\s*/m).slice(1);

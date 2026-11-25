@@ -1753,6 +1753,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const src = await sourceById(config, req.params.sourceid);
             const state = await loadState(config, src.id, req.params.loadid);
