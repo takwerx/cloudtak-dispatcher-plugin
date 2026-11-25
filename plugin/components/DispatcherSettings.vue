@@ -347,7 +347,7 @@
                         </div>
                         <div class='text-muted small'>
                             The suggestions are your own TAK groups. You can type any group name, even one you are not in.
-                            A change reaches each user within about a minute.
+                            A change in a person's TAK groups can take a few minutes to show: TAK Server updates its own list first, then the Dispatcher checks it about once a minute.
                         </div>
                         <div
                             v-if='groupsError'

@@ -6,7 +6,7 @@
   Settings, **Who Can Use The Dispatcher** (CloudTAK admin only) takes a list of TAK groups. Only members of
   those groups, and CloudTAK system admins, get the Dispatcher: everyone else loses the menu item, and the
   server refuses them too, on every part of the Dispatcher (events, incidents, address search, TAK-CAD). An empty
-  list, which is the default, changes nothing. A change reaches each user within about a minute.
+  list, which is the default, changes nothing. A change in a person's TAK groups can take a few minutes to show: TAK Server updates its own list first, then the Dispatcher checks it about once a minute.
 
 ## 1.8.1
 
