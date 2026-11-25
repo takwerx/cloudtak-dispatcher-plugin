@@ -186,7 +186,7 @@
                         :aria-expanded='listOpen'
                         @click='listOpen = !listOpen'
                     >
-                        {{ listOpen ? '▾' : '▸' }} Sources<span v-if='sources.length'> ({{ sources.length }})</span>
+                        {{ listOpen ? '▾' : '▸' }} {{ sources.length ? `Sources (${sources.length})` : 'Sources' }}
                     </button>
                     <div class='d-flex align-items-center gap-2'>
                         <button
