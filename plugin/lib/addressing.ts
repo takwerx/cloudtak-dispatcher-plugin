@@ -157,8 +157,10 @@ export async function deleteAddressSource(id: string): Promise<void> {
     await std(`/api/dispatcher/address/sources/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
+// The server pulls and commits the whole web source inside this one request: a big one takes as
+// long as a big file commit, so it gets the same limit (#108).
 export async function refreshAddressSource(id: string): Promise<AddressSource> {
-    const r = await std(`/api/dispatcher/address/sources/${encodeURIComponent(id)}/refresh`, { method: 'POST' }) as { source: AddressSource };
+    const r = await std(`/api/dispatcher/address/sources/${encodeURIComponent(id)}/refresh`, { method: 'POST', timeout: COMMIT_TIMEOUT_MS }) as { source: AddressSource };
     return r.source;
 }
 
@@ -181,14 +183,61 @@ export async function pushAddressRows(sourceId: string, loadId: string, rows: Re
     }) as { accepted: number; dropped: number; reasons: Record<string, number> };
 }
 
-export async function commitAddressLoad(sourceId: string, loadId: string, body: { data_as_of?: string; dropped?: number }): Promise<{ source: AddressSource; unresolved: { label: string; address: string | null }[] }> {
+export interface CommitResult {
+    source: AddressSource;
+    unresolved: { label: string; address: string | null }[];
+}
+
+// Making a big load live (hundreds of thousands of rows) takes minutes. CloudTAK's std() gives up
+// after 20 s by default, so the commit gets its own, much longer limit (#108).
+export const COMMIT_TIMEOUT_MS = 30 * 60 * 1000;
+
+export async function commitAddressLoad(sourceId: string, loadId: string, body: { data_as_of?: string; dropped?: number }): Promise<CommitResult> {
     return await std(`/api/dispatcher/address/sources/${encodeURIComponent(sourceId)}/loads/${encodeURIComponent(loadId)}/commit`, {
-        method: 'POST', body,
-    }) as { source: AddressSource; unresolved: { label: string; address: string | null }[] };
+        method: 'POST', body, timeout: COMMIT_TIMEOUT_MS,
+    }) as CommitResult;
 }
 
 export async function abortAddressLoad(sourceId: string, loadId: string): Promise<void> {
     await std(`/api/dispatcher/address/sources/${encodeURIComponent(sourceId)}/loads/${encodeURIComponent(loadId)}/abort`, { method: 'POST' });
+}
+
+export type LoadState = 'committing' | 'live' | 'staged' | 'gone';
+
+export async function addressLoadState(sourceId: string, loadId: string): Promise<CommitResult & { state: LoadState }> {
+    return await std(`/api/dispatcher/address/sources/${encodeURIComponent(sourceId)}/loads/${encodeURIComponent(loadId)}`, {
+        method: 'GET',
+    }) as CommitResult & { state: LoadState };
+}
+
+// Commit a staged load. The server carries on with a commit whatever happens to the page's request,
+// so when the answer is lost (a timeout, a proxy cutting a long request, a dropped connection) ask
+// the server what became of the load before calling it failed (#108): live is a good load; still
+// committing, wait and ask again; staged (the commit never arrived), throw the rows away; gone,
+// the server already said why on the source. Never reports a good load as cancelled.
+export async function commitAndConfirm(
+    sourceId: string, loadId: string, body: { data_as_of?: string; dropped?: number },
+    opts: { pollMs?: number; maxWaitMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<CommitResult> {
+    const pollMs = opts.pollMs ?? 5000;
+    const sleep = opts.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
+    try {
+        return await commitAddressLoad(sourceId, loadId, body);
+    } catch (err) {
+        const polls = Math.max(1, Math.ceil((opts.maxWaitMs ?? COMMIT_TIMEOUT_MS) / pollMs));
+        for (let i = 0; i < polls; i++) {
+            let st: (CommitResult & { state: LoadState }) | null = null;
+            try { st = await addressLoadState(sourceId, loadId); } catch { /* the server is unreachable: ask again */ }
+            if (st?.state === 'live') return { source: st.source, unresolved: st.unresolved ?? [] };
+            if (st?.state === 'staged') {
+                try { await abortAddressLoad(sourceId, loadId); } catch { /* best effort */ }
+                throw err;
+            }
+            if (st?.state === 'gone') throw err;
+            await sleep(pollMs);
+        }
+        throw err;
+    }
 }
 
 // ── Display helpers ─────────────────────────────────────────────────────────────────────────
