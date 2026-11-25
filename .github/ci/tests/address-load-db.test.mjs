@@ -106,60 +106,70 @@ test('abort sent while a Replace is being committed: the new rows go live, nothi
     }
     const committing = commit('race', load)
     await atCount
-
-    const during = await state('race', load)
-    assert.equal(during.body?.state, 'committing', 'the page can see the commit is still running')
+    const during = routes[`GET ${LOADS}/:loadid`] ? await state('race', load) : null
 
     let abortDone = false
     const aborting = abort('race', load).then(r => { abortDone = true; return r })
     await Promise.race([aborting, new Promise(r => setTimeout(r, 1500))])
-    assert.equal(abortDone, false, 'the abort waits for the running commit instead of deleting its rows')
+    const abortWaited = !abortDone
     release()
-
     const c = await committing
     const a = await aborting
+
+    // The data first: what a dispatcher searching these addresses gets.
     assert.equal(c.status, 200, JSON.stringify(c.body))
-    assert.equal(a.body.cancelled, false, 'the abort found the load live and left it alone')
     const f = await facts('race')
-    assert.equal(f.live_rows, 3, 'the new rows are live')
+    assert.equal(f.live_rows, 3, 'the new rows are live (the abort must not have thrown them away)')
     assert.equal(f.record_count, f.live_rows, 'the count shown matches the rows there')
     assert.equal(f.all_rows, 3, 'the old rows are gone, nothing staged is left behind')
     assert.equal(f.streets, 'NEW')
     assert.equal(f.status, 'ok')
     assert.equal(f.last_error, null, 'a good load is not marked Upload cancelled')
+    // Then how: the abort waited for the commit, found the load live, and the page could see it running.
+    assert.equal(abortWaited, true, 'the abort waits for the running commit')
+    assert.equal(a.body.cancelled, false, 'the abort found the load live and left it alone')
+    assert.equal(during?.body?.state, 'committing', 'the page can see the commit is still running')
     assert.equal((await state('race', load)).body.state, 'live')
 })
 
 test('abort sent after a slow commit already finished (the case seen in #108): no Upload cancelled', async () => {
     await source('late')
     const load = await stage('late', [point(1, 'Elm'), point(2, 'Elm')])
-    assert.equal((await state('late', load)).body.state, 'staged')
     assert.equal((await commit('late', load)).status, 200)
     const a = await abort('late', load)
     assert.equal(a.status, 200)
-    assert.equal(a.body.cancelled, false)
     const f = await facts('late')
     assert.equal(f.live_rows, 2)
     assert.equal(f.record_count, 2)
     assert.equal(f.status, 'ok')
     assert.equal(f.last_error, null, 'the source must not say Upload cancelled after a good load')
-    const st = (await state('late', load)).body
-    assert.equal(st.state, 'live', 'the page asking afterwards learns the load is live')
-    assert.equal(st.source.record_count, 2)
+    assert.equal(a.body.cancelled, false)
 })
 
-test('a real cancel still works: staged rows go, the previous data stays, a later commit is refused', async () => {
+test('load state: the page can ask what became of a load (staged, live, gone)', async () => {
+    await source('state')
+    const kept = await stage('state', [point(1, 'Ash')])
+    assert.equal((await state('state', kept)).body.state, 'staged')
+    assert.equal((await commit('state', kept)).status, 200)
+    const st = (await state('state', kept)).body
+    assert.equal(st.state, 'live', 'the page asking after a lost answer learns the load is live')
+    assert.equal(st.source.record_count, 1)
+    const dropped = await stage('state', [point(2, 'Ash')])
+    assert.equal((await abort('state', dropped)).body.cancelled, true)
+    assert.equal((await state('state', dropped)).body.state, 'gone')
+})
+
+test('regression, a real cancel still works: staged rows go, the previous data stays, a later commit is refused', async () => {
     await source('cancel')
     await live('cancel', [point(1, 'Keep'), point(2, 'Keep')])
     const load = await stage('cancel', [point(1, 'Drop'), point(2, 'Drop'), point(3, 'Drop')])
     const a = await abort('cancel', load)
-    assert.equal(a.body.cancelled, true)
+    assert.equal(a.status, 200)
     let f = await facts('cancel')
     assert.equal(f.all_rows, 2, 'the staged rows are thrown away')
     assert.equal(f.streets, 'KEEP', 'the previous data is still live')
     assert.equal(f.status, 'ok')
     assert.equal(f.last_error, 'Upload cancelled')
-    assert.equal((await state('cancel', load)).body.state, 'gone')
     // A commit that arrives after the abort (it was slower on the wire) changes nothing.
     const c = await commit('cancel', load)
     assert.equal(c.status, 400)
