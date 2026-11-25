@@ -2,8 +2,9 @@
   "name": "dispatcher-ci-tools",
   "version": "0.0.0",
   "private": true,
-  "description": "Tools the PR check .github/ci/syntax_ts_vue.mjs needs (ops #1014). Installed with npm ci from the lock file, never npm install.",
+  "description": "Tools the PR checks need: .github/ci/syntax_ts_vue.mjs (ops #1014) and the Postgres client CloudTAK runs, for .github/ci/tests/address-load-db.test.mjs (#108). Installed with npm ci from the lock file, never npm install.",
   "dependencies": {
+    "postgres": "3.4.9",
     "typescript": "6.0.3",
     "vue": "3.5.42"
   }

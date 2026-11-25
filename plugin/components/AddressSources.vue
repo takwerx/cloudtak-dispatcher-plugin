@@ -703,7 +703,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue';
 import {
     getAddressSettings, putAddressSettings, listAddressSources, createAddressSource, patchAddressSource,
     deleteAddressSource, refreshAddressSource, probeAddressUrl, startAddressLoad, pushAddressRows,
-    commitAddressLoad, abortAddressLoad, suggestAddress, reverseAddress, badgeFor, distanceText,
+    commitAndConfirm, abortAddressLoad, suggestAddress, reverseAddress, badgeFor, distanceText,
     ADDRESS_SETTINGS_DEFAULT, LOAD_BATCH,
 } from '../lib/addressing.ts';
 import type { AddressSettings, AddressSource, AddressSuggestion, ReverseResult, UrlProbe } from '../lib/addressing.ts';
@@ -1015,12 +1015,17 @@ async function load() {
                 }
                 add.progress = `Uploading… ${Math.min(i + LOAD_BATCH, file.rows.length).toLocaleString()} of ${file.rows.length.toLocaleString()} rows`;
             }
-            add.progress = 'Checking and making it live…';
-            const done = await commitAddressLoad(sourceId, loadId, {
+            add.progress = file.rows.length > 100000
+                ? 'Checking and making it live… a file this big can take a few minutes.'
+                : 'Checking and making it live…';
+            // From here on the server decides: commitAndConfirm finds out what became of the load
+            // if the answer is lost, so the catch below must not cancel it (#108).
+            const committed = loadId;
+            loadId = '';
+            const done = await commitAndConfirm(sourceId, committed, {
                 data_as_of: add.asOf ? new Date(add.asOf + 'T12:00:00').toISOString() : undefined,
                 dropped,
             });
-            loadId = '';
             const why = Object.entries(reasons).map(([k, v]) => `${v} ${k}`).join(', ');
             add.result = `Loaded ${accepted.toLocaleString()} records${dropped ? `, ${dropped.toLocaleString()} dropped (${why})` : ''}.`
                 + (done.source.unresolved_count ? ` ${done.source.unresolved_count} places have no location yet.` : '');

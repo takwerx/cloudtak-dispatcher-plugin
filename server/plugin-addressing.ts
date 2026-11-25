@@ -859,7 +859,14 @@ interface SourceRow {
 // to jsonb makes CloudTAK's driver JSON-encode the text a second time, so the column would hold a
 // JSON string and jsonb_array_elements_text() on it would fail. Same rule as plugin-dispatcher.ts.
 async function query<T>(config: ConfigStateless, statement: ReturnType<typeof sql>): Promise<T[]> {
-    const result = await config.pg.execute(statement);
+    return await txQuery<T>(config.pg, statement);
+}
+
+// A transaction (or the pool): anything that runs raw SQL. Same as plugin-dispatcher.ts.
+type Tx = Pick<ConfigStateless['pg'], 'execute'>;
+
+async function txQuery<T>(tx: Tx, statement: ReturnType<typeof sql>): Promise<T[]> {
+    const result = await tx.execute(statement);
     return result as unknown as T[];
 }
 
@@ -926,8 +933,8 @@ async function insertRows(config: ConfigStateless, sourceId: string, loadId: str
 
 // Resolve places that came without coordinates against the loaded address points: the places of
 // one load, or (null) every live place still without a location.
-async function resolvePlaces(config: ConfigStateless, loadId: string | null): Promise<{ matched: number; unresolved: number }> {
-    const rows = await query<{ id: number; address: string }>(config, sql`
+async function resolvePlaces(tx: Tx, loadId: string | null): Promise<{ matched: number; unresolved: number }> {
+    const rows = await txQuery<{ id: number; address: string }>(tx, sql`
         SELECT id, address FROM dispatcher_address_rows
         WHERE ${loadId ? sql`load_id = ${loadId}` : sql`active`} AND kind = 'places' AND lat IS NULL AND address IS NOT NULL
     `);
@@ -935,13 +942,13 @@ async function resolvePlaces(config: ConfigStateless, loadId: string | null): Pr
     for (const r of rows) {
         const pq = parseQuery(r.address);
         if (pq.kind !== 'address' || pq.number == null || !pq.street) continue;
-        const hit = await query<{ lat: number; lon: number }>(config, sql`
+        const hit = await txQuery<{ lat: number; lon: number }>(tx, sql`
             SELECT lat, lon FROM dispatcher_address_rows
             WHERE active AND kind = 'points' AND house_number = ${pq.number} AND ${streetLike(sql`street`, pq.street)}
             ORDER BY (street = ${pq.street}) DESC, length(street), unit NULLS FIRST LIMIT 1
         `);
         if (hit.length) {
-            await config.pg.execute(sql`
+            await tx.execute(sql`
                 UPDATE dispatcher_address_rows SET lat = ${hit[0].lat}, lon = ${hit[0].lon}, resolved = 'matched' WHERE id = ${r.id}
             `);
             matched++;
@@ -950,50 +957,104 @@ async function resolvePlaces(config: ConfigStateless, loadId: string | null): Pr
     return { matched, unresolved: rows.length - matched };
 }
 
-// Make a staged load the live data for its source and drop the old rows (the staging swap).
+// Loads being made live right now. Only for telling the page "still working" (GET .../loads/:id);
+// the source lock below is what keeps a commit and an abort apart (#108).
+const committing = new Set<string>();
+
+// Lock the source row. Taken first by a commit and by an abort (failLoad), so the two run one after
+// the other and never interleave: an abort that arrives during a commit waits for it, then finds
+// the load live and leaves it alone; a commit after an abort finds no staged rows (#108).
+async function lockSource(tx: Tx, srcId: string): Promise<void> {
+    await tx.execute(sql`SELECT 1 FROM dispatcher_address_sources WHERE id = ${srcId} FOR UPDATE`);
+}
+
+// Make a staged load the live data for its source and drop the old rows (the staging swap). One
+// transaction: it all happens or none of it does, and the old rows go only together with the
+// staged rows going live.
 async function commitLoad(config: ConfigStateless, src: SourceRow, loadId: string, dataAsOf: string | null, dropped: number): Promise<SourceRow> {
-    const cnt = await query<{ n: number }>(config, sql`
-        SELECT count(*)::int AS n FROM dispatcher_address_rows WHERE load_id = ${loadId}
-    `);
-    const n = cnt[0]?.n ?? 0;
-    if (n === 0) throw new Err(400, null, 'The load has no usable rows; the previous data is kept');
-    let unresolved = 0;
-    if (src.kind === 'places') {
-        unresolved = (await resolvePlaces(config, loadId)).unresolved;
+    committing.add(loadId);
+    try {
+        await config.pg.transaction(async (tx) => {
+            await lockSource(tx, src.id);
+            const cnt = await txQuery<{ n: number }>(tx, sql`
+                SELECT count(*)::int AS n FROM dispatcher_address_rows WHERE source_id = ${src.id} AND load_id = ${loadId}
+            `);
+            const n = cnt[0]?.n ?? 0;
+            if (n === 0) throw new Err(400, null, 'The load has no usable rows; the previous data is kept');
+            let unresolved = 0;
+            if (src.kind === 'places') {
+                unresolved = (await resolvePlaces(tx, loadId)).unresolved;
+            }
+            await tx.execute(sql`
+                UPDATE dispatcher_address_rows SET active = true WHERE source_id = ${src.id} AND load_id = ${loadId}
+            `);
+            await tx.execute(sql`
+                DELETE FROM dispatcher_address_rows WHERE source_id = ${src.id} AND load_id <> ${loadId}
+            `);
+            // New address points can locate places that were loaded before them.
+            if (src.kind === 'points') {
+                await resolvePlaces(tx, null);
+                await tx.execute(sql`
+                    UPDATE dispatcher_address_sources s
+                    SET unresolved_count = (SELECT count(*)::int FROM dispatcher_address_rows r WHERE r.source_id = s.id AND r.active AND r.lat IS NULL)
+                    WHERE s.kind = 'places'
+                `);
+            }
+            await tx.execute(sql`
+                UPDATE dispatcher_address_sources
+                SET record_count = ${n}, dropped_count = ${dropped}, unresolved_count = ${unresolved},
+                    data_as_of = ${dataAsOf ?? src.data_as_of ?? new Date().toISOString()}::timestamptz,
+                    last_refresh = now(), last_error = NULL, status = 'ok'
+                WHERE id = ${src.id}
+            `);
+        });
+    } finally {
+        committing.delete(loadId);
     }
-    await config.pg.execute(sql`
-        UPDATE dispatcher_address_rows SET active = true WHERE load_id = ${loadId}
-    `);
-    await config.pg.execute(sql`
-        DELETE FROM dispatcher_address_rows WHERE source_id = ${src.id} AND load_id <> ${loadId}
-    `);
-    // New address points can locate places that were loaded before them.
-    if (src.kind === 'points') {
-        await resolvePlaces(config, null);
-        await config.pg.execute(sql`
-            UPDATE dispatcher_address_sources s
-            SET unresolved_count = (SELECT count(*)::int FROM dispatcher_address_rows r WHERE r.source_id = s.id AND r.active AND r.lat IS NULL)
-            WHERE s.kind = 'places'
-        `);
-    }
-    await config.pg.execute(sql`
-        UPDATE dispatcher_address_sources
-        SET record_count = ${n}, dropped_count = ${dropped}, unresolved_count = ${unresolved},
-            data_as_of = ${dataAsOf ?? src.data_as_of ?? new Date().toISOString()}::timestamptz,
-            last_refresh = now(), last_error = NULL, status = 'ok'
-        WHERE id = ${src.id}
-    `);
     return sourceById(config, src.id);
 }
 
-async function failLoad(config: ConfigStateless, srcId: string, loadId: string | null, message: string): Promise<void> {
-    if (loadId) {
-        await config.pg.execute(sql`DELETE FROM dispatcher_address_rows WHERE load_id = ${loadId} AND NOT active`);
-    }
-    await config.pg.execute(sql`
-        UPDATE dispatcher_address_sources
-        SET status = CASE WHEN record_count > 0 THEN 'ok' ELSE 'failed' END, last_error = ${message.slice(0, 500)}
-        WHERE id = ${srcId}
+// Throw away a staged load and say why on the source. A load that is already live is left alone
+// and the source keeps its good status: the page may give up waiting on a big commit and send an
+// abort after the server finished it (#108). Returns false when there was nothing to cancel.
+async function failLoad(config: ConfigStateless, srcId: string, loadId: string | null, message: string): Promise<boolean> {
+    return await config.pg.transaction(async (tx) => {
+        await lockSource(tx, srcId);
+        if (loadId) {
+            const live = await txQuery<{ x: number }>(tx, sql`
+                SELECT 1 AS x FROM dispatcher_address_rows WHERE source_id = ${srcId} AND load_id = ${loadId} AND active LIMIT 1
+            `);
+            if (live.length) return false;
+            await tx.execute(sql`DELETE FROM dispatcher_address_rows WHERE source_id = ${srcId} AND load_id = ${loadId} AND NOT active`);
+        }
+        await tx.execute(sql`
+            UPDATE dispatcher_address_sources
+            SET status = CASE WHEN record_count > 0 THEN 'ok' ELSE 'failed' END, last_error = ${message.slice(0, 500)}
+            WHERE id = ${srcId}
+        `);
+        return true;
+    });
+}
+
+// What became of a load: still being made live, live, staged (rows waiting, not live), or gone
+// (cancelled, failed, or replaced by a newer load).
+type LoadState = 'committing' | 'live' | 'staged' | 'gone';
+async function loadState(config: ConfigStateless, srcId: string, loadId: string): Promise<LoadState> {
+    if (committing.has(loadId)) return 'committing';
+    const rows = await query<{ active: boolean }>(config, sql`
+        SELECT active FROM dispatcher_address_rows WHERE source_id = ${srcId} AND load_id = ${loadId} LIMIT 1
+    `);
+    if (!rows.length) return 'gone';
+    return rows[0].active ? 'live' : 'staged';
+}
+
+// The places of a source that still have no location (first 50), shown after a places load.
+async function unresolvedOf(config: ConfigStateless, src: SourceRow): Promise<{ label: string; address: string | null }[]> {
+    if (src.kind !== 'places') return [];
+    return await query<{ label: string; address: string | null }>(config, sql`
+        SELECT label, address FROM dispatcher_address_rows
+        WHERE source_id = ${src.id} AND active AND kind = 'places' AND lat IS NULL
+        ORDER BY label LIMIT 50
     `);
 }
 
@@ -1653,12 +1714,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
             const src = await sourceById(config, req.params.sourceid);
             try {
                 const out = await commitLoad(config, src, req.params.loadid, req.body.data_as_of ?? null, req.body.dropped ?? 0);
-                const unresolved = src.kind === 'places' ? await query<{ label: string; address: string | null }>(config, sql`
-                    SELECT label, address FROM dispatcher_address_rows
-                    WHERE source_id = ${src.id} AND active AND kind = 'places' AND lat IS NULL
-                    ORDER BY label LIMIT 50
-                `) : [];
-                res.json({ source: out, unresolved });
+                res.json({ source: out, unresolved: await unresolvedOf(config, src) });
             } catch (err) {
                 await failLoad(config, src.id, req.params.loadid, err instanceof Error ? err.message : String(err));
                 throw err;
@@ -1668,18 +1724,39 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         }
     });
 
+    // A load that is already live is left alone (cancelled: false): the page may send this after it
+    // gave up waiting on a big commit that the server finished anyway (#108).
     await schema.post('/dispatcher/address/sources/:sourceid/loads/:loadid/abort', {
         name: 'Abort Address Load',
         group: 'Dispatcher',
-        description: 'Throw away a staged load (admin only)',
+        description: 'Throw away a staged load (admin only); a live load is kept',
         params: Type.Object({ sourceid: Type.String(), loadid: Type.String() }),
         res: Type.Any(),
     }, async (req, res) => {
         try {
             await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
-            await failLoad(config, req.params.sourceid, req.params.loadid, 'Upload cancelled');
-            res.json({ ok: true });
+            const cancelled = await failLoad(config, req.params.sourceid, req.params.loadid, 'Upload cancelled');
+            res.json({ ok: true, cancelled });
+        } catch (err) {
+            Err.respond(err, res);
+        }
+    });
+
+    // What became of a load, for a page that lost the commit's answer (a timeout, a proxy cutting a
+    // long request): committing, live, staged or gone (#108).
+    await schema.get('/dispatcher/address/sources/:sourceid/loads/:loadid', {
+        name: 'Get Address Load State',
+        group: 'Dispatcher',
+        description: 'Whether a staged load is still being made live, is live, is waiting, or is gone (admin only)',
+        params: Type.Object({ sourceid: Type.String(), loadid: Type.String() }),
+        res: Type.Any(),
+    }, async (req, res) => {
+        try {
+            await requireAdmin(config, req);
+            const src = await sourceById(config, req.params.sourceid);
+            const state = await loadState(config, src.id, req.params.loadid);
+            res.json({ state, source: src, unresolved: state === 'live' ? await unresolvedOf(config, src) : [] });
         } catch (err) {
             Err.respond(err, res);
         }

@@ -11,10 +11,11 @@ const STUBS = [
     // The server route files (server/plugin-takcad.ts, ops #1201).
     [/(^|\/)common\/auth\.js$/,              './stubs/cloudtak-auth.mjs'],
     [/^@tak-ps\/node-tak$/,                   './stubs/node-tak.mjs'],
-    [/^drizzle-orm$/,                         './stubs/drizzle-orm.mjs'],
     [/^@sinclair\/typebox$/,                  './stubs/typebox.mjs'],
     [/^@openaddresses\/batch-schema$/,        './stubs/batch-schema.mjs'],
     [/^@openaddresses\/batch-error$/,         './stubs/batch-error.mjs'],
+    // server/plugin-addressing.ts against a real Postgres (address-load-db.test.mjs, #108).
+    [/^drizzle-orm$/,                         './stubs/drizzle-orm.mjs'],
 ]
 
 export function resolve(specifier, context, next) {
