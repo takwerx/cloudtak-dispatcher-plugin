@@ -39,7 +39,7 @@ Your agency’s own address points, street intersections and place names. The ad
 
 1. Under **Local Address Data**, press **Add source**.
 2. Pick what each row of your data is: **Address points**, **Street intersections** or **Common places**.
-3. Type a **Name**, such as `County address points`.
+3. Type a **Name**, such as `County address points`. If you leave it empty, the source takes the name of the file you pick.
 4. Under **Load from**, pick **A file (CSV or GeoJSON)**. For data your county keeps online, pick **A web address, pulled on a schedule**.
 5. Pick the file (**Download example CSV** shows the layout), or type the web address and press **Read columns**. If a line then says **Picked for you**, the Dispatcher changed your choice in step 2 to fit your columns: check it.
 6. Under **Field mapping**, check that each item has the right column of your data. Items marked * are needed. Check the preview under it.
@@ -51,4 +51,6 @@ Then check it: type an address, two cross streets or a place name under **Try it
 - **Default country** goes in the **Country** box of every result from your data.
 - To keep public map results near you, press **Use map centre** (or type the centre), set the **Radius**, and press **Save area**. Then turn on **Only show OpenStreetMap results within my coverage area**.
 - Each source shows how many records it has and when it was loaded. **Replace file** loads a new copy of a file. A web address is pulled again on its schedule, or when you press **Refresh now**. **Remove** deletes the source and its records, after asking.
+- **Rename** changes only the name of a source. Its records stay loaded.
+- With four or more sources, the list shows one line for each source. Click a source to see its details and buttons. **Full list** shows all the details again. Click **Sources** to fold the list away and bring **Try it** up.
 - Leave **Match distances and search behaviour** as it is, unless you have a reason to change it.
