@@ -8,6 +8,8 @@ export class TAKAPI {
     static async init(url, auth) {
         const api = new TAKAPI()
         api.auth = auth
+        // The user's TAK groups (ops #1257), by certificate: globalThis.__groupsByCert[cert] = ['Fire', ...].
+        api.Group = { list: async () => ({ data: (globalThis.__groupsByCert?.[auth.cert] ?? []).map(name => ({ name })) }) }
         ;(globalThis.__tak ??= { clients: [], requests: [] }).clients.push(auth.cert)
         return api
     }

@@ -177,17 +177,38 @@
                 <hr class='my-1'>
 
                 <!-- Sources -->
-                <div class='d-flex align-items-center justify-content-between'>
-                    <span class='fw-semibold'>Sources</span>
+                <div class='d-flex align-items-center justify-content-between gap-2'>
                     <button
-                        class='btn btn-sm btn-outline-secondary'
+                        class='btn btn-sm btn-link p-0 fw-semibold text-reset text-decoration-none'
                         type='button'
-                        data-test='addr-add'
-                        :disabled='!isAdmin'
-                        @click='openAdd()'
+                        data-test='addr-fold'
+                        :title='listOpen ? "Hide the source list" : "Show the source list"'
+                        :aria-expanded='listOpen'
+                        @click='listOpen = !listOpen'
                     >
-                        Add source
+                        {{ listOpen ? '▾' : '▸' }} {{ sources.length ? `Sources (${sources.length})` : 'Sources' }}
                     </button>
+                    <div class='d-flex align-items-center gap-2'>
+                        <button
+                            v-if='listOpen && sources.length'
+                            class='btn btn-sm btn-link p-0'
+                            type='button'
+                            data-test='addr-compact'
+                            :title='compact ? "Show every source with all its details" : "One line per source; click a source for its details"'
+                            @click='setCompact(!compact)'
+                        >
+                            {{ compact ? 'Full list' : 'Short list' }}
+                        </button>
+                        <button
+                            class='btn btn-sm btn-outline-secondary'
+                            type='button'
+                            data-test='addr-add'
+                            :disabled='!isAdmin'
+                            @click='openAdd()'
+                        >
+                            Add source
+                        </button>
+                    </div>
                 </div>
                 <div
                     v-if='!sources.length'
@@ -196,70 +217,164 @@
                     No local address data loaded yet.
                 </div>
                 <div
-                    v-for='s in sources'
-                    :key='s.id'
-                    class='border rounded px-2 py-1'
-                    data-test='addr-source'
+                    v-else-if='!listOpen'
+                    class='text-muted'
+                    data-test='addr-folded'
                 >
-                    <div class='d-flex align-items-start justify-content-between gap-2'>
-                        <span class='fw-semibold text-break'>{{ s.name }}</span>
-                        <span
-                            class='badge flex-shrink-0'
-                            :class='statusClass(s)'
-                            :title='statusText(s).title'
-                        >{{ statusText(s).text }}</span>
-                    </div>
-                    <div>
-                        {{ KIND_LABEL[s.kind] }} · {{ s.record_count.toLocaleString() }} records
-                        <span
-                            v-if='s.dropped_count'
-                            class='text-muted'
-                        >· {{ s.dropped_count }} dropped</span>
-                        <span
-                            v-if='s.unresolved_count'
-                            class='text-muted'
-                        >· {{ s.unresolved_count }} unresolved</span>
-                    </div>
-                    <div class='text-muted'>
-                        {{ s.mode === 'url' ? `Web, every ${s.refresh_hours} h` : 'File' }}
-                        · data as of {{ day(s.data_as_of) }} · loaded {{ when(s.last_refresh) }}
-                    </div>
-                    <div
-                        v-if='s.last_error'
-                        class='text-danger text-break'
-                        :title='s.last_error'
-                    >
-                        {{ s.last_error.slice(0, 80) }}
-                    </div>
-                    <div class='d-flex gap-3'>
-                        <button
-                            v-if='s.mode === "url"'
-                            class='btn btn-sm btn-link p-0'
-                            type='button'
-                            :disabled='!isAdmin || refreshing.includes(s.id)'
-                            @click='refreshNow(s)'
-                        >
-                            Refresh now
-                        </button>
-                        <button
-                            v-else
-                            class='btn btn-sm btn-link p-0'
-                            type='button'
-                            :disabled='!isAdmin'
-                            @click='openAdd(s)'
-                        >
-                            Replace file
-                        </button>
-                        <button
-                            class='btn btn-sm btn-link p-0 text-danger'
-                            type='button'
-                            :disabled='!isAdmin'
-                            @click='remove(s)'
-                        >
-                            Remove
-                        </button>
-                    </div>
+                    {{ foldedSummary }}
                 </div>
+                <template v-if='listOpen'>
+                    <div
+                        v-for='s in sources'
+                        :key='s.id'
+                        class='border rounded px-2 py-1'
+                        data-test='addr-source'
+                    >
+                        <!-- Short view: one line, click for the details -->
+                        <button
+                            v-if='compact'
+                            class='btn btn-sm btn-link p-0 w-100 d-flex align-items-center justify-content-between gap-2 text-reset text-decoration-none'
+                            type='button'
+                            data-test='addr-source-line'
+                            :aria-expanded='isOpen(s)'
+                            @click='toggleSource(s)'
+                        >
+                            <span class='d-flex align-items-center gap-1 text-truncate'>
+                                <span class='text-muted'>{{ isOpen(s) ? '▾' : '▸' }}</span>
+                                <span
+                                    class='fw-semibold text-truncate'
+                                    :title='s.name'
+                                >{{ s.name }}</span>
+                                <span class='text-muted text-nowrap'>· {{ s.record_count.toLocaleString() }}</span>
+                            </span>
+                            <span
+                                class='badge flex-shrink-0'
+                                :class='statusClass(s)'
+                                :title='statusText(s).title'
+                            >{{ statusText(s).text }}</span>
+                        </button>
+                        <div
+                            v-else
+                            class='d-flex align-items-start justify-content-between gap-2'
+                        >
+                            <span class='fw-semibold text-break'>{{ s.name }}</span>
+                            <span
+                                class='badge flex-shrink-0'
+                                :class='statusClass(s)'
+                                :title='statusText(s).title'
+                            >{{ statusText(s).text }}</span>
+                        </div>
+                        <template v-if='!compact || isOpen(s)'>
+                            <div>
+                                {{ KIND_LABEL[s.kind] }} · {{ s.record_count.toLocaleString() }} records
+                                <span
+                                    v-if='s.dropped_count'
+                                    class='text-muted'
+                                >· {{ s.dropped_count }} dropped</span>
+                                <span
+                                    v-if='s.unresolved_count'
+                                    class='text-muted'
+                                >· {{ s.unresolved_count }} unresolved</span>
+                            </div>
+                            <div class='text-muted'>
+                                {{ s.mode === 'url' ? `Web, every ${s.refresh_hours} h` : 'File' }}
+                                · data as of {{ day(s.data_as_of) }} · loaded {{ when(s.last_refresh) }}
+                            </div>
+                            <div
+                                v-if='s.last_error'
+                                class='text-danger text-break'
+                                :title='s.last_error'
+                            >
+                                {{ s.last_error.slice(0, 80) }}
+                            </div>
+                            <!-- Rename -->
+                            <div
+                                v-if='rename.id === s.id'
+                                class='d-flex flex-column gap-1 my-1'
+                                data-test='addr-rename-form'
+                            >
+                                <div class='input-group input-group-sm'>
+                                    <input
+                                        v-model='rename.name'
+                                        v-focus
+                                        type='text'
+                                        :maxlength='NAME_MAX'
+                                        class='form-control form-control-sm border'
+                                        aria-label='New name'
+                                        data-test='addr-rename-name'
+                                        :disabled='rename.busy'
+                                        @keyup.enter='saveRename(s)'
+                                        @keyup.esc='cancelRename'
+                                    >
+                                    <button
+                                        class='btn btn-primary'
+                                        type='button'
+                                        data-test='addr-rename-save'
+                                        :disabled='rename.busy || !!renameProblem(rename.name, s.name)'
+                                        @click='saveRename(s)'
+                                    >
+                                        <span
+                                            v-if='rename.busy'
+                                            class='spinner-border spinner-border-sm me-1'
+                                        />Save
+                                    </button>
+                                    <button
+                                        class='btn btn-outline-secondary'
+                                        type='button'
+                                        :disabled='rename.busy'
+                                        @click='cancelRename'
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                                <div
+                                    v-if='rename.error'
+                                    class='text-danger'
+                                >
+                                    {{ rename.error }}
+                                </div>
+                            </div>
+                            <div class='d-flex flex-wrap gap-3'>
+                                <button
+                                    v-if='s.mode === "url"'
+                                    class='btn btn-sm btn-link p-0'
+                                    type='button'
+                                    :disabled='!isAdmin || refreshing.includes(s.id)'
+                                    @click='refreshNow(s)'
+                                >
+                                    Refresh now
+                                </button>
+                                <button
+                                    v-else
+                                    class='btn btn-sm btn-link p-0'
+                                    type='button'
+                                    :disabled='!isAdmin'
+                                    @click='openAdd(s)'
+                                >
+                                    Replace file
+                                </button>
+                                <button
+                                    class='btn btn-sm btn-link p-0'
+                                    type='button'
+                                    data-test='addr-rename'
+                                    :disabled='!isAdmin || rename.id === s.id || !canRename(s, refreshing)'
+                                    :title='canRename(s, refreshing) ? "Change the name shown for this source" : "Wait for the load to finish to rename this source"'
+                                    @click='startRename(s)'
+                                >
+                                    Rename
+                                </button>
+                                <button
+                                    class='btn btn-sm btn-link p-0 text-danger'
+                                    type='button'
+                                    :disabled='!isAdmin'
+                                    @click='remove(s)'
+                                >
+                                    Remove
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </template>
                 <div
                     v-if='listError'
                     class='text-danger small'
@@ -307,9 +422,12 @@
                                 <input
                                     v-model='add.name'
                                     type='text'
+                                    :maxlength='NAME_MAX'
                                     class='form-control form-control-sm border'
                                     placeholder='e.g. County address points'
+                                    data-test='addr-name'
                                     :disabled='!!add.replace || add.busy'
+                                    @input='add.nameTyped = add.name.trim() !== ""'
                                 >
                             </label>
                         </div>
@@ -341,6 +459,7 @@
                         class='d-flex flex-column gap-2'
                     >
                         <input
+                            :key='add.fileKey'
                             type='file'
                             accept='.csv,.geojson,.json,text/csv,application/json,application/geo+json'
                             class='form-control form-control-sm border'
@@ -703,7 +822,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue';
 import {
     getAddressSettings, putAddressSettings, listAddressSources, createAddressSource, patchAddressSource,
     deleteAddressSource, refreshAddressSource, probeAddressUrl, startAddressLoad, pushAddressRows,
-    commitAddressLoad, abortAddressLoad, suggestAddress, reverseAddress, badgeFor, distanceText,
+    commitAndConfirm, abortAddressLoad, suggestAddress, reverseAddress, badgeFor, distanceText,
     ADDRESS_SETTINGS_DEFAULT, LOAD_BATCH,
 } from '../lib/addressing.ts';
 import type { AddressSettings, AddressSource, AddressSuggestion, ReverseResult, UrlProbe } from '../lib/addressing.ts';
@@ -711,10 +830,14 @@ import { KIND_FIELDS, parseFile, initialMapping, guessMapping, guessKind, applyM
 import ColumnPick from './ColumnPick.vue';
 import { downloadFile } from '../lib/report.ts';
 import type { SourceKind, ParsedFile } from '../lib/address-parse.ts';
+import { NAME_MAX, fileBaseName, nameAfterPick, renameProblem, canRename, startCompact, needsAttention } from '../lib/address-sources.ts';
 import { useMapStore } from '../../../src/stores/map.ts';
 
 const props = defineProps<{ isAdmin: boolean }>();
 const isAdmin = computed(() => props.isAdmin);
+
+// Puts the cursor in the rename box as soon as it opens.
+const vFocus = { mounted: (el: HTMLElement) => el.focus() };
 
 // The three kinds as an admin would recognise them in their own file: what one row is, and a
 // made-up row that looks like it.
@@ -777,12 +900,47 @@ const refreshing = ref<string[]>([]);
 const listError  = ref('');
 let poll: ReturnType<typeof setInterval> | null = null;
 
+// The list can be folded away, or shown one line per source (#108: with 9 sources the full list
+// pushed Try it far down the page). Starts short when there are many sources.
+const listOpen      = ref(true);
+const compact       = ref(false);
+let compactChosen   = false;
+const sourceOpen    = reactive<Record<string, boolean>>({});
+
+function setCompact(v: boolean) {
+    compact.value = v;
+    compactChosen = true;
+}
+
+// In the short view a source shows its details when the admin opened it, or when its last load
+// failed or left a message.
+function isOpen(s: AddressSource): boolean {
+    if (rename.id === s.id) return true;
+    return sourceOpen[s.id] ?? needsAttention(s);
+}
+
+function toggleSource(s: AddressSource) {
+    sourceOpen[s.id] = !isOpen(s);
+}
+
+const foldedSummary = computed(() => {
+    const n = sources.value.length;
+    const records = sources.value.reduce((t, s) => t + s.record_count, 0);
+    const failed = sources.value.filter(s => s.status === 'failed').length;
+    const busy = sources.value.filter(s => s.status === 'loading' || refreshing.value.includes(s.id)).length;
+    let out = `${n} ${n === 1 ? 'source' : 'sources'}, ${records.toLocaleString()} records`;
+    if (failed) out += `, ${failed} failed`;
+    if (busy) out += `, ${busy} loading`;
+    return out + '.';
+});
+
 async function reload() {
     try {
         const r = await listAddressSources();
         sources.value = r.sources;
         refreshing.value = r.refreshing;
         listError.value = '';
+        if (!compactChosen) compact.value = startCompact(r.sources.length);
         const busy = r.refreshing.length > 0 || r.sources.some(s => s.status === 'loading');
         if (busy && !poll) poll = setInterval(reload, 5000);
         if (!busy && poll) { clearInterval(poll); poll = null; }
@@ -828,12 +986,46 @@ async function remove(s: AddressSource) {
     await reload();
 }
 
+// ── Rename (#108) ───────────────────────────────────────────────────────────────────────────
+// Only the name changes: the loaded records, mapping and dates stay as they are.
+const rename = reactive({ id: '', name: '', busy: false, error: '' });
+
+function startRename(s: AddressSource) {
+    Object.assign(rename, { id: s.id, name: s.name, busy: false, error: '' });
+}
+
+function cancelRename() {
+    if (rename.busy) return;
+    Object.assign(rename, { id: '', name: '', error: '' });
+}
+
+async function saveRename(s: AddressSource) {
+    if (rename.busy) return;
+    const problem = renameProblem(rename.name, s.name);
+    if (problem) { rename.error = problem; return; }
+    rename.busy = true;
+    rename.error = '';
+    try {
+        await patchAddressSource(s.id, { name: rename.name.trim() });
+        Object.assign(rename, { id: '', name: '', busy: false, error: '' });
+        await reload();
+    } catch (e) {
+        rename.error = e instanceof Error ? e.message : String(e);
+        rename.busy = false;
+    }
+}
+
 // ── Add / replace ───────────────────────────────────────────────────────────────────────────
 const add = reactive({
     open: false,
     replace: null as AddressSource | null,
     kind: 'points' as SourceKind,
     name: '',
+    // True once the admin typed their own name for this upload; until then the Name box follows
+    // the picked file. Back to false after each finished load (#108).
+    nameTyped: false,
+    // Changed after a finished load, so the file picker is empty again for the next file.
+    fileKey: 0,
     mode: 'file' as 'file' | 'url',
     url: '',
     refreshHours: 24,
@@ -855,7 +1047,7 @@ const add = reactive({
 
 function openAdd(replace: AddressSource | null = null) {
     Object.assign(add, {
-        open: true, replace, kind: replace?.kind ?? 'points', name: replace?.name ?? '', mode: 'file', url: '',
+        open: true, replace, kind: replace?.kind ?? 'points', name: replace?.name ?? '', nameTyped: false, mode: 'file', url: '',
         refreshHours: 24, asOf: localDay(new Date()), file: null, probe: null, probing: false,
         columns: [], hasGeometry: false, mapping: {}, statusKeep: [], detected: '', busy: false, progress: '', result: '', error: '', unresolved: [],
     });
@@ -916,7 +1108,7 @@ function onFile(ev: Event) {
             detectKind();
             add.mapping = initialMapping(add.kind, parsed);
             add.statusKeep = [];
-            if (!add.name) add.name = f.name.replace(/\.[^.]+$/, '');
+            add.name = nameAfterPick({ name: add.name, typed: add.nameTyped, replacing: !!add.replace }, fileBaseName(f.name));
         } catch (e) {
             add.file = null; add.columns = [];
             add.error = `Could not read the file: ${e instanceof Error ? e.message : String(e)}`;
@@ -936,10 +1128,9 @@ async function probe() {
         add.mapping = r.mapping;
         detectKind();
         remap();
-        if (!add.name) {
-            const m = /\/services\/([^/]+)\/(?:Feature|Map)Server/i.exec(add.url) ?? /\/([^/?#]+)[^/]*$/.exec(add.url);
-            add.name = m ? decodeURIComponent(m[1]).replace(/[_-]+/g, ' ') : 'Web source';
-        }
+        const m = /\/services\/([^/]+)\/(?:Feature|Map)Server/i.exec(add.url) ?? /\/([^/?#]+)[^/]*$/.exec(add.url);
+        const fromUrl = (m ? decodeURIComponent(m[1]).replace(/[_-]+/g, ' ') : 'Web source').slice(0, NAME_MAX);
+        add.name = nameAfterPick({ name: add.name, typed: add.nameTyped, replacing: !!add.replace }, fromUrl);
     } catch (e) {
         add.error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -1015,12 +1206,17 @@ async function load() {
                 }
                 add.progress = `Uploading… ${Math.min(i + LOAD_BATCH, file.rows.length).toLocaleString()} of ${file.rows.length.toLocaleString()} rows`;
             }
-            add.progress = 'Checking and making it live…';
-            const done = await commitAddressLoad(sourceId, loadId, {
+            add.progress = file.rows.length > 100000
+                ? 'Checking and making it live… a file this big can take a few minutes.'
+                : 'Checking and making it live…';
+            // From here on the server decides: commitAndConfirm finds out what became of the load
+            // if the answer is lost, so the catch below must not cancel it (#108).
+            const committed = loadId;
+            loadId = '';
+            const done = await commitAndConfirm(sourceId, committed, {
                 data_as_of: add.asOf ? new Date(add.asOf + 'T12:00:00').toISOString() : undefined,
                 dropped,
             });
-            loadId = '';
             const why = Object.entries(reasons).map(([k, v]) => `${v} ${k}`).join(', ');
             add.result = `Loaded ${accepted.toLocaleString()} records${dropped ? `, ${dropped.toLocaleString()} dropped (${why})` : ''}.`
                 + (done.source.unresolved_count ? ` ${done.source.unresolved_count} places have no location yet.` : '');
@@ -1028,6 +1224,9 @@ async function load() {
         }
         add.progress = '';
         add.file = null;
+        // The next file picked names its own source, not this one's (#108).
+        add.nameTyped = false;
+        add.fileKey++;
         await reload();
     } catch (e) {
         add.error = e instanceof Error ? e.message : String(e);

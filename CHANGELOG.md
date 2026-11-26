@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.8.2
+
+Big address loads finish cleanly, the address page is easier to manage, and an admin can choose who gets the
+Dispatcher. Nothing changes for you unless you use these.
+
+- **Big address loads no longer say "Upload cancelled".** A load of a few hundred thousand addresses could
+  finish on the server while the page gave up waiting and showed "Upload cancelled". The page now waits for a
+  big load and, if the answer is lost, asks the server what happened. A cancel that arrives during a load can
+  no longer empty the source while it still shows the full count.
+- **Local Address Data page:** the Name box follows the file you pick (unless you typed a name), a **Rename**
+  link changes a source's name and nothing else, and with 4 or more sources the list starts as one short line
+  per source. Click a line for its details. A source with a problem stays open.
+- **Limit the Dispatcher to chosen TAK groups.** For a CloudTAK shared by several agencies. In Dispatcher
+  Settings, **Who Can Use The Dispatcher** (CloudTAK admin only) takes a list of TAK groups. Only members of
+  those groups, and CloudTAK system admins, get the Dispatcher: everyone else loses the menu item, and the
+  server refuses them too, on every part of the Dispatcher (events, incidents, address search, TAK-CAD). An empty
+  list, which is the default, changes nothing. A change in a person's TAK groups can take a few minutes to show: TAK Server updates its own list first, then the Dispatcher checks it about once a minute.
+
 ## 1.8.1
 
 Security update. Update to this version when you can. Nothing changes in how you use Dispatcher.

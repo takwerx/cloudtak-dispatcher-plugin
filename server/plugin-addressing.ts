@@ -21,6 +21,101 @@ import Schema from '@openaddresses/batch-schema';
 import Err from '@openaddresses/batch-error';
 import Auth from '../../common/auth.js';
 import type ConfigStateless from '../config.js';
+import { TAKAPI, APIAuthCertificate } from '@tak-ps/node-tak';
+
+// ── Who may use the Dispatcher ──────────────────────────────────────────────────
+// Optional limit set by a CloudTAK system admin in Dispatcher Settings (dispatcher_settings key
+// `allowed_groups`, a list of TAK group names). An empty or missing list is OFF: every signed-in user
+// gets the Dispatcher, exactly as before. With names in the list, a signed-in user gets it only when
+// they are a CloudTAK system admin or a member of one of those TAK groups; anyone else is refused
+// with a 403 on every route of the plugin, and the plugin hides its menu item (GET /dispatcher/access).
+// The list is read on every request, so a change takes effect at once. A user's TAK groups come from
+// TAK Server with their own certificate and are cached for a minute. If the list cannot be read or the
+// groups cannot be looked up, the user is refused (never let in by accident); admins never need the lookup.
+// The same block is in plugin-dispatcher.ts, plugin-addressing.ts and plugin-takcad.ts (CloudTAK loads
+// each route file on its own, so they cannot share one); plugin/test/access-server.test.ts fails if the
+// three copies differ. Group names are compared ignoring upper and lower case, spaces at the ends ignored.
+// <access-gate>
+const ALLOWED_GROUPS_SETTING = 'allowed_groups';
+const ACCESS_DENIED = 'The Dispatcher is limited to certain TAK groups, and your account is not in one of them. Ask your CloudTAK admin.';
+const ACCESS_GROUP_TTL_MS = 60_000;
+const accessGroupCache = new Map<string, { ts: number; groups: string[] }>();
+
+// The stored setting as a limit. Off for no value, '' or an empty list. A list with names is on. Anything
+// else (a hand-edited value that is not a list) is on with no names, so only admins get in until an admin fixes it.
+function parseAllowedGroups(stored: unknown): { limited: boolean; groups: string[] } {
+    let v: unknown = stored;
+    for (let i = 0; i < 2 && typeof v === 'string'; i++) {
+        try { v = JSON.parse(v); } catch { break; }
+    }
+    if (v === null || v === undefined || v === '') return { limited: false, groups: [] };
+    if (!Array.isArray(v)) return { limited: true, groups: [] };
+    if (v.length === 0) return { limited: false, groups: [] };
+    const groups = v.filter((g): g is string => typeof g === 'string').map(g => g.trim()).filter(g => g.length > 0);
+    return { limited: true, groups };
+}
+
+// May this user use the Dispatcher: no limit, or an admin, or a member of one of the listed groups.
+function mayUseDispatcher(limit: { limited: boolean; groups: string[] }, isAdmin: boolean, memberOf: Iterable<string>): boolean {
+    if (!limit.limited || isAdmin) return true;
+    const wanted = new Set(limit.groups.map(g => g.toLowerCase()));
+    for (const g of memberOf) {
+        if (typeof g === 'string' && wanted.has(g.trim().toLowerCase())) return true;
+    }
+    return false;
+}
+
+async function readDispatcherLimit(config: ConfigStateless): Promise<{ limited: boolean; groups: string[] }> {
+    try {
+        const rows = await config.pg.execute(sql`
+            SELECT value FROM dispatcher_settings WHERE key = ${ALLOWED_GROUPS_SETTING}
+        `) as unknown as { value: unknown }[];
+        return parseAllowedGroups(rows[0]?.value);
+    } catch (err) {
+        console.error('[dispatcher] could not read who may use the Dispatcher', err);
+        throw new Err(503, null, 'Could not check who may use the Dispatcher. Try again in a moment.');
+    }
+}
+
+// The TAK groups the user belongs to, as TAK Server shows them with the user's own certificate.
+async function dispatcherUserGroups(config: ConfigStateless, email: string): Promise<string[]> {
+    const hit = accessGroupCache.get(email);
+    if (hit && Date.now() - hit.ts < ACCESS_GROUP_TTL_MS) return hit.groups;
+    try {
+        const profile = await config.models.Profile.from(email);
+        const auth = profile.auth;
+        if (!auth) throw new Error('no certificate yet');
+        const api = await TAKAPI.init(new URL(String(config.server.api)), new APIAuthCertificate(auth.cert, auth.key));
+        const list = await api.Group.list({}) as { data?: { name: string }[] };
+        const groups = (list.data ?? []).map(g => String(g.name));
+        accessGroupCache.set(email, { ts: Date.now(), groups });
+        return groups;
+    } catch (err) {
+        console.error('[dispatcher] could not read the TAK groups of a user', err);
+        throw new Err(503, null, 'Could not check your TAK groups right now. Try again in a moment.');
+    }
+}
+
+// What the caller may do: `limited` says whether the admin's list is on; `allowed` whether this caller gets in.
+async function dispatcherAccess(config: ConfigStateless, req: any): Promise<{ allowed: boolean; limited: boolean; admin: boolean }> {
+    const auth = await Auth.is_auth(config, req) as any;
+    const limit = await readDispatcherLimit(config);
+    const isUser = !!auth && typeof auth.is_admin === 'function' && typeof auth.email === 'string' && auth.email.length > 0;
+    const admin = isUser && auth.is_admin() === true;
+    if (!limit.limited) return { allowed: true, limited: false, admin };
+    // A resource token (layer or connection) is not a person in a TAK group: refused while the limit is on.
+    if (!isUser) return { allowed: false, limited: true, admin: false };
+    if (admin) return { allowed: true, limited: true, admin: true };
+    const groups = await dispatcherUserGroups(config, auth.email);
+    return { allowed: mayUseDispatcher(limit, false, groups), limited: true, admin: false };
+}
+
+// First line of every route: signed in, and allowed by the admin's list.
+async function requireDispatcherAccess(config: ConfigStateless, req: any): Promise<void> {
+    const access = await dispatcherAccess(config, req);
+    if (!access.allowed) throw new Err(403, null, ACCESS_DENIED);
+}
+// </access-gate>
 
 // ── Pure helpers (also exercised by plugin/test/addressing-server.test.ts) ───────────────────
 // <addressing-pure>
@@ -764,7 +859,14 @@ interface SourceRow {
 // to jsonb makes CloudTAK's driver JSON-encode the text a second time, so the column would hold a
 // JSON string and jsonb_array_elements_text() on it would fail. Same rule as plugin-dispatcher.ts.
 async function query<T>(config: ConfigStateless, statement: ReturnType<typeof sql>): Promise<T[]> {
-    const result = await config.pg.execute(statement);
+    return await txQuery<T>(config.pg, statement);
+}
+
+// A transaction (or the pool): anything that runs raw SQL. Same as plugin-dispatcher.ts.
+type Tx = Pick<ConfigStateless['pg'], 'execute'>;
+
+async function txQuery<T>(tx: Tx, statement: ReturnType<typeof sql>): Promise<T[]> {
+    const result = await tx.execute(statement);
     return result as unknown as T[];
 }
 
@@ -831,8 +933,8 @@ async function insertRows(config: ConfigStateless, sourceId: string, loadId: str
 
 // Resolve places that came without coordinates against the loaded address points: the places of
 // one load, or (null) every live place still without a location.
-async function resolvePlaces(config: ConfigStateless, loadId: string | null): Promise<{ matched: number; unresolved: number }> {
-    const rows = await query<{ id: number; address: string }>(config, sql`
+async function resolvePlaces(tx: Tx, loadId: string | null): Promise<{ matched: number; unresolved: number }> {
+    const rows = await txQuery<{ id: number; address: string }>(tx, sql`
         SELECT id, address FROM dispatcher_address_rows
         WHERE ${loadId ? sql`load_id = ${loadId}` : sql`active`} AND kind = 'places' AND lat IS NULL AND address IS NOT NULL
     `);
@@ -840,13 +942,13 @@ async function resolvePlaces(config: ConfigStateless, loadId: string | null): Pr
     for (const r of rows) {
         const pq = parseQuery(r.address);
         if (pq.kind !== 'address' || pq.number == null || !pq.street) continue;
-        const hit = await query<{ lat: number; lon: number }>(config, sql`
+        const hit = await txQuery<{ lat: number; lon: number }>(tx, sql`
             SELECT lat, lon FROM dispatcher_address_rows
             WHERE active AND kind = 'points' AND house_number = ${pq.number} AND ${streetLike(sql`street`, pq.street)}
             ORDER BY (street = ${pq.street}) DESC, length(street), unit NULLS FIRST LIMIT 1
         `);
         if (hit.length) {
-            await config.pg.execute(sql`
+            await tx.execute(sql`
                 UPDATE dispatcher_address_rows SET lat = ${hit[0].lat}, lon = ${hit[0].lon}, resolved = 'matched' WHERE id = ${r.id}
             `);
             matched++;
@@ -855,50 +957,104 @@ async function resolvePlaces(config: ConfigStateless, loadId: string | null): Pr
     return { matched, unresolved: rows.length - matched };
 }
 
-// Make a staged load the live data for its source and drop the old rows (the staging swap).
+// Loads being made live right now. Only for telling the page "still working" (GET .../loads/:id);
+// the source lock below is what keeps a commit and an abort apart (#108).
+const committing = new Set<string>();
+
+// Lock the source row. Taken first by a commit and by an abort (failLoad), so the two run one after
+// the other and never interleave: an abort that arrives during a commit waits for it, then finds
+// the load live and leaves it alone; a commit after an abort finds no staged rows (#108).
+async function lockSource(tx: Tx, srcId: string): Promise<void> {
+    await tx.execute(sql`SELECT 1 FROM dispatcher_address_sources WHERE id = ${srcId} FOR UPDATE`);
+}
+
+// Make a staged load the live data for its source and drop the old rows (the staging swap). One
+// transaction: it all happens or none of it does, and the old rows go only together with the
+// staged rows going live.
 async function commitLoad(config: ConfigStateless, src: SourceRow, loadId: string, dataAsOf: string | null, dropped: number): Promise<SourceRow> {
-    const cnt = await query<{ n: number }>(config, sql`
-        SELECT count(*)::int AS n FROM dispatcher_address_rows WHERE load_id = ${loadId}
-    `);
-    const n = cnt[0]?.n ?? 0;
-    if (n === 0) throw new Err(400, null, 'The load has no usable rows; the previous data is kept');
-    let unresolved = 0;
-    if (src.kind === 'places') {
-        unresolved = (await resolvePlaces(config, loadId)).unresolved;
+    committing.add(loadId);
+    try {
+        await config.pg.transaction(async (tx) => {
+            await lockSource(tx, src.id);
+            const cnt = await txQuery<{ n: number }>(tx, sql`
+                SELECT count(*)::int AS n FROM dispatcher_address_rows WHERE source_id = ${src.id} AND load_id = ${loadId}
+            `);
+            const n = cnt[0]?.n ?? 0;
+            if (n === 0) throw new Err(400, null, 'The load has no usable rows; the previous data is kept');
+            let unresolved = 0;
+            if (src.kind === 'places') {
+                unresolved = (await resolvePlaces(tx, loadId)).unresolved;
+            }
+            await tx.execute(sql`
+                UPDATE dispatcher_address_rows SET active = true WHERE source_id = ${src.id} AND load_id = ${loadId}
+            `);
+            await tx.execute(sql`
+                DELETE FROM dispatcher_address_rows WHERE source_id = ${src.id} AND load_id <> ${loadId}
+            `);
+            // New address points can locate places that were loaded before them.
+            if (src.kind === 'points') {
+                await resolvePlaces(tx, null);
+                await tx.execute(sql`
+                    UPDATE dispatcher_address_sources s
+                    SET unresolved_count = (SELECT count(*)::int FROM dispatcher_address_rows r WHERE r.source_id = s.id AND r.active AND r.lat IS NULL)
+                    WHERE s.kind = 'places'
+                `);
+            }
+            await tx.execute(sql`
+                UPDATE dispatcher_address_sources
+                SET record_count = ${n}, dropped_count = ${dropped}, unresolved_count = ${unresolved},
+                    data_as_of = ${dataAsOf ?? src.data_as_of ?? new Date().toISOString()}::timestamptz,
+                    last_refresh = now(), last_error = NULL, status = 'ok'
+                WHERE id = ${src.id}
+            `);
+        });
+    } finally {
+        committing.delete(loadId);
     }
-    await config.pg.execute(sql`
-        UPDATE dispatcher_address_rows SET active = true WHERE load_id = ${loadId}
-    `);
-    await config.pg.execute(sql`
-        DELETE FROM dispatcher_address_rows WHERE source_id = ${src.id} AND load_id <> ${loadId}
-    `);
-    // New address points can locate places that were loaded before them.
-    if (src.kind === 'points') {
-        await resolvePlaces(config, null);
-        await config.pg.execute(sql`
-            UPDATE dispatcher_address_sources s
-            SET unresolved_count = (SELECT count(*)::int FROM dispatcher_address_rows r WHERE r.source_id = s.id AND r.active AND r.lat IS NULL)
-            WHERE s.kind = 'places'
-        `);
-    }
-    await config.pg.execute(sql`
-        UPDATE dispatcher_address_sources
-        SET record_count = ${n}, dropped_count = ${dropped}, unresolved_count = ${unresolved},
-            data_as_of = ${dataAsOf ?? src.data_as_of ?? new Date().toISOString()}::timestamptz,
-            last_refresh = now(), last_error = NULL, status = 'ok'
-        WHERE id = ${src.id}
-    `);
     return sourceById(config, src.id);
 }
 
-async function failLoad(config: ConfigStateless, srcId: string, loadId: string | null, message: string): Promise<void> {
-    if (loadId) {
-        await config.pg.execute(sql`DELETE FROM dispatcher_address_rows WHERE load_id = ${loadId} AND NOT active`);
-    }
-    await config.pg.execute(sql`
-        UPDATE dispatcher_address_sources
-        SET status = CASE WHEN record_count > 0 THEN 'ok' ELSE 'failed' END, last_error = ${message.slice(0, 500)}
-        WHERE id = ${srcId}
+// Throw away a staged load and say why on the source. A load that is already live is left alone
+// and the source keeps its good status: the page may give up waiting on a big commit and send an
+// abort after the server finished it (#108). Returns false when there was nothing to cancel.
+async function failLoad(config: ConfigStateless, srcId: string, loadId: string | null, message: string): Promise<boolean> {
+    return await config.pg.transaction(async (tx) => {
+        await lockSource(tx, srcId);
+        if (loadId) {
+            const live = await txQuery<{ x: number }>(tx, sql`
+                SELECT 1 AS x FROM dispatcher_address_rows WHERE source_id = ${srcId} AND load_id = ${loadId} AND active LIMIT 1
+            `);
+            if (live.length) return false;
+            await tx.execute(sql`DELETE FROM dispatcher_address_rows WHERE source_id = ${srcId} AND load_id = ${loadId} AND NOT active`);
+        }
+        await tx.execute(sql`
+            UPDATE dispatcher_address_sources
+            SET status = CASE WHEN record_count > 0 THEN 'ok' ELSE 'failed' END, last_error = ${message.slice(0, 500)}
+            WHERE id = ${srcId}
+        `);
+        return true;
+    });
+}
+
+// What became of a load: still being made live, live, staged (rows waiting, not live), or gone
+// (cancelled, failed, or replaced by a newer load).
+type LoadState = 'committing' | 'live' | 'staged' | 'gone';
+async function loadState(config: ConfigStateless, srcId: string, loadId: string): Promise<LoadState> {
+    if (committing.has(loadId)) return 'committing';
+    const rows = await query<{ active: boolean }>(config, sql`
+        SELECT active FROM dispatcher_address_rows WHERE source_id = ${srcId} AND load_id = ${loadId} LIMIT 1
+    `);
+    if (!rows.length) return 'gone';
+    return rows[0].active ? 'live' : 'staged';
+}
+
+// The places of a source that still have no location (first 50), shown after a places load.
+async function unresolvedOf(config: ConfigStateless, src: SourceRow): Promise<{ label: string; address: string | null }[]> {
+    if (src.kind !== 'places') return [];
+    return await query<{ label: string; address: string | null }>(config, sql`
+        SELECT label, address FROM dispatcher_address_rows
+        WHERE source_id = ${src.id} AND active AND kind = 'places' AND lat IS NULL
+        ORDER BY label LIMIT 50
     `);
 }
 
@@ -1356,6 +1512,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await Auth.is_auth(config, req);
             res.json({ settings: await readSettings(config) });
         } catch (err) {
@@ -1371,6 +1528,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const next = normAddressSettings({ ...(await readSettings(config)), ...(req.body.settings ?? {}) });
             const encoded = JSON.stringify(next);
@@ -1393,6 +1551,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await Auth.is_auth(config, req);
             res.json({ sources: await sources(config), refreshing: Array.from(refreshing) });
         } catch (err) {
@@ -1417,6 +1576,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const b = req.body;
             if (b.mode === 'url' && !b.url) throw new Err(400, null, 'A web address is required for a web source');
@@ -1450,18 +1610,25 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const cur = await sourceById(config, req.params.sourceid);
             const b = req.body;
+            if (b.name !== undefined && !b.name.trim()) throw new Err(400, null, 'A source needs a name');
             if (b.url !== undefined && b.url && !/^https?:\/\//i.test(b.url)) throw new Err(400, null, 'The web address must start with http:// or https://');
+            // Only the fields sent change; every other column keeps its value as it is when the
+            // UPDATE runs, not as it was read above. A rename that waits on a running commit (which
+            // holds this row) must not put back the old as-of date afterwards (#108).
+            const setUrl = b.url !== undefined;
+            const setKeep = b.status_keep !== undefined;
             await config.pg.execute(sql`
                 UPDATE dispatcher_address_sources SET
-                    name = ${b.name?.trim() ?? cur.name},
-                    url = ${b.url !== undefined ? b.url : cur.url},
-                    refresh_hours = ${b.refresh_hours ?? cur.refresh_hours},
-                    mapping = ${JSON.stringify(b.mapping ?? cur.mapping)}::text::jsonb,
-                    status_keep = ${b.status_keep !== undefined ? (b.status_keep ? JSON.stringify(b.status_keep) : null) : (cur.status_keep ? JSON.stringify(cur.status_keep) : null)}::text::jsonb,
-                    data_as_of = ${b.data_as_of ?? cur.data_as_of}::timestamptz
+                    name = COALESCE(${b.name?.trim() ?? null}::text, name),
+                    url = CASE WHEN ${setUrl}::boolean THEN ${setUrl ? b.url : null}::text ELSE url END,
+                    refresh_hours = COALESCE(${b.refresh_hours ?? null}::int, refresh_hours),
+                    mapping = COALESCE(${b.mapping ? JSON.stringify(b.mapping) : null}::text::jsonb, mapping),
+                    status_keep = CASE WHEN ${setKeep}::boolean THEN ${b.status_keep ? JSON.stringify(b.status_keep) : null}::text::jsonb ELSE status_keep END,
+                    data_as_of = COALESCE(${b.data_as_of ?? null}::timestamptz, data_as_of)
                 WHERE id = ${cur.id}
             `);
             res.json({ source: await sourceById(config, cur.id) });
@@ -1478,6 +1645,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             await sourceById(config, req.params.sourceid);
             await config.pg.execute(sql`DELETE FROM dispatcher_address_sources WHERE id = ${req.params.sourceid}`);
@@ -1498,6 +1666,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const src = await sourceById(config, req.params.sourceid);
             const loadId = randomUUID();
@@ -1517,6 +1686,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const src = await sourceById(config, req.params.sourceid);
             const rows: DbRow[] = [];
@@ -1545,16 +1715,12 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const src = await sourceById(config, req.params.sourceid);
             try {
                 const out = await commitLoad(config, src, req.params.loadid, req.body.data_as_of ?? null, req.body.dropped ?? 0);
-                const unresolved = src.kind === 'places' ? await query<{ label: string; address: string | null }>(config, sql`
-                    SELECT label, address FROM dispatcher_address_rows
-                    WHERE source_id = ${src.id} AND active AND kind = 'places' AND lat IS NULL
-                    ORDER BY label LIMIT 50
-                `) : [];
-                res.json({ source: out, unresolved });
+                res.json({ source: out, unresolved: await unresolvedOf(config, src) });
             } catch (err) {
                 await failLoad(config, src.id, req.params.loadid, err instanceof Error ? err.message : String(err));
                 throw err;
@@ -1564,17 +1730,40 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         }
     });
 
+    // A load that is already live is left alone (cancelled: false): the page may send this after it
+    // gave up waiting on a big commit that the server finished anyway (#108).
     await schema.post('/dispatcher/address/sources/:sourceid/loads/:loadid/abort', {
         name: 'Abort Address Load',
         group: 'Dispatcher',
-        description: 'Throw away a staged load (admin only)',
+        description: 'Throw away a staged load (admin only); a live load is kept',
         params: Type.Object({ sourceid: Type.String(), loadid: Type.String() }),
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
-            await failLoad(config, req.params.sourceid, req.params.loadid, 'Upload cancelled');
-            res.json({ ok: true });
+            const cancelled = await failLoad(config, req.params.sourceid, req.params.loadid, 'Upload cancelled');
+            res.json({ ok: true, cancelled });
+        } catch (err) {
+            Err.respond(err, res);
+        }
+    });
+
+    // What became of a load, for a page that lost the commit's answer (a timeout, a proxy cutting a
+    // long request): committing, live, staged or gone (#108).
+    await schema.get('/dispatcher/address/sources/:sourceid/loads/:loadid', {
+        name: 'Get Address Load State',
+        group: 'Dispatcher',
+        description: 'Whether a staged load is still being made live, is live, is waiting, or is gone (admin only)',
+        params: Type.Object({ sourceid: Type.String(), loadid: Type.String() }),
+        res: Type.Any(),
+    }, async (req, res) => {
+        try {
+            await requireDispatcherAccess(config, req);
+            await requireAdmin(config, req);
+            const src = await sourceById(config, req.params.sourceid);
+            const state = await loadState(config, src.id, req.params.loadid);
+            res.json({ state, source: src, unresolved: state === 'live' ? await unresolvedOf(config, src) : [] });
         } catch (err) {
             Err.respond(err, res);
         }
@@ -1590,6 +1779,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             if (!/^https?:\/\//i.test(req.body.url)) throw new Err(400, null, 'The web address must start with http:// or https://');
             const probe = await probeUrl(req.body.url);
@@ -1610,6 +1800,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await requireAdmin(config, req);
             const src = await sourceById(config, req.params.sourceid);
             if (src.mode !== 'url') throw new Err(400, null, 'Only web sources can be refreshed; upload the file again instead');
@@ -1633,6 +1824,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await Auth.is_auth(config, req);
             const settings = await readSettings(config);
             const q = String(req.query.q ?? '').trim();
@@ -1667,6 +1859,7 @@ export default async function router(schema: Schema, config: ConfigStateless) {
         res: Type.Any(),
     }, async (req, res) => {
         try {
+            await requireDispatcherAccess(config, req);
             await Auth.is_auth(config, req);
             const settings = await readSettings(config);
             let best: Suggestion | null = null;
