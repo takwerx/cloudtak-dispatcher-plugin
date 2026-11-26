@@ -1,5 +1,6 @@
 import { std } from '../../../src/std.ts';
 import { loadOperator } from './operator.ts';
+import type { DispatcherAccess } from './access.ts';
 
 // Typed client for the dispatcher server route (server/plugin-dispatcher.ts), which stores
 // Events and Incidents in CloudTAK's own Postgres so every dispatcher on this CloudTAK shares
@@ -270,4 +271,16 @@ export async function putDispatcherSetting(key: string, value: unknown): Promise
         method: 'PUT',
         body: { value },
     });
+}
+
+// Whether the signed-in user may use the Dispatcher (an admin can limit it to chosen TAK groups).
+// Throws when the server cannot answer; the caller decides what that means (see menuAllowed).
+export async function getDispatcherAccess(): Promise<DispatcherAccess> {
+    return await std('/api/dispatcher/access', { method: 'GET' }) as DispatcherAccess;
+}
+
+// The TAK groups the signed-in admin belongs to, to pick from when limiting the Dispatcher.
+export async function getAccessGroups(): Promise<string[]> {
+    const r = await std('/api/dispatcher/groups', { method: 'GET' }) as { groups?: unknown };
+    return Array.isArray(r?.groups) ? r.groups.filter((g): g is string => typeof g === 'string') : [];
 }
